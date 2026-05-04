@@ -7,6 +7,7 @@ const { autoUpdater } = require('electron-updater');
 let mainWindow = null;
 let isCheckingForUpdates = false;
 let lastUpdateCheckSource = 'auto';
+let installAttemptTimer = null;
 
 // Determine if we're in development or production
 const isDev = !app.isPackaged;
@@ -49,6 +50,13 @@ function sendUpdateStatus(status, data = {}) {
     timestamp: Date.now(),
     ...data
   });
+}
+
+function clearInstallAttemptTimer() {
+  if (installAttemptTimer) {
+    clearTimeout(installAttemptTimer);
+    installAttemptTimer = null;
+  }
 }
 
 function checkForUpdates(source = 'auto') {
@@ -160,6 +168,8 @@ function setupAutoUpdater() {
 
   // Update downloaded
   autoUpdater.on('update-downloaded', (info) => {
+    clearInstallAttemptTimer();
+
     sendUpdateStatus('downloaded', {
       source: lastUpdateCheckSource,
       version: info.version,
@@ -179,6 +189,15 @@ function setupAutoUpdater() {
           version: info.version,
           message: 'Restarting to install update...'
         });
+
+        // If quit/install does not actually start, surface guidance instead of failing silently.
+        installAttemptTimer = setTimeout(() => {
+          sendUpdateStatus('error', {
+            source: lastUpdateCheckSource,
+            message: 'Update install did not start. On macOS this usually means the update signature was rejected. Please install a signed/notarized build.'
+          });
+        }, 10000);
+
         autoUpdater.quitAndInstall(false, true);
       } else {
         sendUpdateStatus('restart-deferred', {
@@ -190,12 +209,24 @@ function setupAutoUpdater() {
     });
   });
 
+  autoUpdater.on('before-quit-for-update', () => {
+    clearInstallAttemptTimer();
+  });
+
   // Error handling
   autoUpdater.on('error', (err) => {
+    clearInstallAttemptTimer();
     console.error('Auto-update error:', err.message);
+
+    const rawMessage = err?.message || 'Unknown updater error';
+    const signatureFailure = /code signature|code requirements|did not pass validation/i.test(rawMessage);
+    const message = signatureFailure
+      ? 'Updater rejected this macOS update because code signing validation failed. Both the installed app and release update must be signed with your Developer ID (and notarized).'
+      : `Updater error: ${rawMessage}`;
+
     sendUpdateStatus('error', {
       source: lastUpdateCheckSource,
-      message: `Updater error: ${err.message}`
+      message
     });
   });
 }

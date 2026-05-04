@@ -50,8 +50,8 @@ After building, find your installers in the `release/` folder:
 
 | Platform | Files |
 |----------|-------|
-| macOS | `Resume Designer-1.0.0.dmg`, `Resume Designer-1.0.0-mac.zip` |
-| Windows | `Resume Designer Setup 1.0.0.exe`, `Resume Designer 1.0.0.exe` (portable) |
+| macOS | `Resume-Designer-1.0.0-arm64.dmg`, `Resume-Designer-1.0.0-arm64.zip`, `latest-mac.yml` |
+| Windows | `Resume-Designer-Setup-1.0.0.exe`, `latest.yml` |
 
 ## Distribution Options
 
@@ -76,7 +76,7 @@ Best for open source or small distribution:
 
 3. **Enable CI release workflow**:
    - Workflow file: `.github/workflows/release.yml`
-   - Trigger: every push to `main` (including merged PRs)
+   - Trigger: every push to `master` or `main` (including merged PRs)
    - Output: new GitHub Release with macOS + Windows artifacts
 
 4. **Configure repository secrets/variables**:
@@ -123,7 +123,7 @@ Auto-updates are configured to work with GitHub Releases.
 ### Setting Up Auto-Updates
 
 1. **GitHub Releases** (already configured):
-   - CI creates a release on every `main` push
+   - CI creates a release on every `master` or `main` push
    - CI computes the next semantic version from commit messages:
      - `major` when commits contain `BREAKING CHANGE` or `!`
      - `minor` when commits include `feat:`
@@ -150,33 +150,87 @@ To test the update flow locally:
 
 ### macOS Code Signing & Notarization
 
-Required for distributing outside the Mac App Store:
+Required for distributing outside the Mac App Store. Auto-update on macOS will fail unless both the installed app and update artifacts are properly signed.
 
-1. **Get an Apple Developer account** ($99/year)
+If the OS rejects a downloaded update at install time, the app surfaces a clear error in the updater UI within ~10 seconds rather than appearing to hang. Signature-validation failures get a more specific message pointing the user toward installing a properly signed/notarized build.
 
-2. **Create certificates** in Apple Developer portal:
-   - "Developer ID Application" certificate
-   - "Developer ID Installer" certificate (for .pkg)
+#### A) Create the Developer ID certificate in Apple Developer
 
-3. **Set environment variables**:
-   ```bash
-   export CSC_LINK=path/to/your/certificate.p12
-   export CSC_KEY_PASSWORD=your_certificate_password
-   export APPLE_ID=your@apple.id
-   export APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
-   export APPLE_TEAM_ID=YOUR_TEAM_ID
-   ```
+1. Open Apple Developer Certificates:
+   - https://developer.apple.com/account/resources/certificates/list
+2. In Keychain Access on your Mac:
+   - `Keychain Access` -> `Certificate Assistant` -> `Request a Certificate From a Certificate Authority...`
+   - Enter your email, save to disk as a `.certSigningRequest` file.
+3. Back in Apple Developer:
+   - Click `+` to add certificate.
+   - Choose `Developer ID Application`.
+   - Upload the CSR from step 2.
+   - Download the generated certificate (`.cer`).
+4. Install the downloaded certificate:
+   - Double-click the `.cer` file to add it to Keychain.
+5. Export certificate + private key as `.p12`:
+   - In Keychain Access, find the `Developer ID Application` identity.
+   - Expand it and ensure the private key is present under the certificate.
+   - Right-click certificate -> `Export`.
+   - Export as `.p12` and set a password. Save this password.
 
-4. **Update package.json**:
-   ```json
-   "mac": {
-     "hardenedRuntime": true,
-     "gatekeeperAssess": false,
-     "entitlements": "build/entitlements.mac.plist",
-     "entitlementsInherit": "build/entitlements.mac.plist"
-   },
-   "afterSign": "scripts/notarize.js"
-   ```
+#### B) Generate Apple notarization credentials
+
+1. Create an app-specific password for your Apple ID:
+   - https://appleid.apple.com/account/manage
+   - Sign in -> `App-Specific Passwords` -> create new password.
+2. Get your Apple Team ID:
+   - Apple Developer account -> Membership page.
+   - Team ID is a 10-character value (for example `AB12C34DEF`).
+
+#### C) Convert `.p12` to base64 for GitHub secret
+
+Run this on your Mac:
+
+```bash
+base64 -i /absolute/path/to/DeveloperIDApplication.p12 | tr -d '\n' > /tmp/csc_link_base64.txt
+```
+
+Copy the full contents of `/tmp/csc_link_base64.txt`.
+
+#### D) Add required GitHub Actions secrets
+
+GitHub repo -> `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`.
+
+Create all of the following:
+
+- `CSC_LINK`: base64 output from step C
+- `CSC_KEY_PASSWORD`: password you set when exporting the `.p12`
+- `APPLE_ID`: your Apple ID email
+- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password from step B
+- `APPLE_TEAM_ID`: your 10-character Team ID
+
+#### E) What this repo already enforces now
+
+The release pipeline now:
+
+1. Requires all five secrets above before mac build starts.
+2. Builds mac app with:
+   - Hardened runtime
+   - Entitlements (`build/entitlements.mac.plist`)
+   - Inherited entitlements (`build/entitlements.mac.inherit.plist`)
+   - Notarization enabled
+3. Fails fast if secrets are missing, instead of publishing unsigned artifacts.
+
+#### F) Verify signed/notarized outputs after release
+
+After a new release is published, download the `.dmg` and verify on a Mac:
+
+```bash
+codesign --verify --deep --strict --verbose=2 "/Applications/Resume Designer.app"
+spctl -a -t exec -vv "/Applications/Resume Designer.app"
+```
+
+Expected result:
+- `codesign` verification passes
+- `spctl` reports `accepted`
+
+If verification fails, check the macOS build job logs in GitHub Actions for certificate import/sign/notarization errors.
 
 ### Windows Code Signing
 
@@ -226,6 +280,8 @@ resume-designer/
 ├── build/
 │   ├── icon.icns         # macOS icon
 │   ├── icon.ico          # Windows icon
+│   ├── entitlements.mac.plist
+│   ├── entitlements.mac.inherit.plist
 │   └── ICONS.md          # Icon creation guide
 ├── release/              # Built installers (git-ignored)
 ├── src/
