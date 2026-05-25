@@ -16,12 +16,23 @@
   <link rel="stylesheet" href="/styles/onboarding.css">
   <link rel="stylesheet" href="/styles/history.css">
   <link rel="stylesheet" href="/styles/userProfile.css">
-  <link rel="stylesheet" href="/styles/print.css" media="print">
+  <!-- print.css contains BOTH @media print rules (gated to print preview by the
+       @media wrapper itself) AND html.pdf-export-mode class rules (applied when
+       src/pdf.js toggles the class on <html> before native PDF capture). The
+       file must be loaded WITHOUT media="print" so the class-based rules can
+       fire during WKWebView's createPDF, which does not trigger print mode. -->
+  <link rel="stylesheet" href="/styles/print.css">
 </head>
 <body>
   <div class="app">
     <!-- Header Bar -->
-    <header class="header-bar" id="header-bar">
+    <!-- data-tauri-drag-region marks this element as a window-drag handle.
+         Tauri 2's WKWebView/WebView2 honor this attribute for moving the
+         OS window; interactive descendants (buttons, inputs, dropdowns)
+         remain clickable because Tauri checks the actual click target. The
+         legacy `-webkit-app-region: drag` CSS in main.css is kept for any
+         non-Tauri (browser) fallback path. -->
+    <header class="header-bar" id="header-bar" data-tauri-drag-region>
       <!-- Rendered by headerBar.js -->
     </header>
     

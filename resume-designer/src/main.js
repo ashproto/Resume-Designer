@@ -23,7 +23,8 @@ import { initStructurePanel, setDesignSettings } from './structurePanel.js';
 import { initHeaderBar, getCurrentId, loadVariant } from './headerBar.js';
 import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initZoomControls } from './zoomControls.js';
-import { migrateBuiltInVariants, saveSettings, getSettings, SETTINGS_UPDATED_EVENT } from './persistence.js';
+import { migrateBuiltInVariants, saveSettings, getSettings, SETTINGS_UPDATED_EVENT, getCurrentVariantId, getVariants } from './persistence.js';
+import { isTauri, getPlatform, openExternal, startupUpdateCheck } from './native.js';
 import { initTheme, setupThemeToggleAfterRender } from './theme.js';
 import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
 import { initHistoryPanel, openHistoryPanel } from './historyPanel.js';
@@ -146,12 +147,48 @@ let customColor = '#c45c3e';
 
 // Initialize the application
 async function init() {
-  // Detect Electron on macOS and add class for traffic light padding
-  if (typeof window !== 'undefined' && window.electron?.isElectron) {
-    if (window.electron.platform === 'darwin') {
-      document.documentElement.classList.add('electron-mac');
+  // Print-mode short-circuit: when this window was opened by pdf.js's hidden
+  // PDF-export window (URL `?print=1`), skip ALL the app chrome init and run
+  // a minimal render-only flow that emits a `print-ready` event when the
+  // resume is laid out and ready for capture. See initPrintMode below.
+  if (typeof location !== 'undefined') {
+    const params = new URLSearchParams(location.search);
+    if (params.get('print') === '1') {
+      return initPrintMode();
     }
-    document.documentElement.classList.add('electron');
+  }
+
+  // Tag the html element so CSS can apply desktop-only chrome (traffic light
+  // padding on macOS, etc.). Keep the legacy `electron` / `electron-mac`
+  // classes for one transition release alongside the new `desktop` / `desktop-mac`
+  // ones, so existing CSS keeps working unchanged.
+  if (isTauri) {
+    document.documentElement.classList.add('desktop', 'electron');
+    const platform = await getPlatform();
+    if (platform === 'darwin') {
+      document.documentElement.classList.add('desktop-mac', 'electron-mac');
+    }
+
+    // Intercept external links so they open in the system browser rather
+    // than navigating the Tauri webview. Replaces Electron's
+    // setWindowOpenHandler/shell.openExternal pattern.
+    document.addEventListener(
+      'click',
+      (e) => {
+        const anchor = e.target.closest?.('a[href]');
+        if (!anchor) return;
+        const href = anchor.getAttribute('href');
+        if (!href) return;
+        if (href.startsWith('#') || href.startsWith('/') || href.startsWith('?')) return;
+        if (anchor.target === '_blank' || /^https?:\/\//i.test(href)) {
+          e.preventDefault();
+          openExternal(href).catch((err) =>
+            console.warn('[Link] open failed:', err)
+          );
+        }
+      },
+      true
+    );
   }
   
   // Load saved settings
@@ -227,14 +264,20 @@ async function init() {
   // Check for first-time user onboarding
   console.log('[Main] Setting up onboarding check...');
   
-  // In Electron, expose a function to reset onboarding for debugging
-  if (typeof window !== 'undefined' && window.electron?.isElectron) {
+  // In desktop builds, expose a function to reset onboarding for debugging.
+  if (isTauri) {
     window.resetForTesting = () => {
       localStorage.clear();
       location.reload();
     };
-    console.log('[Main] Electron detected, resetForTesting() available');
+    console.log('[Main] Desktop build detected, resetForTesting() available');
   }
+
+  // Kick off the auto-update check (no-op in dev / web). Fire-and-forget;
+  // catch any rejection so it doesn't surface as UnhandledPromiseRejection.
+  startupUpdateCheck().catch((err) =>
+    console.warn('[Update] startup check failed:', err)
+  );
   
   // Check onboarding after a short delay to ensure UI is ready
   console.log('[Main] Scheduling onboarding check in 300ms...');
@@ -282,9 +325,127 @@ async function init() {
   
   // Apply initial design settings
   applyColorPalette(currentPalette);
-  
+
   // Render initial resume
   renderCurrentResume();
+}
+
+/**
+ * Print-mode init for the hidden child window pdf.js spawns at `/?print=1`.
+ *
+ * Runs ONLY the minimum needed to render the active variant's resume:
+ * design services (fonts/spacing/accent/photo/headerStyle) and the renderer
+ * itself, with no chat panel / structure panel / undo-redo / onboarding /
+ * autoupdate. Applies `html.pdf-export-mode` so the resume sits at the
+ * document origin with no surrounding chrome (the chrome elements are still
+ * in the DOM from index.html but get `display: none`).
+ *
+ * When layout is settled and fonts are ready, emits a global Tauri event
+ * `print-ready` carrying the resume's measured bounds. pdf.js (running in
+ * the main window) listens for this, then invokes the Rust capture command.
+ *
+ * On any failure, emits `print-error` so the main window can surface a
+ * meaningful error instead of timing out.
+ */
+async function initPrintMode() {
+  // Step emitter: lets the main-window pdf.js see exactly where we are in
+  // the print-mode boot sequence. Each step is a global Tauri event the
+  // main window listens for and console.logs. Critical for debugging when
+  // print-ready never fires — pinpoints the hanging step instead of timing
+  // out blindly.
+  let emit;
+  const step = async (name, extra = {}) => {
+    try {
+      if (!emit) {
+        const mod = await import('@tauri-apps/api/event');
+        emit = mod.emit;
+      }
+      await emit('print-step', { step: name, ...extra });
+    } catch (e) {
+      console.warn('[PrintMode] step emit failed:', name, e);
+    }
+  };
+
+  try {
+    await step('started');
+    document.documentElement.classList.add('pdf-export-mode');
+    await step('class-applied');
+
+    // Load saved palette/layout settings.
+    const settings = getSettings();
+    currentPalette = settings.colorPalette || 'terracotta';
+    currentLayout = settings.layout || 'sidebar';
+    customColor = settings.customColor || '#c45c3e';
+    await step('settings-loaded', { palette: currentPalette, layout: currentLayout });
+
+    // Init only the services that affect resume rendering. No chat, no
+    // header bar, no structure panel, no undo/redo, no onboarding — those
+    // would mount UI we don't need and might fire network calls.
+    initTheme();
+    await initFontService();
+    initSpacingService();
+    initAccentService();
+    initPhotoService();
+    initHeaderStyleService();
+    await step('services-inited');
+
+    // Load the currently active variant's data into the store so the
+    // renderer can read it. skipSave=true because this is a read-only
+    // render — we don't want to mutate localStorage from the print window.
+    const variantId = getCurrentVariantId();
+    const variants = getVariants();
+    const variant = variantId ? variants[variantId] : null;
+    if (variant?.data) {
+      store.setData(variant.data, true, variantId);
+    }
+    await step('data-loaded', { variantId, hasData: !!variant?.data });
+
+    // Render the resume into #resume (defined in index.html).
+    renderCurrentResume();
+    await step('rendered');
+
+    // Wait for fonts and layout to settle — same logic pdf.js used to do
+    // around its capture, now living here in the print window.
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+    await step('fonts-ready');
+
+    const resumeEl = document.getElementById('resume');
+    if (!resumeEl) {
+      throw new Error('Print window: #resume not found after renderCurrentResume');
+    }
+    // Force synchronous layout. `offsetHeight` triggers a reflow so
+    // getBoundingClientRect() below sees up-to-date geometry. We deliberately
+    // DON'T use requestAnimationFrame here: this window lives off-screen
+    // (x=-10000, y=-10000) and macOS does not run the compositor for
+    // windows positioned outside any display, so rAF callbacks never fire.
+    // A small setTimeout is enough — fonts.ready has already resolved above,
+    // so there's nothing async left to wait on; the 50ms is just a safety
+    // margin for any pending microtask work.
+    void resumeEl.offsetHeight;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await step('layout-settled');
+
+    const bounds = resumeEl.getBoundingClientRect();
+    await step('measured', { width: bounds.width, height: bounds.height });
+
+    // Emit print-ready globally. Main window's pdf.js is the listener.
+    await emit('print-ready', {
+      width: bounds.width,
+      height: bounds.height,
+    });
+  } catch (err) {
+    console.error('[PrintMode] init failed:', err);
+    await step('error', { error: err?.message ?? String(err) });
+    try {
+      if (!emit) {
+        const mod = await import('@tauri-apps/api/event');
+        emit = mod.emit;
+      }
+      await emit('print-error', { error: err?.message ?? String(err) });
+    } catch (_) { /* swallow */ }
+  }
 }
 
 // Handle variant change from header bar

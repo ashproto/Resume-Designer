@@ -1,11 +1,15 @@
 /**
  * PDF Export Utilities
- * 
- * Uses Electron's native printToPDF for text-preserving PDFs (ATS-compatible)
- * Falls back to html2pdf.js for browser (produces image-based PDFs)
+ *
+ * Desktop (Tauri): renders the resume in a HIDDEN child WebviewWindow at
+ * `/?print=1` and captures it via WKWebView.createPDF (macOS) /
+ * WebView2.PrintToPdfAsync (Windows). Main window stays unchanged the whole
+ * time — no full-screen takeover.
+ *
+ * Browser fallback: html2pdf.js produces image-based PDFs (not ATS-friendly).
  */
 
-import { isElectron, printToPdf } from './native.js';
+import { isElectron, pickPdfSavePath, capturePdfFromWindow } from './native.js';
 
 let html2pdfModule = null;
 
@@ -184,34 +188,170 @@ async function handleDownloadPdf(customFilename) {
 }
 
 /**
- * Generate PDF using Electron's native printToPDF
- * This preserves actual text content (selectable, searchable, ATS-compatible)
+ * Generate PDF via a HIDDEN background Tauri WebviewWindow.
+ *
+ * Flow:
+ *  1. Pick save path via Rust dialog (`pick_pdf_save_path`). Main window
+ *     stays unchanged during the dialog — no chrome toggle, no flash.
+ *  2. Subscribe to `print-ready` / `print-error` events from the soon-to-be
+ *     hidden child window.
+ *  3. Spawn a hidden, decoration-less WebviewWindow pointed at `/?print=1`.
+ *     main.js detects the param and runs `initPrintMode()` (services →
+ *     render → measure → emit ready).
+ *  4. Receive the resume's measured bounds via the event payload.
+ *  5. Invoke `capture_pdf_from_window` to run WKWebView.createPDF /
+ *     WebView2.PrintToPdfAsync against the hidden window's web view.
+ *  6. Close the hidden window. The main window never enters pdf-export-mode.
+ *
+ * `resumeEl` is still passed in but is no longer measured — the print window
+ * measures its own copy. Kept in the signature for symmetry with html2pdf.
  */
-async function generatePdfNative(resumeEl, filename) {
-  // Calculate page size based on resume's actual rendered dimensions
-  // Width is fixed at 8.5 inches, height is dynamic based on content
-  const resumeHeight = resumeEl.offsetHeight;
-  
-  // Convert pixels to inches (96 DPI)
-  // printToPDF expects dimensions in INCHES
-  const widthInches = 8.5;
-  const heightInches = resumeHeight / 96;
-  
-  console.log(`PDF Export: Resume dimensions - ${widthInches}in x ${heightInches.toFixed(2)}in`);
-  
-  const pageSize = {
-    width: widthInches,
-    height: heightInches
-  };
-  
-  const result = await printToPdf(filename, pageSize);
-  
-  if (result.success) {
-    console.log('PDF Export: PDF saved to:', result.filePath);
-  } else if (result.canceled) {
+async function generatePdfNative(_resumeEl, filename) {
+  // 1. Save path (main window's dialog, fully visible / no chrome change).
+  const savePath = await pickPdfSavePath(filename);
+  if (!savePath) {
     console.log('PDF Export: Save canceled by user');
-  } else {
-    throw new Error(result.error || 'Failed to save PDF file');
+    return;
+  }
+
+  const { listen } = await import('@tauri-apps/api/event');
+  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+
+  // Use a unique label per export so we never collide with a previous
+  // print window whose `close()` is still being released by the OS.
+  // Tauri's WebviewWindow constructor errors (or returns a wrapper for the
+  // existing window) when a label is reused before fully torn down — exactly
+  // the failure mode where the second export silently hangs.
+  const PRINT_LABEL = `pdf-print-${Date.now()}`;
+
+  // Race the ready event against an error event and a timeout. Whichever
+  // settles first wins; the others get cleaned up in finally.
+  let settled = false;
+  let resolveReady;
+  let rejectReady;
+  const printReady = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const readyTimeout = setTimeout(() => {
+    if (!settled) {
+      settled = true;
+      rejectReady(new Error('Print window did not become ready within 30s'));
+    }
+  }, 30000);
+
+  // Await the listen() calls so the IPC subscriptions are FULLY registered
+  // before we spawn the print window. Without this, on slow systems the
+  // print window can emit `print-ready` before our handler is attached
+  // (manifesting as a 30s timeout despite the child window working fine).
+  const unlistenReady = await listen('print-ready', (event) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(readyTimeout);
+    resolveReady(event.payload);
+  });
+  const unlistenError = await listen('print-error', (event) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(readyTimeout);
+    rejectReady(new Error(event.payload?.error ?? 'Print window error'));
+  });
+  // Diagnostic listener so the main window can see each phase of the print
+  // window's init. If print-ready times out, the last step we logged points
+  // straight at the hanging step (no guessing).
+  const unlistenStep = await listen('print-step', (event) => {
+    console.log('[PDF Export] print-step:', event.payload);
+  });
+
+  let printWindow = null;
+  try {
+    // Spawn the render-only window OFF-SCREEN instead of `visible: false`.
+    //
+    // macOS WKWebView has a known behavior where windows with `visible:
+    // false` don't run a full layout/paint pass — `document.fonts.ready`
+    // can stall and `getBoundingClientRect()` can return zeros, so the
+    // child window never emits a usable `print-ready`. By keeping the
+    // window technically visible but positioned far off any user screen,
+    // we get the full render pipeline AND the user never sees it.
+    //
+    // `decorations: false` removes the title bar; `focus: false` stops it
+    // stealing keyboard focus; `skipTaskbar: true` keeps it out of the
+    // macOS Dock / Windows taskbar.
+    printWindow = new WebviewWindow(PRINT_LABEL, {
+      url: '/?print=1',
+      visible: true,
+      x: -10000,
+      y: -10000,
+      decorations: false,
+      focus: false,
+      skipTaskbar: true,
+      // Make the window big enough to fit the full resume so its layout
+      // doesn't get squeezed by viewport size. Exact size doesn't matter
+      // since createPDF is rect-driven (macOS) or paginated (Windows).
+      width: 820,
+      height: 1200,
+      title: 'Resume Designer — PDF Export',
+    });
+
+    // Tauri emits `tauri://created` on the window itself when the OS
+    // window has been opened. Failing fast on errors avoids a 30s hang.
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Print window creation timed out')),
+        10000
+      );
+      printWindow.once('tauri://created', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      printWindow.once('tauri://error', (e) => {
+        clearTimeout(timeout);
+        reject(new Error(e?.payload?.error ?? 'Print window creation failed'));
+      });
+    });
+
+    // 4. Wait for print-mode to finish rendering and report bounds.
+    const bounds = await printReady;
+
+    // 5. Capture. Width is also passed as pageSize for the Windows path.
+    const pageSize = {
+      width: bounds.width / 96,
+      height: bounds.height / 96,
+    };
+    const captureRect = {
+      x: 0,
+      y: 0,
+      width: bounds.width,
+      height: bounds.height,
+    };
+
+    console.log(
+      `PDF Export: print-window bounds ` +
+      `${bounds.width.toFixed(0)}×${bounds.height.toFixed(0)} CSS px ` +
+      `(${pageSize.width.toFixed(2)}in × ${pageSize.height.toFixed(2)}in)`
+    );
+
+    const result = await capturePdfFromWindow(PRINT_LABEL, savePath, pageSize, captureRect);
+
+    if (result.success) {
+      console.log('PDF Export: PDF saved to:', result.filePath);
+    } else if (result.canceled) {
+      console.log('PDF Export: Save canceled');
+    } else {
+      throw new Error(result.error || 'Failed to save PDF file');
+    }
+  } finally {
+    // 6. Cleanup: unsubscribe listeners and close the hidden window.
+    try { if (unlistenReady) unlistenReady(); } catch (_) { /* ignore */ }
+    try { if (unlistenError) unlistenError(); } catch (_) { /* ignore */ }
+    try { if (unlistenStep) unlistenStep(); } catch (_) { /* ignore */ }
+    if (printWindow) {
+      try {
+        await printWindow.close();
+      } catch (err) {
+        console.warn('PDF Export: failed to close print window:', err);
+      }
+    }
   }
 }
 
