@@ -5,10 +5,10 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2_16, COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
 };
 use webview2_com::PrintToPdfCompletedHandler;
-// In `windows` 0.61, BOOL and HRESULT both live in `windows::core`. They moved
-// up out of `Win32::Foundation` so the same types can be shared between Win32
-// and WinRT bindings.
-use windows::core::{Interface, BOOL, HRESULT, HSTRING};
+// webview2-com 0.38 wraps the raw HRESULT/BOOL the COM interface returns into
+// Rust-native `Result<()>` and `bool` for the completion handler — so we don't
+// import HRESULT or BOOL here.
+use windows::core::{Interface, HSTRING};
 
 use super::{PageSize, PdfResult};
 
@@ -67,20 +67,18 @@ pub async fn capture_pdf(
             }
 
             let path_hstring = HSTRING::from(&save_path);
-            // webview2-com 0.38 invokes the completion handler with
-            // (errorCode: HRESULT, isSuccessful: BOOL). The earlier API
-            // shape (single Result<i32>) has been removed.
+            // webview2-com 0.38's PrintToPdfCompletedHandler invokes the
+            // closure with (Result<(), Error>, bool). The Result wraps the
+            // raw HRESULT (Ok = S_OK, Err carries the error); the bool is
+            // the unwrapped BOOL indicating WebView2's own success report.
             let handler = PrintToPdfCompletedHandler::create(Box::new(
-                move |error_code: HRESULT, is_successful: BOOL| -> windows::core::Result<()> {
-                    let out = if error_code.is_ok() && is_successful.as_bool() {
-                        Ok(())
-                    } else if !error_code.is_ok() {
-                        Err(format!(
-                            "WebView2 PrintToPdf failed: HRESULT 0x{:08X}",
-                            error_code.0 as u32
-                        ))
-                    } else {
-                        Err("WebView2 reported PrintToPdf failure".to_string())
+                move |result: windows::core::Result<()>,
+                      is_successful: bool|
+                      -> windows::core::Result<()> {
+                    let out = match (result, is_successful) {
+                        (Ok(()), true) => Ok(()),
+                        (Ok(()), false) => Err("WebView2 reported PrintToPdf failure".to_string()),
+                        (Err(e), _) => Err(format!("WebView2 PrintToPdf failed: {}", e.message())),
                     };
                     if let Ok(mut guard) = done_for_handler.lock() {
                         if let Some(sender) = guard.take() {
