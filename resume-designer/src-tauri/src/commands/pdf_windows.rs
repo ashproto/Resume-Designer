@@ -5,8 +5,11 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2_16, COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
 };
 use webview2_com::PrintToPdfCompletedHandler;
-use windows::core::{Interface, HSTRING};
-use windows::Win32::Foundation::{BOOL, HRESULT};
+// In `windows` 0.61 HRESULT lives in `core`; BOOL remains in `Win32::Foundation`.
+// (HRESULT was moved up out of Win32::Foundation in the 0.50 reorg so it can be
+// shared between Win32 and WinRT bindings.)
+use windows::core::{Interface, HRESULT, HSTRING};
+use windows::Win32::Foundation::BOOL;
 
 use super::{PageSize, PdfResult};
 
