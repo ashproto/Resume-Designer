@@ -6,6 +6,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 };
 use webview2_com::PrintToPdfCompletedHandler;
 use windows::core::{Interface, HSTRING};
+use windows::Win32::Foundation::{BOOL, HRESULT};
 
 use super::{PageSize, PdfResult};
 
@@ -64,12 +65,20 @@ pub async fn capture_pdf(
             }
 
             let path_hstring = HSTRING::from(&save_path);
+            // webview2-com 0.38 invokes the completion handler with
+            // (errorCode: HRESULT, isSuccessful: BOOL). The earlier API
+            // shape (single Result<i32>) has been removed.
             let handler = PrintToPdfCompletedHandler::create(Box::new(
-                move |result: windows::core::Result<i32>| -> windows::core::Result<()> {
-                    let out = match result {
-                        Ok(success) if success != 0 => Ok(()),
-                        Ok(_) => Err("WebView2 reported PrintToPdf failure".to_string()),
-                        Err(e) => Err(e.message().to_string()),
+                move |error_code: HRESULT, is_successful: BOOL| -> windows::core::Result<()> {
+                    let out = if error_code.is_ok() && is_successful.as_bool() {
+                        Ok(())
+                    } else if !error_code.is_ok() {
+                        Err(format!(
+                            "WebView2 PrintToPdf failed: HRESULT 0x{:08X}",
+                            error_code.0 as u32
+                        ))
+                    } else {
+                        Err("WebView2 reported PrintToPdf failure".to_string())
                     };
                     if let Ok(mut guard) = done_for_handler.lock() {
                         if let Some(sender) = guard.take() {

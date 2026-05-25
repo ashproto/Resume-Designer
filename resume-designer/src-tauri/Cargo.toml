@@ -38,8 +38,11 @@ objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKPDFConfiguration"
 block2 = "0.6"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# windows 0.61 matches the transitive version webview2-com 0.38 pulls in;
+# pinning here keeps Interface/cast/HSTRING types from the SAME crate version
+# so type-resolution works for WebView2's COM cast chain.
 webview2-com = "0.38"
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Com"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com"] }
 
 [profile.release]
 panic = "abort"
