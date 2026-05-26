@@ -33,8 +33,13 @@ pub struct PageSize {
 /// that web view's document. In the new background-window flow this is
 /// measured by the print window's own JS against its own `getBoundingClientRect()`,
 /// so origin is always (0, 0) in practice — but the field stays for flexibility.
+///
+/// `#[allow(dead_code)]` because the Windows path uses `page_size` instead and
+/// discards this struct via `let _ = capture_rect`, which fires an unused-fields
+/// lint on that target build.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct CaptureRect {
     pub x: f64,
     pub y: f64,

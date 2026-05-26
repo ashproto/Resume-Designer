@@ -1,5 +1,8 @@
 mod commands;
 
+// `Manager` is only used by the macOS-only Reopen handler below to resolve
+// the main window. Gating the import keeps the Windows build warning-free.
+#[cfg(target_os = "macos")]
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
