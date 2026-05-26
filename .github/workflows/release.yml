@@ -337,6 +337,11 @@ jobs:
         # the same zip Tauri would download into Tauri's expected cache
         # location; per the bundler source, if the dir already exists with
         # valid files, Tauri skips its own download/extract step.
+        #
+        # The zip ships everything under a top-level `nsis-3.11/` dir; Tauri
+        # expects the contents directly under `LOCALAPPDATA\tauri\NSIS\`, so
+        # we extract to a temp dir and copy the inner `nsis-3.11/` contents
+        # up one level.
         shell: powershell
         run: |
           $nsisDir = "$env:LOCALAPPDATA\tauri\NSIS"
@@ -346,9 +351,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path $nsisDir | Out-Null
 
           $zipPath = "$env:RUNNER_TEMP\nsis-3.11.zip"
-          Invoke-WebRequest -Uri "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip" -OutFile $zipPath
+          $stageDir = "$env:RUNNER_TEMP\nsis-staging"
+          if (Test-Path $stageDir) {
+            Remove-Item -Path $stageDir -Recurse -Force
+          }
 
-          Expand-Archive -Path $zipPath -DestinationPath $nsisDir -Force
+          Invoke-WebRequest -Uri "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip" -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $stageDir -Force
+
+          # The zip's top-level dir name (nsis-3.11/) needs stripping; copy
+          # its contents into Tauri's expected cache root.
+          $inner = "$stageDir\nsis-3.11"
+          if (-not (Test-Path $inner)) {
+            Write-Error "NSIS pre-extract failed: expected $inner after Expand-Archive"
+            Write-Host "Staging contents:"
+            Get-ChildItem $stageDir -Recurse | Select-Object -First 30 FullName
+            exit 1
+          }
+          Copy-Item -Path "$inner\*" -Destination $nsisDir -Recurse -Force
 
           # Sanity check: language-files dir must contain English.nlf —
           # Tauri's en-US.nlf is written here at bundle time.

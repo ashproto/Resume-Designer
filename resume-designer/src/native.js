@@ -26,13 +26,20 @@ let _appInfoCache = null;
 
 // Lazy holders for the Tauri plugin modules. Dynamic-imported so the web
 // branch never tries to resolve `@tauri-apps/*` packages.
+//
+// `@tauri-apps/plugin-fs` is intentionally NOT loaded here. No renderer
+// code reads or writes via fs anymore — PDF export goes through the
+// dedicated Rust commands (pick_pdf_save_path + capture_pdf_from_window),
+// JSON/Markdown import/export use the browser's File API and `<a download>`.
+// Keeping fs out of the renderer means a compromised script can't reach
+// the filesystem even if `@tauri-apps/plugin-fs` were re-introduced in
+// Cargo without a matching capability.
 let _tauri = null;
 async function tauri() {
   if (_tauri) return _tauri;
   if (!isTauri) throw new Error('Tauri APIs unavailable outside the desktop app');
-  const [dialog, fs, shell, app, osPlugin, updater, process, core, event] = await Promise.all([
+  const [dialog, shell, app, osPlugin, updater, process, core, event] = await Promise.all([
     import('@tauri-apps/plugin-dialog'),
-    import('@tauri-apps/plugin-fs'),
     import('@tauri-apps/plugin-shell'),
     import('@tauri-apps/api/app'),
     import('@tauri-apps/plugin-os'),
@@ -41,7 +48,7 @@ async function tauri() {
     import('@tauri-apps/api/core'),
     import('@tauri-apps/api/event'),
   ]);
-  _tauri = { dialog, fs, shell, app, osPlugin, updater, process, core, event };
+  _tauri = { dialog, shell, app, osPlugin, updater, process, core, event };
   return _tauri;
 }
 
@@ -63,108 +70,6 @@ export async function getPlatform() {
   const raw = await osPlugin.platform();
   _platformCache = PLATFORM_MAP[raw] ?? raw;
   return _platformCache;
-}
-
-/**
- * Save a file using native dialog (Tauri) or browser download (web).
- */
-export async function saveFile(data, defaultName, filters = []) {
-  if (isTauri) {
-    const { dialog, fs } = await tauri();
-    const filePath = await dialog.save({ defaultPath: defaultName, filters });
-    if (!filePath) return { success: false, canceled: true };
-
-    let bytes;
-    if (data instanceof Blob) {
-      bytes = new Uint8Array(await data.arrayBuffer());
-    } else if (data instanceof Uint8Array) {
-      bytes = data;
-    } else if (typeof data === 'string') {
-      bytes = new TextEncoder().encode(data);
-    } else {
-      return { success: false, error: 'Unsupported data type for saveFile' };
-    }
-
-    try {
-      await fs.writeFile(filePath, bytes);
-      return { success: true, filePath };
-    } catch (error) {
-      return { success: false, error: error?.message ?? String(error) };
-    }
-  }
-
-  // Web fallback — browser download
-  try {
-    const blob = data instanceof Blob ? data : new Blob([data]);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = defaultName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Open a file using native dialog (Tauri) or file input (web).
- */
-export async function openFile(filters = [], multiple = false) {
-  if (isTauri) {
-    const { dialog, fs } = await tauri();
-    const selected = await dialog.open({ filters, multiple, directory: false });
-    if (selected == null) return { success: false, canceled: true };
-    const paths = Array.isArray(selected) ? selected : [selected];
-    if (paths.length === 0) return { success: false, canceled: true };
-    try {
-      const files = await Promise.all(
-        paths.map(async (p) => ({
-          path: p,
-          name: p.split(/[/\\]/).pop(),
-          content: await fs.readTextFile(p),
-        }))
-      );
-      return { success: true, files: multiple ? files : files[0] };
-    } catch (error) {
-      return { success: false, error: error?.message ?? String(error) };
-    }
-  }
-
-  // Web fallback — file input
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = multiple;
-    if (filters.length > 0) {
-      const extensions = filters.flatMap((f) => f.extensions);
-      input.accept = extensions.map((ext) => `.${ext}`).join(',');
-    }
-    input.onchange = async (e) => {
-      const files = Array.from(e.target.files);
-      if (files.length === 0) {
-        resolve({ success: false, canceled: true });
-        return;
-      }
-      try {
-        const fileData = await Promise.all(
-          files.map(async (file) => ({
-            path: file.name,
-            name: file.name,
-            content: await file.text(),
-          }))
-        );
-        resolve({ success: true, files: multiple ? fileData : fileData[0] });
-      } catch (error) {
-        resolve({ success: false, error: error.message });
-      }
-    };
-    input.oncancel = () => resolve({ success: false, canceled: true });
-    input.click();
-  });
 }
 
 /**
