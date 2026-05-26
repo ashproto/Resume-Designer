@@ -348,6 +348,19 @@ async function init() {
  * meaningful error instead of timing out.
  */
 async function initPrintMode() {
+  // Resolve this print window's own label so every event we emit can be
+  // tagged with it. Each PDF export uses a unique label (e.g.
+  // `pdf-print-1716234567890`); the main window's listener uses that label
+  // to filter — otherwise two overlapping exports could cross-resolve and
+  // capture the wrong window's `print-ready`.
+  let printLabel = '';
+  try {
+    const winMod = await import('@tauri-apps/api/window');
+    printLabel = winMod.getCurrentWindow().label;
+  } catch (e) {
+    console.warn('[PrintMode] could not resolve own window label:', e);
+  }
+
   // Step emitter: lets the main-window pdf.js see exactly where we are in
   // the print-mode boot sequence. Each step is a global Tauri event the
   // main window listens for and console.logs. Critical for debugging when
@@ -360,7 +373,7 @@ async function initPrintMode() {
         const mod = await import('@tauri-apps/api/event');
         emit = mod.emit;
       }
-      await emit('print-step', { step: name, ...extra });
+      await emit('print-step', { label: printLabel, step: name, ...extra });
     } catch (e) {
       console.warn('[PrintMode] step emit failed:', name, e);
     }
@@ -430,8 +443,10 @@ async function initPrintMode() {
     const bounds = resumeEl.getBoundingClientRect();
     await step('measured', { width: bounds.width, height: bounds.height });
 
-    // Emit print-ready globally. Main window's pdf.js is the listener.
+    // Emit print-ready globally. Main window's pdf.js is the listener; it
+    // filters on `label` so overlapping exports don't cross-resolve.
     await emit('print-ready', {
+      label: printLabel,
       width: bounds.width,
       height: bounds.height,
     });
@@ -443,7 +458,10 @@ async function initPrintMode() {
         const mod = await import('@tauri-apps/api/event');
         emit = mod.emit;
       }
-      await emit('print-error', { error: err?.message ?? String(err) });
+      await emit('print-error', {
+        label: printLabel,
+        error: err?.message ?? String(err),
+      });
     } catch (_) { /* swallow */ }
   }
 }

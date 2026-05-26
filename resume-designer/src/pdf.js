@@ -260,14 +260,21 @@ async function generatePdfNative(_resumeEl, filename) {
   // before we spawn the print window. Without this, on slow systems the
   // print window can emit `print-ready` before our handler is attached
   // (manifesting as a 30s timeout despite the child window working fine).
+  //
+  // Each handler filters on `payload.label === PRINT_LABEL` so that if two
+  // exports overlap (e.g. the user double-clicks Download), one export's
+  // ready event can't resolve the other's promise — every event is scoped
+  // to its own export window.
   const unlistenReady = await listen('print-ready', (event) => {
     if (settled) return;
+    if (event.payload?.label && event.payload.label !== PRINT_LABEL) return;
     settled = true;
     clearTimeout(readyTimeout);
     resolveReady(event.payload);
   });
   const unlistenError = await listen('print-error', (event) => {
     if (settled) return;
+    if (event.payload?.label && event.payload.label !== PRINT_LABEL) return;
     settled = true;
     clearTimeout(readyTimeout);
     rejectReady(new Error(event.payload?.error ?? 'Print window error'));
@@ -276,6 +283,7 @@ async function generatePdfNative(_resumeEl, filename) {
   // window's init. If print-ready times out, the last step we logged points
   // straight at the hanging step (no guessing).
   const unlistenStep = await listen('print-step', (event) => {
+    if (event.payload?.label && event.payload.label !== PRINT_LABEL) return;
     console.log('[PDF Export] print-step:', event.payload);
   });
 

@@ -99,6 +99,19 @@ pub async fn pick_pdf_save_path(
     default_name: Option<String>,
     pending: State<'_, PendingPdfPath>,
 ) -> Result<Option<String>, String> {
+    // Invalidate any prior unconsumed path BEFORE we show the dialog. If a
+    // previous export armed the slot but never reached capture (cancelled,
+    // errored, app killed mid-flight), that path must not leak into a later
+    // capture call without a fresh user confirmation. Doing this up-front
+    // also covers the dialog-cancel branch below for free.
+    {
+        let mut slot = pending
+            .0
+            .lock()
+            .map_err(|_| "PDF save-path slot lock poisoned".to_string())?;
+        *slot = None;
+    }
+
     let default_name = default_name.unwrap_or_else(|| "Resume.pdf".to_string());
     let (tx, rx) = oneshot::channel::<Option<PathBuf>>();
     window
@@ -118,6 +131,7 @@ pub async fn pick_pdf_save_path(
             *slot = Some(p.clone());
             Ok(Some(p.to_string_lossy().into_owned()))
         }
+        // Slot already cleared above — no further bookkeeping needed.
         _ => Ok(None),
     }
 }
