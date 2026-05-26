@@ -169,6 +169,14 @@ jobs:
       contents: read
     runs-on: macos-latest
     needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -180,13 +188,28 @@ jobs:
           cache: npm
           cache-dependency-path: resume-designer/package-lock.json
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: resume-designer/src-tauri
+
       - name: Install dependencies
         run: npm ci
         working-directory: resume-designer
 
       - name: Apply CI release version
-        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version
         working-directory: resume-designer
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          npm version "$VERSION" --no-git-tag-version
+          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
+          node -e "const fs=require('fs');const p='src-tauri/Cargo.toml';let s=fs.readFileSync(p,'utf8');s=s.replace(/^version = \".*\"/m, 'version = \"'+process.env.VERSION+'\"');fs.writeFileSync(p, s);"
 
       - name: Validate macOS signing and notarization secrets
         env:
@@ -195,6 +218,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           missing=()
           [ -z "$CSC_LINK" ] && missing+=("CSC_LINK")
@@ -202,6 +228,9 @@ jobs:
           [ -z "$APPLE_ID" ] && missing+=("APPLE_ID")
           [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] && missing+=("APPLE_APP_SPECIFIC_PASSWORD")
           [ -z "$APPLE_TEAM_ID" ] && missing+=("APPLE_TEAM_ID")
+          [ -z "$APPLE_SIGNING_IDENTITY" ] && missing+=("APPLE_SIGNING_IDENTITY")
+          [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY")
+          [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
 
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::Missing required macOS signing/notarization secrets: ${missing[*]}"
@@ -211,58 +240,52 @@ jobs:
 
           echo "macOS signing/notarization secrets are configured."
 
-      - name: Build macOS artifacts
-        run: npm run build && npx electron-builder --mac --publish never
-        working-directory: resume-designer
+      - name: Build macOS artifacts (signed + notarized + updater bundle)
+        uses: tauri-apps/tauri-action@v0
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.CSC_LINK }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: resume-designer
+          tauriScript: npx tauri
+          args: --target ${{ matrix.target }}
 
-      - name: Validate macOS update manifest asset paths
+      - name: Normalize macOS artifact filenames
+        shell: bash
+        working-directory: resume-designer/src-tauri/target/${{ matrix.target }}/release/bundle
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
-          node - <<'EOF'
-          const fs = require('node:fs');
-          const path = require('node:path');
+          set -euo pipefail
+          # Tauri emits "<productName>.app.tar.gz" without arch — collides
+          # between matrix builds when both arms write to the same release-flat
+          # dir. Also "Resume Designer" has a space, which GitHub rewrites to
+          # "." in uploaded asset names, breaking latest.json's URL field.
+          # Rename to a no-space arch-suffixed form; the latest.json regex
+          # (aarch64.*\.app\.tar\.gz$ / x(86_)?64.*\.app\.tar\.gz$) still matches.
+          cd macos
+          mv "Resume Designer.app.tar.gz" "Resume-Designer_${ARCH}.app.tar.gz"
+          mv "Resume Designer.app.tar.gz.sig" "Resume-Designer_${ARCH}.app.tar.gz.sig"
+          cd ../dmg
+          for f in *.dmg; do
+            newname="${f// /-}"
+            [ "$f" != "$newname" ] && mv "$f" "$newname"
+          done
 
-          const releaseDir = path.resolve('resume-designer/release');
-          const manifestPath = path.join(releaseDir, 'latest-mac.yml');
-          const manifest = fs.readFileSync(manifestPath, 'utf8');
-
-          const requiredAssets = new Set();
-          for (const line of manifest.split(/\r?\n/)) {
-            const match = line.match(/^\s*(?:url|path):\s*(.+?)\s*$/);
-            if (!match) {
-              continue;
-            }
-            const value = match[1].trim().replace(/^['"]|['"]$/g, '');
-            if (!value || /^https?:\/\//i.test(value)) {
-              continue;
-            }
-            requiredAssets.add(value);
-          }
-
-          const missing = [...requiredAssets].filter((fileName) => !fs.existsSync(path.join(releaseDir, fileName)));
-          if (missing.length > 0) {
-            console.error('latest-mac.yml references missing assets:');
-            for (const fileName of missing) {
-              console.error(`- ${fileName}`);
-            }
-            process.exit(1);
-          }
-          EOF
-
-      - name: Upload macOS artifacts
+      - name: Upload macOS ${{ matrix.arch }} artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-macos
+          name: release-macos-${{ matrix.arch }}
           path: |
-            resume-designer/release/*.dmg
-            resume-designer/release/*.zip
-            resume-designer/release/*.zip.blockmap
-            resume-designer/release/latest-mac.yml
+            resume-designer/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            resume-designer/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            resume-designer/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
 
   build-windows:
@@ -281,60 +304,62 @@ jobs:
           cache: npm
           cache-dependency-path: resume-designer/package-lock.json
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: resume-designer/src-tauri
+
       - name: Install dependencies
         run: npm ci
         working-directory: resume-designer
 
       - name: Apply CI release version
-        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version
         working-directory: resume-designer
-
-      - name: Build Windows artifacts
-        run: npm run build && npx electron-builder --win nsis --publish never
-        working-directory: resume-designer
-
-      - name: Validate Windows update manifest asset paths
         shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          node - <<'EOF'
-          const fs = require('node:fs');
-          const path = require('node:path');
+          npm version "$VERSION" --no-git-tag-version
+          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
+          node -e "const fs=require('fs');const p='src-tauri/Cargo.toml';let s=fs.readFileSync(p,'utf8');s=s.replace(/^version = \".*\"/m, 'version = \"'+process.env.VERSION+'\"');fs.writeFileSync(p, s);"
 
-          const releaseDir = path.resolve('resume-designer/release');
-          const manifestPath = path.join(releaseDir, 'latest.yml');
-          const manifest = fs.readFileSync(manifestPath, 'utf8');
+      - name: Build Windows artifacts (updater bundle, unsigned exe)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: resume-designer
+          tauriScript: npx tauri
+          args: --bundles nsis
 
-          const requiredAssets = new Set();
-          for (const line of manifest.split(/\r?\n/)) {
-            const match = line.match(/^\s*(?:url|path):\s*(.+?)\s*$/);
-            if (!match) {
-              continue;
-            }
-            const value = match[1].trim().replace(/^['"]|['"]$/g, '');
-            if (!value || /^https?:\/\//i.test(value)) {
-              continue;
-            }
-            requiredAssets.add(value);
-          }
-
-          const missing = [...requiredAssets].filter((fileName) => !fs.existsSync(path.join(releaseDir, fileName)));
-          if (missing.length > 0) {
-            console.error('latest.yml references missing assets:');
-            for (const fileName of missing) {
-              console.error(`- ${fileName}`);
-            }
-            process.exit(1);
-          }
-          EOF
+      - name: Normalize Windows artifact filenames
+        shell: bash
+        working-directory: resume-designer/src-tauri/target/release/bundle/nsis
+        run: |
+          set -euo pipefail
+          # GitHub rewrites spaces in asset names to ".", which would break
+          # latest.json's URL field. Strip spaces from the v2 updater outputs
+          # (.exe + .exe.sig) so the uploaded asset names match what the
+          # manifest references. With createUpdaterArtifacts=true Tauri 2
+          # produces v2 format: .exe is the installer/updater payload,
+          # .exe.sig is its detached signature — no .nsis.zip is emitted.
+          for f in *.exe *.exe.sig; do
+            [ -f "$f" ] || continue
+            newname="${f// /-}"
+            [ "$f" != "$newname" ] && mv "$f" "$newname"
+          done
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-windows
           path: |
-            resume-designer/release/*Setup*.exe
-            resume-designer/release/*Setup*.exe.blockmap
-            resume-designer/release/latest.yml
+            resume-designer/src-tauri/target/release/bundle/nsis/*.exe
+            resume-designer/src-tauri/target/release/bundle/nsis/*.exe.sig
           if-no-files-found: error
 
   release:
@@ -346,23 +371,115 @@ jobs:
       - build-macos
       - build-windows
     steps:
-      - name: Download release notes artifact
+      - name: Download release notes
         uses: actions/download-artifact@v4
         with:
           name: release-notes
           path: .
 
-      - name: Download macOS artifacts
+      - name: Download macOS arm64 artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-macos
-          path: release-assets/macos
+          name: release-macos-aarch64
+          path: release-assets/macos-aarch64
+
+      - name: Download macOS x86_64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macos-x86_64
+          path: release-assets/macos-x86_64
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: release-windows
           path: release-assets/windows
+
+      - name: Flatten assets and assemble latest.json
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          node - <<'EOF'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const root = 'release-assets';
+          const flatDir = 'release-flat';
+          fs.mkdirSync(flatDir, { recursive: true });
+
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else fs.copyFileSync(full, path.join(flatDir, entry.name));
+            }
+          }
+          walk(root);
+
+          const files = fs.readdirSync(flatDir);
+          // Surface Tauri's actual artifact names so first-build regex failures
+          // are diagnosable in the Actions log without needing a re-run.
+          console.log('release-flat contents:', files.join(', '));
+          function findOne(pattern) {
+            const m = files.filter((f) => pattern.test(f));
+            if (m.length === 0) throw new Error(`No file matched ${pattern}`);
+            if (m.length > 1) throw new Error(`Multiple files matched ${pattern}: ${m.join(', ')}`);
+            return m[0];
+          }
+          function readSig(file) {
+            return fs.readFileSync(path.join(flatDir, file), 'utf8').trim();
+          }
+
+          const tag = process.env.TAG;
+          // github.repository is "owner/repo" — well-formed by GitHub's naming rules.
+          const baseUrl = `https://github.com/${process.env.REPO_FULL}/releases/download/${tag}`;
+
+          const macArmArchive = findOne(/aarch64.*\.app\.tar\.gz$/);
+          const macArmSig = findOne(/aarch64.*\.app\.tar\.gz\.sig$/);
+          const macIntelArchive = findOne(/x(86_)?64.*\.app\.tar\.gz$/);
+          const macIntelSig = findOne(/x(86_)?64.*\.app\.tar\.gz\.sig$/);
+          // v2 updater format on Windows: the .exe IS the updater payload
+          // and the .exe.sig is the detached signature. Anchor on
+          // `setup.exe` so we don't accidentally pick up some unrelated
+          // .exe; macOS arches go through .dmg / .app.tar.gz, so there's no
+          // cross-platform collision here.
+          const winArchive = findOne(/setup\.exe$/);
+          const winSig = findOne(/setup\.exe\.sig$/);
+
+          const manifest = {
+            version: process.env.VERSION,
+            notes: fs.readFileSync('release-notes.md', 'utf8'),
+            pub_date: new Date().toISOString(),
+            platforms: {
+              'darwin-aarch64': {
+                signature: readSig(macArmSig),
+                url: `${baseUrl}/${macArmArchive}`,
+              },
+              'darwin-x86_64': {
+                signature: readSig(macIntelSig),
+                url: `${baseUrl}/${macIntelArchive}`,
+              },
+              'windows-x86_64': {
+                signature: readSig(winSig),
+                url: `${baseUrl}/${winArchive}`,
+              },
+            },
+          };
+
+          fs.writeFileSync(path.join(flatDir, 'latest.json'), JSON.stringify(manifest, null, 2));
+
+          for (const [platform, entry] of Object.entries(manifest.platforms)) {
+            const expected = entry.url.split('/').pop();
+            if (!fs.existsSync(path.join(flatDir, expected))) {
+              console.error(`latest.json references missing asset for ${platform}: ${expected}`);
+              process.exit(1);
+            }
+          }
+
+          console.log('Assembled latest.json with platforms:', Object.keys(manifest.platforms).join(', '));
+          EOF
 
       - name: Remove existing release assets for tag
         uses: actions/github-script@v7
@@ -405,13 +522,12 @@ jobs:
           name: Resume Designer ${{ needs.prepare.outputs.version }}
           body_path: release-notes.md
           files: |
-            release-assets/macos/**/*.dmg
-            release-assets/macos/**/*.zip
-            release-assets/macos/**/*.zip.blockmap
-            release-assets/macos/**/latest-mac.yml
-            release-assets/windows/**/*Setup*.exe
-            release-assets/windows/**/*Setup*.exe.blockmap
-            release-assets/windows/**/latest.yml
+            release-flat/*.dmg
+            release-flat/*.app.tar.gz
+            release-flat/*.app.tar.gz.sig
+            release-flat/*.exe
+            release-flat/*.exe.sig
+            release-flat/latest.json
           fail_on_unmatched_files: true
           overwrite_files: true
           make_latest: true

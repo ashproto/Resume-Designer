@@ -5,6 +5,7 @@
 
 import { store, generateId } from './store.js';
 import { parseResume } from './parser.js';
+import { isTauri } from './native.js';
 
 const STORAGE_KEY = 'resume-designer-data';
 export const SETTINGS_UPDATED_EVENT = 'resume-designer-settings-updated';
@@ -409,11 +410,10 @@ export async function migrateBuiltInVariants(variants) {
     return false;
   }
   
-  // In Electron, we don't pre-load built-in variants since they require file:// protocol handling
-  // Users will create or import their own resumes via the onboarding wizard
-  const isElectron = typeof window !== 'undefined' && window.electron?.isElectron === true;
-  if (isElectron) {
-    // Skip migration in Electron - let user start fresh with wizard
+  // In desktop builds we don't pre-load built-in variants since fetching from
+  // bundled paths is handled differently in the webview — let the onboarding
+  // wizard guide the user into creating or importing their own resumes.
+  if (isTauri) {
     return false;
   }
   

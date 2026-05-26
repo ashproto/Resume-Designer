@@ -1,0 +1,52 @@
+[package]
+name = "resume-designer"
+version = "1.0.0"
+description = "Creative resume designer and generator."
+authors = ["Ash Shah"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "resume_designer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-process = "2"
+tauri-plugin-os = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "rt"] }
+thiserror = "1"
+
+[target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
+tauri-plugin-updater = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Versions pinned to match what Tauri 2.11 / wry 0.55 pull in transitively, so
+# the dep tree contains a single copy of each crate. See `cargo tree -d` to
+# verify there are no duplicates.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSData", "NSError", "NSString", "NSGeometry"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKPDFConfiguration", "block2", "objc2-app-kit"] }
+block2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# windows 0.61 matches the transitive version webview2-com 0.38 pulls in;
+# pinning here keeps Interface/cast/HSTRING types from the SAME crate version
+# so type-resolution works for WebView2's COM cast chain.
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -5,6 +5,10 @@ node_modules/
 dist/
 release/
 
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
 # Environment files
 .env
 .env.local
@@ -24,6 +28,3 @@ npm-debug.log*
 
 # OS files
 Thumbs.db
-
-# Electron build cache
-.cache/

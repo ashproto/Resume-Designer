@@ -1,17 +1,27 @@
 /* ==========================================================================
    Print Styles
-   Optimized for PDF export and browser printing
-   
-   Note: Page size is controlled dynamically by Electron's printToPDF
-   to support variable-height resumes. Do not hardcode a fixed size here.
+   Optimized for PDF export and browser printing.
+
+   Rules apply under either of two contexts:
+   1. `@media print`   — browser print preview (e.g. Cmd+P in dev mode).
+   2. `html.pdf-export-mode` — programmatic PDF export from the desktop app.
+      WKWebView's `createPDF` does NOT evaluate `@media print` rules, so the
+      renderer toggles this class on `document.documentElement` before
+      invoking the native PDF command. The class lives on `<html>` (not
+      `<body>`) so the resets can reach the html element itself.
+
+   Page size is controlled dynamically by the native PDF backend
+   (printToPDF on Electron historically; WKPDFConfiguration.rect on Tauri
+   macOS via the resume element's measured bounds).
    ========================================================================== */
 
 @media print {
-  /* Reset page - no fixed size, let printToPDF control dimensions */
   @page {
     margin: 0;
   }
-  
+}
+
+@media print {
   /* Hide app chrome */
   .header-bar,
   .chat-panel,
@@ -23,10 +33,24 @@
   .onboarding-overlay,
   .chat-panel-toggle,
   .structure-panel-toggle,
+  .update-status-toast,
+  .thread-selector-menu,
+  .editable-ai-container,
+  .editable-ai-menu,
   #download-pdf {
     display: none !important;
   }
-  
+
+  /* Decorative pseudo-element overlays use color-mix(in srgb, ...) which
+     WKWebView's createPDF pipeline doesn't reliably resolve — the failing
+     color slot falls back to currentcolor (black), turning what should be
+     subtle 15%/8%/5% accent overlays into dark blotches in the captured PDF.
+     Hide them in PDF mode so the resume's solid backgrounds render cleanly. */
+  .resume-header::before,
+  .resume-sidebar::before {
+    display: none !important;
+  }
+
   /* Reset layout - CRITICAL: Remove all flex, overflow, and positioning that can hide content */
   html, body {
     height: auto !important;
@@ -36,21 +60,21 @@
     margin: 0 !important;
     padding: 0 !important;
   }
-  
+
   .app {
     display: block !important;
     height: auto !important;
     width: auto !important;
     overflow: visible !important;
   }
-  
+
   .app-content {
     display: block !important;
     height: auto !important;
     width: auto !important;
     overflow: visible !important;
   }
-  
+
   .preview-area {
     display: block !important;
     padding: 0 !important;
@@ -59,7 +83,7 @@
     overflow: visible !important;
     position: static !important;
   }
-  
+
   /* CRITICAL: Reset the scroll container - this is what was hiding content */
   .resume-scroller {
     display: block !important;
@@ -70,7 +94,7 @@
     overflow: visible !important;
     position: static !important;
   }
-  
+
   .resume-container {
     display: block !important;
     width: auto !important;
@@ -83,7 +107,7 @@
     transform: none !important;
     position: static !important;
   }
-  
+
   .resume {
     display: block !important;
     margin: 0 !important;
@@ -95,33 +119,146 @@
     box-shadow: none !important;
     position: static !important;
   }
-  
+
   /* Ensure colors print */
   * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     color-adjust: exact !important;
   }
-  
+
   /* Prevent page breaks inside elements */
   .experience-item {
     page-break-inside: avoid;
     break-inside: avoid;
   }
-  
+
   .section {
     page-break-inside: avoid;
     break-inside: avoid;
   }
-  
+
   /* Remove hover states */
   a {
     text-decoration: none !important;
   }
-  
+
   /* Hide buttons */
   .btn,
   button {
     display: none !important;
   }
+}
+
+/* ==========================================================================
+   PDF Export Mode (class-based mirror of the @media print block above).
+   Triggered by src/pdf.js setting `html.pdf-export-mode` (on documentElement,
+   NOT body) before invoking the native PDF command, then removing it after.
+   Using `<html>` as the toggle host means the resets can reach the html
+   element itself — selecting `<html>` from a class on `<body>` is impossible
+   in CSS (html is an ancestor of body).
+   ========================================================================== */
+
+html.pdf-export-mode .header-bar,
+html.pdf-export-mode .chat-panel,
+html.pdf-export-mode .structure-panel,
+html.pdf-export-mode .zoom-controls,
+html.pdf-export-mode .edit-mode-hint,
+html.pdf-export-mode .undo-redo-controls,
+html.pdf-export-mode .modal-overlay,
+html.pdf-export-mode .onboarding-overlay,
+html.pdf-export-mode .chat-panel-toggle,
+html.pdf-export-mode .structure-panel-toggle,
+html.pdf-export-mode .update-status-toast,
+html.pdf-export-mode .thread-selector-menu,
+html.pdf-export-mode .editable-ai-container,
+html.pdf-export-mode .editable-ai-menu,
+html.pdf-export-mode #download-pdf {
+  display: none !important;
+}
+
+/* Decorative pseudo-element overlays use color-mix(in srgb, ...) which
+   WKWebView's createPDF pipeline doesn't reliably resolve — the failing
+   color slot falls back to currentcolor (black), turning subtle accent
+   overlays into dark blotches in the captured PDF. Hide them in PDF mode. */
+html.pdf-export-mode .resume-header::before,
+html.pdf-export-mode .resume-sidebar::before {
+  display: none !important;
+}
+
+html.pdf-export-mode,
+html.pdf-export-mode body {
+  height: auto !important;
+  width: auto !important;
+  overflow: visible !important;
+  background: white !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+html.pdf-export-mode .app,
+html.pdf-export-mode .app-content {
+  display: block !important;
+  height: auto !important;
+  width: auto !important;
+  overflow: visible !important;
+}
+
+html.pdf-export-mode .preview-area {
+  display: block !important;
+  padding: 0 !important;
+  height: auto !important;
+  width: auto !important;
+  overflow: visible !important;
+  position: static !important;
+}
+
+html.pdf-export-mode .resume-scroller {
+  display: block !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: auto !important;
+  width: auto !important;
+  overflow: visible !important;
+  position: static !important;
+}
+
+html.pdf-export-mode .resume-container {
+  display: block !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  overflow: visible !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  transform: none !important;
+  position: static !important;
+}
+
+html.pdf-export-mode .resume {
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 8.5in !important;
+  height: auto !important;
+  overflow: visible !important;
+  background: white !important;
+  box-shadow: none !important;
+  position: static !important;
+}
+
+html.pdf-export-mode * {
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+  color-adjust: exact !important;
+}
+
+html.pdf-export-mode a {
+  text-decoration: none !important;
+}
+
+html.pdf-export-mode .btn,
+html.pdf-export-mode button {
+  display: none !important;
 }

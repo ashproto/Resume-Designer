@@ -3,22 +3,26 @@
   "version": "1.0.0",
   "description": "Creative resume designer and generator.",
   "type": "module",
-  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "electron:dev": "npm run build && electron .",
-    "electron:start": "electron .",
-    "electron:build": "npm run build && electron-builder",
-    "electron:build:mac": "npm run build && electron-builder --mac",
-    "electron:build:win": "npm run build && electron-builder --win",
-    "electron:build:all": "npm run build && electron-builder --mac --win",
-    "electron:publish": "npm run build && electron-builder --publish always"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:mac:arm64": "tauri build --target aarch64-apple-darwin",
+    "tauri:build:mac:x64": "tauri build --target x86_64-apple-darwin",
+    "tauri:build:win": "tauri build --target x86_64-pc-windows-msvc"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@tauri-apps/plugin-os": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "@tauri-apps/plugin-updater": "^2",
     "diff": "^8.0.2",
-    "electron-updater": "^6.7.3",
     "html-to-image": "^1.11.13",
     "html2pdf.js": "^0.10.1",
     "mammoth": "^1.11.0",
@@ -26,50 +30,7 @@
     "pdfjs-dist": "^5.4.530"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
+    "@tauri-apps/cli": "^2",
     "vite": "^5.0.0"
-  },
-  "build": {
-    "appId": "com.resumedesigner.app",
-    "productName": "Resume Designer",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*"
-    ],
-    "mac": {
-      "category": "public.app-category.productivity",
-      "icon": "build/icon.icns",
-      "artifactName": "Resume-Designer-${version}-${arch}.${ext}",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
-      "notarize": true,
-      "target": [
-        "dmg",
-        "zip"
-      ]
-    },
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "nsis": {
-      "artifactName": "Resume-Designer-Setup-${version}.${ext}",
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "SiriusA7",
-      "repo": "Resume-Designer"
-    }
   }
 }

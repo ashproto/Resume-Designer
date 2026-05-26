@@ -1,0 +1,30 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the main window and any hidden PDF-export print window",
+  "windows": ["main", "pdf-print-*"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:webview:default",
+    "core:webview:allow-create-webview-window",
+    "core:webview:allow-webview-close",
+    "core:event:default",
+    "core:app:default",
+    "core:resources:default",
+    "dialog:default",
+    "dialog:allow-save",
+    "dialog:allow-open",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "shell:allow-open",
+    "updater:default",
+    "process:default",
+    "process:allow-restart",
+    "os:default",
+    "os:allow-platform"
+  ]
+}
