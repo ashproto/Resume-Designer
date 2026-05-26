@@ -342,9 +342,12 @@ jobs:
         run: |
           set -euo pipefail
           # GitHub rewrites spaces in asset names to ".", which would break
-          # latest.json's URL field. Strip spaces from all NSIS outputs so the
-          # uploaded asset name matches what the manifest references.
-          for f in *.exe *.nsis.zip *.nsis.zip.sig; do
+          # latest.json's URL field. Strip spaces from the v2 updater outputs
+          # (.exe + .exe.sig) so the uploaded asset names match what the
+          # manifest references. With createUpdaterArtifacts=true Tauri 2
+          # produces v2 format: .exe is the installer/updater payload,
+          # .exe.sig is its detached signature — no .nsis.zip is emitted.
+          for f in *.exe *.exe.sig; do
             [ -f "$f" ] || continue
             newname="${f// /-}"
             [ "$f" != "$newname" ] && mv "$f" "$newname"
@@ -356,8 +359,7 @@ jobs:
           name: release-windows
           path: |
             resume-designer/src-tauri/target/release/bundle/nsis/*.exe
-            resume-designer/src-tauri/target/release/bundle/nsis/*.nsis.zip
-            resume-designer/src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
+            resume-designer/src-tauri/target/release/bundle/nsis/*.exe.sig
           if-no-files-found: error
 
   release:
@@ -438,8 +440,13 @@ jobs:
           const macArmSig = findOne(/aarch64.*\.app\.tar\.gz\.sig$/);
           const macIntelArchive = findOne(/x(86_)?64.*\.app\.tar\.gz$/);
           const macIntelSig = findOne(/x(86_)?64.*\.app\.tar\.gz\.sig$/);
-          const winArchive = findOne(/\.nsis\.zip$/);
-          const winSig = findOne(/\.nsis\.zip\.sig$/);
+          // v2 updater format on Windows: the .exe IS the updater payload
+          // and the .exe.sig is the detached signature. Anchor on
+          // `setup.exe` so we don't accidentally pick up some unrelated
+          // .exe; macOS arches go through .dmg / .app.tar.gz, so there's no
+          // cross-platform collision here.
+          const winArchive = findOne(/setup\.exe$/);
+          const winSig = findOne(/setup\.exe\.sig$/);
 
           const manifest = {
             version: process.env.VERSION,
@@ -519,8 +526,7 @@ jobs:
             release-flat/*.app.tar.gz
             release-flat/*.app.tar.gz.sig
             release-flat/*.exe
-            release-flat/*.nsis.zip
-            release-flat/*.nsis.zip.sig
+            release-flat/*.exe.sig
             release-flat/latest.json
           fail_on_unmatched_files: true
           overwrite_files: true
