@@ -10,6 +10,7 @@
  */
 
 import { isElectron, pickPdfSavePath, capturePdfFromWindow } from './native.js';
+import { store } from './store.js';
 
 let html2pdfModule = null;
 
@@ -207,7 +208,22 @@ async function handleDownloadPdf(customFilename) {
  * measures its own copy. Kept in the signature for symmetry with html2pdf.
  */
 async function generatePdfNative(_resumeEl, filename) {
+  // 0. Flush any pending in-memory edits to localStorage BEFORE the print
+  //    window opens. The store's auto-save is debounced (~SAVE_DEBOUNCE_MS),
+  //    so a user who types and immediately clicks "Download PDF" can have
+  //    their latest characters still sitting in memory while the print window
+  //    boots from localStorage and renders stale data. `store.saveNow()`
+  //    runs the persistence callback synchronously, eliminating that race.
+  try {
+    store.saveNow();
+  } catch (e) {
+    console.warn('PDF Export: store.saveNow() failed; continuing with whatever is in localStorage:', e);
+  }
+
   // 1. Save path (main window's dialog, fully visible / no chrome change).
+  //    The Rust side stashes the chosen path in a server-side slot that
+  //    `capture_pdf_from_window` consumes — the renderer never feeds the
+  //    path back into the capture call.
   const savePath = await pickPdfSavePath(filename);
   if (!savePath) {
     console.log('PDF Export: Save canceled by user');
@@ -331,10 +347,12 @@ async function generatePdfNative(_resumeEl, filename) {
       `(${pageSize.width.toFixed(2)}in × ${pageSize.height.toFixed(2)}in)`
     );
 
-    const result = await capturePdfFromWindow(PRINT_LABEL, savePath, pageSize, captureRect);
+    // No `savePath` arg — Rust resolves the destination from the slot the
+    // picker filled. `savePath` is still in scope for diagnostics only.
+    const result = await capturePdfFromWindow(PRINT_LABEL, pageSize, captureRect);
 
     if (result.success) {
-      console.log('PDF Export: PDF saved to:', result.filePath);
+      console.log('PDF Export: PDF saved to:', result.filePath || savePath);
     } else if (result.canceled) {
       console.log('PDF Export: Save canceled');
     } else {

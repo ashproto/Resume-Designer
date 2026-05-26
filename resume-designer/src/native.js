@@ -448,19 +448,24 @@ export async function pickPdfSavePath(defaultName = 'Resume.pdf') {
  * (identified by label). Used by pdf.js after spawning a hidden print window
  * at `/?print=1` and receiving its `print-ready` event.
  *
+ * Notice there is NO `savePath` parameter: the destination path is bound
+ * server-side by the prior `pickPdfSavePath` call (which stashes the
+ * user-confirmed path in Rust state). This prevents the renderer from
+ * writing PDFs to arbitrary filesystem locations even under XSS / a
+ * compromised dependency.
+ *
  * - `pageSize` (inches) is consumed by the Windows WebView2 PrintToPdfAsync path.
  * - `captureRect` (CSS pixels, doc-relative; in the new flow the print window
  *   anchors the resume at origin so x/y are always 0) is consumed by the
  *   macOS WKWebView createPDF path.
  */
-export async function capturePdfFromWindow(windowLabel, savePath, pageSize = null, captureRect = null) {
+export async function capturePdfFromWindow(windowLabel, pageSize = null, captureRect = null) {
   if (!isTauri) {
     return { success: false, error: 'Native PDF generation not available in browser' };
   }
   const { core } = await tauri();
   return await core.invoke('capture_pdf_from_window', {
     windowLabel,
-    savePath,
     pageSize,
     captureRect,
   });

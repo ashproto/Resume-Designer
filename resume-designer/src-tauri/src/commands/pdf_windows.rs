@@ -28,6 +28,11 @@ pub async fn capture_pdf(
     let done_for_setup = done_slot.clone();
     let done_for_handler = done_slot;
 
+    // `with_webview` takes a `move` closure, so any variable it references is
+    // consumed for the duration of that callback. We still need `save_path`
+    // afterwards (to build `PdfResult::success`), so clone the version that
+    // gets moved into the closure and keep the original for the result.
+    let save_path_for_closure = save_path.clone();
     let render_result = target_window.with_webview(move |webview| {
         let setup_result: Result<(), String> = (|| unsafe {
             let core: ICoreWebView2_16 = webview
@@ -66,7 +71,7 @@ pub async fn capture_pdf(
                 let _ = settings2.SetScaleFactor(1.0);
             }
 
-            let path_hstring = HSTRING::from(&save_path);
+            let path_hstring = HSTRING::from(&save_path_for_closure);
             // webview2-com 0.38's PrintToPdfCompletedHandler invokes the
             // closure with (Result<(), Error>, bool). The Result wraps the
             // raw HRESULT (Ok = S_OK, Err carries the error); the bool is

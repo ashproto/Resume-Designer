@@ -10,6 +10,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init())
+        .manage(commands::PendingPdfPath::default())
         .setup(|app| {
             #[cfg(desktop)]
             {

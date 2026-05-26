@@ -23,11 +23,11 @@
     "fs:default",
     {
       "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "**" }]
+      "allow": [{ "path": "$HOME/**" }]
     },
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [{ "path": "**" }]
+      "allow": [{ "path": "$HOME/**" }]
     },
     "shell:allow-open",
     "updater:default",
