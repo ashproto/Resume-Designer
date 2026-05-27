@@ -12,7 +12,8 @@
     "tauri:build": "tauri build",
     "tauri:build:mac:arm64": "tauri build --target aarch64-apple-darwin",
     "tauri:build:mac:x64": "tauri build --target x86_64-apple-darwin",
-    "tauri:build:win": "tauri build --target x86_64-pc-windows-msvc"
+    "tauri:build:win": "tauri build --target x86_64-pc-windows-msvc",
+    "migrate:electron": "node scripts/migrate-from-electron.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "classic-level": "^3.0.0",
     "vite": "^5.0.0"
   }
 }
