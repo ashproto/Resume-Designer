@@ -264,6 +264,128 @@ export function exportAsMarkdown(data, filename) {
   downloadFile(markdown, filename || 'resume.md', 'text/markdown');
 }
 
+// ===== Full backup / restore =====
+//
+// Snapshots EVERY localStorage key the app owns (variants, history,
+// settings, chat, job descriptions) into a single JSON envelope. The
+// envelope format is shared with `scripts/migrate-from-electron.mjs` so
+// a JSON produced from the old Electron LevelDB is also importable here.
+//
+// Why a single envelope instead of N per-key files? The data has
+// internal references (currentVariantId points at a variants key;
+// history is keyed by variantId; chat threads reference variantIds).
+// Round-tripping atomically as a single file keeps those refs
+// consistent — partial restores would risk dangling references.
+
+// The exhaustive list of "owned" keys. Listed explicitly rather than
+// via a wildcard so future contributors notice if they add a new key
+// and forget to include it in the backup.
+const BACKUP_FIXED_KEYS = [
+  // Core data
+  'resume-designer-data',
+  'resume-designer-job-descriptions',
+  'resume-designer-chat-threads',
+  'resume-designer-chat-history',          // legacy, harmless to round-trip
+  'resume-designer-token-usage',
+  // UI / personalization
+  'resume-designer-theme',
+  'resume-designer-onboarding-complete',
+  'resume-edit-hint-dismissed',
+  'resume-header-style',
+  'resume-accent-settings',
+  'resume-font-settings',
+  'resume-spacing-settings',
+  'resume-photo-settings',
+  'resume-zoom',
+];
+// Undo/redo history lives at this prefix, one key per variant.
+const BACKUP_HISTORY_PREFIX = 'resume-designer-history-';
+
+function isOwnedKey(key) {
+  return BACKUP_FIXED_KEYS.includes(key) || key.startsWith(BACKUP_HISTORY_PREFIX);
+}
+
+// Iterate localStorage and return all owned keys. We snapshot first
+// because mutating localStorage during iteration can shift indices.
+function collectOwnedKeys() {
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && isOwnedKey(k)) keys.push(k);
+  }
+  return keys;
+}
+
+/**
+ * Write a JSON file containing every owned localStorage key/value.
+ * Returns { keysExported, filename } for the caller to surface in UI.
+ */
+export function exportFullBackup(filename) {
+  const keys = {};
+  for (const k of collectOwnedKeys()) {
+    const v = localStorage.getItem(k);
+    if (v !== null) keys[k] = v;
+  }
+  const backup = {
+    backupFormat: 1,
+    createdAt: new Date().toISOString(),
+    source: 'in-app',
+    keys,
+  };
+  const stamp = new Date().toISOString().slice(0, 10);
+  const name = filename || `resume-designer-backup-${stamp}.json`;
+  downloadFile(JSON.stringify(backup, null, 2), name, 'application/json');
+  return { keysExported: Object.keys(keys).length, filename: name };
+}
+
+/**
+ * Replace all owned localStorage keys with the contents of a backup JSON
+ * file. Used both by the in-app "Import Backup" button and by users
+ * migrating from the old Electron build via `npm run migrate:electron`.
+ *
+ * Returns { keysImported, removedExistingKeys }. The caller is
+ * responsible for prompting/confirming and for reloading the page so
+ * the in-memory store re-reads from localStorage.
+ */
+export async function importFullBackup(file) {
+  const text = await file.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error('Selected file is not valid JSON.');
+  }
+  if (!parsed || parsed.backupFormat !== 1 ||
+      !parsed.keys || typeof parsed.keys !== 'object') {
+    throw new Error(
+      'Not a Resume Designer backup file (missing "backupFormat: 1" envelope).'
+    );
+  }
+  // Every value must be a string — that's what `localStorage.setItem`
+  // accepts. Catching this here gives a clear error instead of a silent
+  // String() coercion that could corrupt JSON-parseable payloads.
+  for (const [k, v] of Object.entries(parsed.keys)) {
+    if (typeof v !== 'string') {
+      throw new Error(`Invalid backup: key "${k}" must be a string value.`);
+    }
+  }
+
+  // Clean slate: remove every existing owned key so the imported state
+  // is the canonical post-import state (no orphan keys from prior use).
+  const removed = collectOwnedKeys();
+  for (const k of removed) localStorage.removeItem(k);
+
+  // Write the backup's keys.
+  for (const [k, v] of Object.entries(parsed.keys)) {
+    localStorage.setItem(k, v);
+  }
+
+  return {
+    keysImported: Object.keys(parsed.keys).length,
+    removedExistingKeys: removed.length,
+  };
+}
+
 // Generate markdown from resume data
 function generateMarkdown(data) {
   let md = '';

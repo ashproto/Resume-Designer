@@ -15,6 +15,8 @@ import {
   importFile,
   exportAsJSON,
   exportAsMarkdown,
+  exportFullBackup,
+  importFullBackup,
   generateUniqueVariantName
 } from './persistence.js';
 import { store, generateId, EMPTY_RESUME } from './store.js';
@@ -430,6 +432,23 @@ export function renderHeaderBar() {
               </svg>
               Version History
             </button>
+            <button class="header-tools-option" id="btn-export-full-backup" title="Save all resumes, settings, job descriptions, and history to a single JSON file">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Export Full Backup
+            </button>
+            <label class="header-tools-option" id="btn-import-full-backup" title="Restore from a backup JSON (replaces current data)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              Import Backup…
+              <input type="file" id="header-import-backup-file" accept="application/json,.json" hidden>
+            </label>
             ${isElectron ? `
             <button class="header-tools-option" id="btn-check-updates">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -769,7 +788,25 @@ function setupHeaderEventListeners() {
       document.getElementById('header-tools-menu')?.classList.remove('show');
       triggerManualUpdateCheck();
     }
-    
+
+    // Export Full Backup — writes every owned localStorage key into a
+    // single JSON file. Pairs with the migrate-from-electron.mjs script.
+    if (target.id === 'btn-export-full-backup') {
+      document.getElementById('header-tools-menu')?.classList.remove('show');
+      try {
+        const { keysExported, filename } = exportFullBackup();
+        // No alert on success — the browser download bar / native save
+        // dialog is feedback enough. Log for debuggability.
+        console.log(`[backup] Exported ${keysExported} keys to ${filename}`);
+      } catch (err) {
+        console.error('[backup] Export failed:', err);
+        alert(`Export failed: ${err.message ?? String(err)}`);
+      }
+    }
+    // The Import Backup label wraps a hidden file input; clicking the
+    // label triggers the input, whose change handler does the work
+    // (registered below). No click handler needed here.
+
     // Export button
     if (target.id === 'btn-header-export') {
       const menu = document.getElementById('header-export-menu');
@@ -799,6 +836,56 @@ function setupHeaderEventListeners() {
         importVariant(file);
         e.target.value = ''; // Reset for re-import
       }
+    }
+    // Import Full Backup — restores every owned localStorage key from
+    // a JSON envelope produced by either Export Full Backup or
+    // `scripts/migrate-from-electron.mjs`.
+    if (e.target.id === 'header-import-backup-file') {
+      const file = e.target.files[0];
+      e.target.value = ''; // Reset early so re-selecting same file works
+      if (!file) return;
+      document.getElementById('header-tools-menu')?.classList.remove('show');
+      (async () => {
+        try {
+          // Parse FIRST so we can show key count BEFORE confirming
+          // (avoids the "destructive confirm with unknown payload"
+          // anti-pattern). We re-parse inside importFullBackup, which
+          // also handles the actual write — that's the authoritative
+          // pass; this peek is just for the confirm dialog.
+          const text = await file.text();
+          let preview;
+          try {
+            preview = JSON.parse(text);
+          } catch (_) {
+            throw new Error('Selected file is not valid JSON.');
+          }
+          if (!preview || preview.backupFormat !== 1 || !preview.keys) {
+            throw new Error('Not a Resume Designer backup file.');
+          }
+          const incoming = Object.keys(preview.keys).length;
+          const ok = confirm(
+            `Restore from backup?\n\n` +
+            `This backup contains ${incoming} keys ` +
+            `(created ${preview.createdAt || 'unknown date'}).\n\n` +
+            `Your current resumes, job descriptions, history, and ` +
+            `settings will be REPLACED.\n\n` +
+            `The app will reload after import.`
+          );
+          if (!ok) return;
+          const result = await importFullBackup(file);
+          alert(
+            `Restored ${result.keysImported} keys from backup ` +
+            `(removed ${result.removedExistingKeys} existing keys).\n\n` +
+            `Reloading…`
+          );
+          // Reload so the store re-reads from localStorage; the UI
+          // would otherwise still show the pre-import in-memory state.
+          window.location.reload();
+        } catch (err) {
+          console.error('[backup] Import failed:', err);
+          alert(`Import failed: ${err.message ?? String(err)}`);
+        }
+      })();
     }
   });
   
