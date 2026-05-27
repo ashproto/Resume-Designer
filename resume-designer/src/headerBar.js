@@ -17,13 +17,18 @@ import {
   exportAsMarkdown,
   exportFullBackup,
   importFullBackup,
+  importFullBackupFromEnvelope,
+  importFullBackupMerge,
   generateUniqueVariantName
 } from './persistence.js';
 import { store, generateId, EMPTY_RESUME } from './store.js';
 import {
   isElectron,
+  isTauri,
   checkForUpdates,
-  onUpdateStatus
+  onUpdateStatus,
+  probeLegacyElectronData,
+  importLegacyElectronData,
 } from './native.js';
 
 let currentVariantId = null;
@@ -119,6 +124,166 @@ function showPromptModal(message, defaultValue = '') {
       }
     });
   });
+}
+
+/**
+ * Three-button modal for the "Import from previous Electron version"
+ * flow. Resolves to 'merge', 'replace', or null (cancel).
+ *
+ * Uses the project's existing .modal-overlay / .modal classes so
+ * theming, dark mode, and the print-mode hide rule come for free.
+ * Native `confirm()` only supports OK/Cancel, so we hand-roll this
+ * to expose all three choices in one dialog rather than chaining
+ * confirms.
+ *
+ * Dynamic values (counts, source path) are injected via textContent
+ * placeholders rather than template-string interpolation, so a path
+ * that happens to contain `<`/`>` can never become HTML.
+ */
+function showLegacyImportDialog(probe) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'legacy-import-modal-overlay';
+    const variantWord = probe.variantCount === 1 ? 'resume' : 'resumes';
+    const jdWord = probe.jobDescriptionCount === 1 ? 'job description' : 'job descriptions';
+    // Static HTML skeleton with placeholder ids; populated below via
+    // textContent (XSS-safe).
+    overlay.innerHTML = `
+      <div class="modal" style="max-width: 480px;">
+        <div class="modal-header">
+          <h3 class="modal-title">Import data from your previous version?</h3>
+          <button class="modal-close" id="legacy-import-close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-content">
+          <p style="margin-top: 0;">Found data from the old Electron version:</p>
+          <ul style="margin: 8px 0 12px 20px; padding: 0;">
+            <li><strong id="legacy-import-variant-count"></strong> <span id="legacy-import-variant-word"></span></li>
+            <li><strong id="legacy-import-jd-count"></strong> <span id="legacy-import-jd-word"></span></li>
+            <li id="legacy-import-profile-line" hidden>Your user profile</li>
+          </ul>
+          <p style="font-size: 0.85em; color: var(--color-text-muted); margin: 0 0 16px 0; word-break: break-all;">
+            Source: <code id="legacy-import-source-path"></code>
+          </p>
+          <p style="margin: 0 0 8px 0;"><strong>Merge:</strong> Add the old resumes alongside your current ones. Your current resumes, user profile, and settings are preserved.</p>
+          <p style="margin: 0 0 16px 0;"><strong>Replace:</strong> Discard your current data and use the old data instead.</p>
+          <div class="form-actions" style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+            <button class="btn btn-secondary" id="legacy-import-cancel">Cancel</button>
+            <button class="btn btn-secondary" id="legacy-import-replace">Replace</button>
+            <button class="btn btn-primary" id="legacy-import-merge">Merge</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Inject dynamic values via textContent — never innerHTML — so a
+    // hostile path or unexpected count value can't break out into
+    // executable markup.
+    overlay.querySelector('#legacy-import-variant-count').textContent = String(probe.variantCount);
+    overlay.querySelector('#legacy-import-variant-word').textContent = variantWord;
+    overlay.querySelector('#legacy-import-jd-count').textContent = String(probe.jobDescriptionCount);
+    overlay.querySelector('#legacy-import-jd-word').textContent = jdWord;
+    overlay.querySelector('#legacy-import-source-path').textContent = probe.sourcePath ?? 'unknown';
+    if (probe.userProfilePresent) {
+      overlay.querySelector('#legacy-import-profile-line').hidden = false;
+    }
+
+    requestAnimationFrame(() => overlay.classList.add('show'));
+
+    const cleanup = (result) => {
+      overlay.classList.remove('show');
+      setTimeout(() => overlay.remove(), 200);
+      document.removeEventListener('keydown', keyHandler);
+      resolve(result);
+    };
+    overlay.querySelector('#legacy-import-close').addEventListener('click', () => cleanup(null));
+    overlay.querySelector('#legacy-import-cancel').addEventListener('click', () => cleanup(null));
+    overlay.querySelector('#legacy-import-replace').addEventListener('click', () => cleanup('replace'));
+    overlay.querySelector('#legacy-import-merge').addEventListener('click', () => cleanup('merge'));
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cleanup(null);
+    });
+    const keyHandler = (e) => {
+      if (e.key === 'Escape') cleanup(null);
+    };
+    document.addEventListener('keydown', keyHandler);
+  });
+}
+
+/**
+ * Tools → Import from previous Electron version… handler.
+ *
+ * - Probe via Rust. If nothing found, show a friendly alert with the
+ *   path we checked so the user can see we actually looked.
+ * - If found, show the merge/replace/cancel dialog (above).
+ * - On Merge: call importFullBackupMerge — current state wins on
+ *   collision, so anything the user has built in the new version is
+ *   preserved; old variants get added alongside.
+ * - On Replace: call importFullBackupFromEnvelope — destructive,
+ *   wipes current owned keys and writes the legacy envelope.
+ * - On either success, reload so the in-memory store re-reads from
+ *   localStorage and the variant selector reflects the new state.
+ */
+async function handleImportLegacyElectron() {
+  if (!isTauri) {
+    alert('Legacy-data import is only available in the desktop app.');
+    return;
+  }
+  let probe;
+  try {
+    probe = await probeLegacyElectronData();
+  } catch (err) {
+    console.error('[legacy-import] probe failed:', err);
+    alert(`Could not check for legacy data: ${err?.message ?? String(err)}`);
+    return;
+  }
+  if (!probe?.found) {
+    const where = probe?.sourcePath
+      ? `Looked at: ${probe.sourcePath}`
+      : 'No legacy Electron data directory exists at the standard userData path.';
+    alert(`No legacy Electron data found.\n\n${where}`);
+    return;
+  }
+
+  const choice = await showLegacyImportDialog(probe);
+  if (!choice) return;
+
+  let envelope;
+  try {
+    envelope = await importLegacyElectronData();
+  } catch (err) {
+    console.error('[legacy-import] extract failed:', err);
+    alert(`Could not read legacy data: ${err?.message ?? String(err)}`);
+    return;
+  }
+
+  try {
+    if (choice === 'merge') {
+      const r = importFullBackupMerge(envelope);
+      alert(
+        `Merged in ${r.variantsAdded} resumes, ${r.jobDescriptionsAdded} job descriptions, ` +
+        `and ${r.settingsKeysAdded} settings keys from your previous version.\n\n` +
+        `Reloading…`
+      );
+    } else {
+      const r = importFullBackupFromEnvelope(envelope);
+      alert(
+        `Restored ${r.keysImported} keys from your previous version ` +
+        `(removed ${r.removedExistingKeys} existing keys).\n\n` +
+        `Reloading…`
+      );
+    }
+    window.location.reload();
+  } catch (err) {
+    console.error('[legacy-import] apply failed:', err);
+    alert(`Import failed: ${err?.message ?? String(err)}`);
+  }
 }
 
 // Initialize header bar
@@ -449,6 +614,15 @@ export function renderHeaderBar() {
               Import Backup…
               <input type="file" id="header-import-backup-file" accept="application/json,.json" hidden>
             </label>
+            ${isTauri ? `
+            <button class="header-tools-option" id="btn-import-legacy-electron" title="Bring in resumes and settings from the old Electron version of the app">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 1 0 9-9"/>
+                <polyline points="3 4 3 12 11 12"/>
+              </svg>
+              Import from previous Electron version…
+            </button>
+            ` : ''}
             ${isElectron ? `
             <button class="header-tools-option" id="btn-check-updates">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -783,6 +957,14 @@ function setupHeaderEventListeners() {
       }
     }
 
+    // Import from previous Electron version — opt-in path for users
+    // whose auto-migration didn't run (or didn't merge the way they
+    // wanted). Opens a probe+confirm flow with Merge/Replace choice.
+    if (target.id === 'btn-import-legacy-electron') {
+      document.getElementById('header-tools-menu')?.classList.remove('show');
+      handleImportLegacyElectron();
+    }
+
     // Check for updates
     if (target.id === 'btn-check-updates') {
       document.getElementById('header-tools-menu')?.classList.remove('show');
@@ -790,7 +972,7 @@ function setupHeaderEventListeners() {
     }
 
     // Export Full Backup — writes every owned localStorage key into a
-    // single JSON file. Pairs with the migrate-from-electron.mjs script.
+    // single JSON file. Pairs with Import Backup… for portable backups.
     if (target.id === 'btn-export-full-backup') {
       document.getElementById('header-tools-menu')?.classList.remove('show');
       try {
