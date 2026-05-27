@@ -76,50 +76,33 @@ fn is_app_key(k: &str) -> bool {
     FIXED_KEYS.contains(&k) || k.starts_with(HISTORY_PREFIX)
 }
 
-// ---------- Platform-specific path lookup ----------
+// ---------- Path lookup ----------
 //
 // Electron's userData dir defaults follow `app.getPath('userData')`,
-// which on each platform is:
-//   macOS:   $HOME/Library/Application Support/<productName>
-//   Windows: %APPDATA%/<productName>
-//   Linux:   $XDG_CONFIG_HOME or $HOME/.config/<productName>
+// which is `<config-base>/<productName>` where `<config-base>` is:
+//   macOS:   $HOME/Library/Application Support
+//   Windows: %APPDATA%  (Roaming)
+//   Linux:   $XDG_CONFIG_HOME or $HOME/.config
 //
-// We check both productName variants (the lowercase-hyphenated one
-// matched the on-disk reality for this app; the capital-spaced one is
-// what `Resume Designer` would produce if `productName` were set to the
-// app's display name).
+// `dirs::config_dir()` already returns exactly that base on every
+// platform AND honors $XDG_CONFIG_HOME on Linux — we use it directly
+// rather than constructing platform-specific paths by hand (which is
+// how the previous implementation silently missed Linux users with a
+// non-default $XDG_CONFIG_HOME).
+//
+// We check both productName variants because the lowercase-hyphenated
+// one matched the on-disk reality for this app, while the
+// capital-spaced one is what Electron would write if `productName`
+// were set to the app's display name.
 fn candidate_paths() -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(base) = dirs::config_dir() else {
         return Vec::new();
     };
-
-    let mut roots: Vec<PathBuf> = Vec::new();
-
-    #[cfg(target_os = "macos")]
-    {
-        roots.push(home.join("Library").join("Application Support"));
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // Prefer the real APPDATA env var; fall back to the canonical path.
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            roots.push(PathBuf::from(appdata));
-        } else {
-            roots.push(home.join("AppData").join("Roaming"));
-        }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        roots.push(home.join(".config"));
-    }
-
     let suffix = Path::new("Local Storage").join("leveldb");
-    let mut out = Vec::new();
-    for root in roots {
-        out.push(root.join("resume-designer").join(&suffix));
-        out.push(root.join("Resume Designer").join(&suffix));
-    }
-    out
+    vec![
+        base.join("resume-designer").join(&suffix),
+        base.join("Resume Designer").join(&suffix),
+    ]
 }
 
 fn find_existing() -> Option<PathBuf> {
