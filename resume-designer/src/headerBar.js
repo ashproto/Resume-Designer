@@ -22,6 +22,7 @@ import {
   generateUniqueVariantName
 } from './persistence.js';
 import { store, generateId, EMPTY_RESUME } from './store.js';
+import { flushPendingProfileSave } from './userProfilePanel.js';
 import {
   isElectron,
   isTauri,
@@ -342,18 +343,30 @@ async function handleImportLegacyElectron() {
   }
 
   try {
-    // Flush any pending debounced save (store.scheduleSave uses a 500 ms
-    // setTimeout; src/store.js:415). The import writes localStorage
-    // directly, bypassing the in-memory store — so a save callback
-    // already queued in the macrotask queue would still hold the
-    // PRE-import `data` reference, and would run during
-    // reloadWithOverlay's 16 ms event-loop yield and overwrite the
-    // freshly-imported `resume-designer-data`. saveNow() both clears
-    // the timer and synchronously persists the latest in-memory state,
-    // which matters for the Merge path (current data wins on collision,
-    // so unsaved edits need to be in localStorage when the merge runs).
+    // Flush ALL pending debounced writers that target owned localStorage
+    // keys, then run the import. Two writers exist today:
+    //   1. resume store (src/store.js:415) — 500 ms setTimeout that
+    //      writes `data` to localStorage via saveCallback(data).
+    //   2. profile panel (src/userProfilePanel.js:654) — 500 ms
+    //      setTimeout whose saveUserProfile() re-reads
+    //      `resume-designer-data`, splices in `userProfile` from
+    //      `profileData`, and writes back.
+    //
+    // Both bypass the import path entirely. The import writes
+    // localStorage directly, and reloadWithOverlay() yields the event
+    // loop for ~16 ms so its overlay paint commits before reload. Any
+    // save callback whose timer already fired (and is sitting in the
+    // macrotask queue) will run during that yield — writing PRE-import
+    // state on top of the freshly-imported data and reloading into a
+    // corrupted backup. Flushing both writers here closes that race.
+    //
+    // saveNow() and flushPendingProfileSave() both clearTimeout +
+    // synchronously persist — the synchronous-persist matters for the
+    // Merge path (current data wins on collision, so unsaved edits
+    // need to be in localStorage when the merge runs).
     try {
       store.saveNow();
+      flushPendingProfileSave();
     } catch (err) {
       // Don't block the import — worst case the user's last few
       // keystrokes since the last debounced save are lost, but the
@@ -1164,14 +1177,16 @@ function setupHeaderEventListeners() {
             `The app will reload after import.`
           );
           if (!ok) return;
-          // Flush any pending debounced save before the destructive
-          // restore runs. See handleImportLegacyElectron above for the
-          // full reasoning — short version: reloadWithOverlay yields to
-          // the event loop for 16 ms before reload(), and a queued save
-          // callback holding the pre-import in-memory state would fire
-          // in that window and overwrite resume-designer-data.
+          // Flush all pending debounced writers (resume store + profile
+          // panel) before the destructive restore. See
+          // handleImportLegacyElectron above for the full reasoning —
+          // short version: reloadWithOverlay yields to the event loop
+          // for 16 ms before reload(), and any queued save callback
+          // (resume `data` OR profile `profileData`) fires in that
+          // window and overwrites the just-imported resume-designer-data.
           try {
             store.saveNow();
+            flushPendingProfileSave();
           } catch (err) {
             console.warn('[backup] pre-import flush failed:', err);
           }

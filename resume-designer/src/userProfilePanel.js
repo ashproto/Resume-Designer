@@ -664,6 +664,32 @@ function scheduleSave() {
 }
 
 /**
+ * Cancel any pending debounced profile save and synchronously flush the
+ * latest in-memory profile state to localStorage. Mirror of
+ * `store.saveNow()` for the resume store; used by import handlers in
+ * headerBar.js right before they trigger a delayed `reload()`.
+ *
+ * The race this closes: the profile autosave callback inside
+ * `scheduleSave()`'s setTimeout reads `loadFromStorage()` (i.e. the
+ * latest `resume-designer-data`), splices `userProfile` with the
+ * in-memory `profileData`, and writes back. If the import wrote a
+ * fresh `resume-designer-data` and then yielded the event loop (which
+ * `reloadWithOverlay()` does for ~16 ms to commit its overlay paint),
+ * the queued autosave fires during that yield and silently mutates the
+ * just-imported backup — imported `userProfile` would be clobbered by
+ * the stale `profileData`. Flushing the timer here prevents that.
+ *
+ * No-op when no save is pending — safe to call unconditionally.
+ */
+export function flushPendingProfileSave() {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+    saveUserProfile(profileData);
+  }
+}
+
+/**
  * Show save indicator briefly
  */
 function showSaveIndicator() {
