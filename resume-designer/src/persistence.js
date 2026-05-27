@@ -399,6 +399,139 @@ export async function importFullBackup(file) {
   return importFullBackupFromEnvelope(parsed);
 }
 
+/**
+ * Non-destructive variant of envelope import: UNION the incoming
+ * envelope into whatever is already in localStorage. Used by the
+ * "Import from previous Electron version… → Merge" menu flow so a
+ * user who already has Tauri-side data doesn't lose it when pulling
+ * old variants in from the legacy LevelDB.
+ *
+ * Merge semantics, chosen to optimize for "user already has new work
+ * I don't want to lose":
+ *
+ *   resume-designer-data
+ *     - variants: union; if a variant ID collides, CURRENT wins
+ *       (the user just created it; the legacy copy is presumed older)
+ *     - currentVariantId, userProfile, settings: CURRENT wins for
+ *       every top-level singleton. Surprising the user with a
+ *       different selected variant or a profile rewrite is worse
+ *       than leaving the legacy values un-imported.
+ *
+ *   resume-designer-job-descriptions
+ *     - Union by `id`; current wins on collision. The shape can be
+ *       either an array or an object map historically — we handle
+ *       both (older Electron snapshots used objects; newer arrays).
+ *
+ *   resume-designer-history-<variantId>
+ *     - Add legacy keys only if no current key by the same name
+ *       (legacy history attached to a variant that the current state
+ *       doesn't have wins; for collisions current wins).
+ *
+ *   Every other owned key (chat-threads, token-usage, theme, accent /
+ *   font / spacing / photo / header-style settings, zoom, onboarding,
+ *   edit-hint-dismissed)
+ *     - Write incoming ONLY if not already present. Current wins.
+ *
+ * Returns { variantsAdded, jobDescriptionsAdded, settingsKeysAdded }
+ * so the caller can build a precise "merged in X resumes, Y JDs"
+ * confirmation toast.
+ */
+export function importFullBackupMerge(parsed) {
+  if (!parsed || parsed.backupFormat !== 1 ||
+      !parsed.keys || typeof parsed.keys !== 'object') {
+    throw new Error(
+      'Not a Resume Designer backup envelope (missing "backupFormat: 1").'
+    );
+  }
+  for (const [k, v] of Object.entries(parsed.keys)) {
+    if (typeof v !== 'string') {
+      throw new Error(`Invalid backup: key "${k}" must be a string value.`);
+    }
+  }
+
+  let variantsAdded = 0;
+  let jobDescriptionsAdded = 0;
+  let settingsKeysAdded = 0;
+
+  for (const [key, incomingValue] of Object.entries(parsed.keys)) {
+    const existingValue = localStorage.getItem(key);
+
+    if (key === 'resume-designer-data') {
+      // Merge the data blob: variants union (current wins on
+      // collision), all top-level singletons preserved from current.
+      let incomingData;
+      try { incomingData = JSON.parse(incomingValue); }
+      catch { continue; }  // malformed incoming — skip, don't poison existing
+
+      if (!existingValue) {
+        // No current data — just adopt the incoming wholesale.
+        localStorage.setItem(key, incomingValue);
+        variantsAdded += Object.keys(incomingData?.variants || {}).length;
+        continue;
+      }
+
+      let existingData;
+      try { existingData = JSON.parse(existingValue); }
+      catch { continue; }  // malformed existing — leave alone, don't risk overwrite
+
+      const existingVariants = existingData.variants || {};
+      const incomingVariants = incomingData.variants || {};
+      const mergedVariants = { ...incomingVariants, ...existingVariants };
+
+      // Count only variants that were actually NEW (not present in current).
+      for (const id of Object.keys(incomingVariants)) {
+        if (!(id in existingVariants)) variantsAdded++;
+      }
+
+      const merged = {
+        ...incomingData,                  // baseline = incoming's top-level shape
+        ...existingData,                  // current wins for currentVariantId,
+                                          //   userProfile, settings, etc.
+        variants: mergedVariants,
+      };
+      localStorage.setItem(key, JSON.stringify(merged));
+    } else if (key === 'resume-designer-job-descriptions') {
+      // Union job descriptions, dedupe by id. Handles both array and
+      // legacy-object shapes (older Electron snapshots used objects).
+      let incomingJds;
+      try { incomingJds = JSON.parse(incomingValue); }
+      catch { continue; }
+      const incomingArr = Array.isArray(incomingJds)
+        ? incomingJds
+        : Object.values(incomingJds || {});
+
+      if (!existingValue) {
+        localStorage.setItem(key, incomingValue);
+        jobDescriptionsAdded += incomingArr.length;
+        continue;
+      }
+
+      let existingJds;
+      try { existingJds = JSON.parse(existingValue); }
+      catch { continue; }
+      const existingArr = Array.isArray(existingJds)
+        ? existingJds
+        : Object.values(existingJds || {});
+      const existingIds = new Set(existingArr.map((j) => j?.id).filter(Boolean));
+      const toAdd = incomingArr.filter((j) => j?.id && !existingIds.has(j.id));
+      jobDescriptionsAdded += toAdd.length;
+
+      // Always emit as array (current canonical shape).
+      const merged = [...existingArr, ...toAdd];
+      localStorage.setItem(key, JSON.stringify(merged));
+    } else {
+      // All other owned keys (history, theme, settings, chat threads,
+      // etc.): current wins. Only write incoming if no current value.
+      if (existingValue === null) {
+        localStorage.setItem(key, incomingValue);
+        settingsKeysAdded++;
+      }
+    }
+  }
+
+  return { variantsAdded, jobDescriptionsAdded, settingsKeysAdded };
+}
+
 // Generate markdown from resume data
 function generateMarkdown(data) {
   let md = '';
