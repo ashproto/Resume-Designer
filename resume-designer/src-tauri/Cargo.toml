@@ -26,9 +26,13 @@ tokio = { version = "1", features = ["sync", "rt"] }
 thiserror = "1"
 # Used by the one-time legacy-Electron migrator (commands/migration.rs).
 # Pure-Rust LevelDB reader so we don't drag in a C++ build toolchain across
-# all three target platforms. `dirs` resolves $HOME / $APPDATA / $XDG_CONFIG_HOME
-# for Electron userData path lookup.
-rusty-leveldb = { version = "3", default-features = false }
+# all three target platforms. The `fs` feature is REQUIRED, not optional:
+# without it, rusty-leveldb's default Options::env is an in-memory env
+# rather than `PosixDiskEnv`, so DB::open silently can't see any real
+# files (CURRENT, MANIFEST, .ldb) and fails with "database does not exist"
+# even when the directory is right there. `dirs` resolves $HOME / $APPDATA /
+# $XDG_CONFIG_HOME for Electron userData path lookup.
+rusty-leveldb = "3"
 dirs = "5"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
