@@ -264,21 +264,34 @@ async function handleImportLegacyElectron() {
   }
 
   try {
+    let summary;
+    let skipNote = '';
     if (choice === 'merge') {
       const r = importFullBackupMerge(envelope);
-      alert(
+      summary =
         `Merged in ${r.variantsAdded} resumes, ${r.jobDescriptionsAdded} job descriptions, ` +
-        `and ${r.settingsKeysAdded} settings keys from your previous version.\n\n` +
-        `Reloading…`
-      );
+        `and ${r.settingsKeysAdded} settings keys from your previous version.`;
+      if (r.historySkipped > 0) {
+        skipNote =
+          `\n\nNote: ${r.historySkipped} undo/redo history ` +
+          `${r.historySkipped === 1 ? 'entry was' : 'entries were'} too large to fit ` +
+          `in browser storage and ${r.historySkipped === 1 ? 'was' : 'were'} skipped. ` +
+          `Your resumes themselves are intact.`;
+      }
     } else {
       const r = importFullBackupFromEnvelope(envelope);
-      alert(
+      summary =
         `Restored ${r.keysImported} keys from your previous version ` +
-        `(removed ${r.removedExistingKeys} existing keys).\n\n` +
-        `Reloading…`
-      );
+        `(removed ${r.removedExistingKeys} existing keys).`;
+      if (r.historySkipped > 0) {
+        skipNote =
+          `\n\nNote: ${r.historySkipped} undo/redo history ` +
+          `${r.historySkipped === 1 ? 'entry was' : 'entries were'} too large to fit ` +
+          `in browser storage and ${r.historySkipped === 1 ? 'was' : 'were'} skipped. ` +
+          `Your resumes themselves are intact.`;
+      }
     }
+    alert(`${summary}${skipNote}\n\nReloading…`);
     window.location.reload();
   } catch (err) {
     console.error('[legacy-import] apply failed:', err);
