@@ -501,7 +501,12 @@ export function importFullBackupMerge(parsed) {
         : Object.values(incomingJds || {});
 
       if (!existingValue) {
-        localStorage.setItem(key, incomingValue);
+        // ALWAYS write the normalized array shape — even when there's
+        // nothing to merge with. jobDescriptions.js assumes an array
+        // (uses .find / .unshift / .filter / spread on the parsed
+        // value); writing the raw incoming object would crash the
+        // next time the user opened the Job Descriptions panel.
+        localStorage.setItem(key, JSON.stringify(incomingArr));
         jobDescriptionsAdded += incomingArr.length;
         continue;
       }
