@@ -23,8 +23,23 @@ import { initStructurePanel, setDesignSettings } from './structurePanel.js';
 import { initHeaderBar, getCurrentId, loadVariant } from './headerBar.js';
 import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initZoomControls } from './zoomControls.js';
-import { migrateBuiltInVariants, saveSettings, getSettings, SETTINGS_UPDATED_EVENT, getCurrentVariantId, getVariants } from './persistence.js';
-import { isTauri, getPlatform, openExternal, startupUpdateCheck } from './native.js';
+import {
+  migrateBuiltInVariants,
+  saveSettings,
+  getSettings,
+  SETTINGS_UPDATED_EVENT,
+  getCurrentVariantId,
+  getVariants,
+  importFullBackupFromEnvelope,
+} from './persistence.js';
+import {
+  isTauri,
+  getPlatform,
+  openExternal,
+  startupUpdateCheck,
+  probeLegacyElectronData,
+  importLegacyElectronData,
+} from './native.js';
 import { initTheme, setupThemeToggleAfterRender } from './theme.js';
 import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
 import { initHistoryPanel, openHistoryPanel } from './historyPanel.js';
@@ -145,6 +160,101 @@ let currentPalette = 'terracotta';
 let currentLayout = 'sidebar';
 let customColor = '#c45c3e';
 
+// localStorage flag set by `maybeAutoMigrateLegacyData` to remember
+// whether we've already tried (regardless of outcome). Lives outside
+// the `resume-designer-*` backup-owned keyspace so it's NOT wiped when
+// the user runs Import Backup — that way reimporting a legacy backup
+// doesn't accidentally retrigger auto-migration on the next launch.
+const ELECTRON_MIGRATION_FLAG = 'resume-designer-electron-migration-attempted';
+
+/**
+ * Auto-import legacy Electron `localStorage` (LevelDB on disk) on the
+ * first Tauri boot after upgrading from Electron. Strict guards:
+ *
+ *   1. Only runs in Tauri (web has no backend command to probe).
+ *   2. Only runs ONCE — sets `ELECTRON_MIGRATION_FLAG` regardless of
+ *      outcome (found / not-found / error).
+ *   3. Only runs when current Tauri localStorage has no
+ *      `resume-designer-data` — so a user who's already created
+ *      content in the new build won't have it overwritten.
+ *
+ * Failures are swallowed (logged to console only) so a corrupt LevelDB
+ * or permission error can never block boot. The user can still get
+ * their data via Tools → Import Backup if they have a JSON elsewhere.
+ *
+ * MUST run before `getSettings()` / store init below, otherwise those
+ * read empty localStorage and the just-imported data won't be picked
+ * up until the next launch.
+ */
+async function maybeAutoMigrateLegacyData() {
+  if (!isTauri) return;
+  if (localStorage.getItem(ELECTRON_MIGRATION_FLAG)) return;
+  if (localStorage.getItem('resume-designer-data')) {
+    // User already has Tauri-side data; don't touch it. Set the flag
+    // so we stop probing on every launch from here on out.
+    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-has-data');
+    return;
+  }
+
+  try {
+    const probe = await probeLegacyElectronData();
+    if (!probe?.found) {
+      localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-no-legacy');
+      return;
+    }
+    console.log('[migration] Legacy Electron data found:', probe);
+
+    const envelope = await importLegacyElectronData();
+    const result = importFullBackupFromEnvelope(envelope);
+    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'imported');
+    console.log(
+      `[migration] Imported ${result.keysImported} keys from legacy Electron data` +
+      ` (removed ${result.removedExistingKeys} pre-existing keys).`
+    );
+    // Defer the toast slightly so it shows AFTER the UI mounts —
+    // otherwise the toast element gets clobbered by re-renders.
+    setTimeout(() => showMigrationToast(probe), 800);
+  } catch (err) {
+    console.warn('[migration] Auto-import failed; continuing with empty store:', err);
+    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'failed');
+    // Silent fail — user can still use Tools → Import Backup manually
+    // if they have a JSON backup from elsewhere.
+  }
+}
+
+/**
+ * Non-blocking "your data was imported" toast. Reuses the existing
+ * `.update-status-toast` class so it inherits styling, dark-mode
+ * support, and the print-mode hide rule.
+ */
+function showMigrationToast(probe) {
+  const variantWord = probe.variantCount === 1 ? 'resume' : 'resumes';
+  const jdWord = probe.jobDescriptionCount === 1 ? 'job description' : 'job descriptions';
+  const message =
+    `Imported ${probe.variantCount} ${variantWord} and ` +
+    `${probe.jobDescriptionCount} ${jdWord} from your previous version.`;
+
+  let toast = document.getElementById('migration-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'migration-toast';
+    toast.className = 'update-status-toast tone-success';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  // Force a re-add of `show` even if the element already had it, so the
+  // transition replays for visibility.
+  toast.classList.remove('show');
+  // Reading offsetWidth flushes the style change before re-adding the
+  // class — otherwise the browser may coalesce both into a single tick
+  // and skip the transition.
+  void toast.offsetWidth;
+  toast.classList.add('show');
+  // 8 seconds: long enough to read a one-line message, short enough to
+  // not feel like it's stuck.
+  setTimeout(() => toast.classList.remove('show'), 8000);
+}
+
 // Initialize the application
 async function init() {
   // Print-mode short-circuit: when this window was opened by pdf.js's hidden
@@ -157,6 +267,12 @@ async function init() {
       return initPrintMode();
     }
   }
+
+  // FIRST thing after print-mode check: see if there's legacy Electron
+  // data to pull in. Must happen before getSettings() / store
+  // initialization below, since those read from the localStorage we're
+  // about to populate.
+  await maybeAutoMigrateLegacyData();
 
   // Tag the html element so CSS can apply desktop-only chrome (traffic light
   // padding on macOS, etc.). Keep the legacy `electron` / `electron-mac`

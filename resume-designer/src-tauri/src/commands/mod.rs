@@ -21,6 +21,12 @@ mod pdf_macos;
 #[cfg(target_os = "windows")]
 mod pdf_windows;
 
+// `pub` so `generate_handler!` in lib.rs can name the commands as
+// `commands::migration::probe_legacy_electron_data`. The macro
+// references compiler-generated helper items that sit next to the
+// command function, so a plain `pub use` re-export wouldn't be enough.
+pub mod migration;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]

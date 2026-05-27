@@ -375,3 +375,37 @@ export async function capturePdfFromWindow(windowLabel, pageSize = null, capture
     captureRect,
   });
 }
+
+/**
+ * Check whether a legacy Electron LevelDB exists on disk with this
+ * app's data in it. Returns a `ProbeResult` shape: `{ found, sourcePath,
+ * keyCount, variantCount, jobDescriptionCount, userProfilePresent }`.
+ * Pure read — never modifies the source LevelDB.
+ *
+ * In a non-Tauri context (web fallback) returns a "not found" result so
+ * the caller can no-op without conditional branching.
+ */
+export async function probeLegacyElectronData() {
+  if (!isTauri) {
+    return { found: false };
+  }
+  const { core } = await tauri();
+  return await core.invoke('probe_legacy_electron_data');
+}
+
+/**
+ * Open the legacy Electron LevelDB, decode its `resume-designer-*` and
+ * `resume-*` keys, and return a backup-envelope object the caller can
+ * pass directly to `importFullBackupFromEnvelope` in persistence.js.
+ *
+ * Throws (rejects) if no legacy data is found or extraction fails.
+ * Callers should treat this as best-effort and silently continue boot
+ * on rejection — there's a manual fallback (Tools → Import Backup).
+ */
+export async function importLegacyElectronData() {
+  if (!isTauri) {
+    throw new Error('Legacy Electron import is only available in the desktop app.');
+  }
+  const { core } = await tauri();
+  return await core.invoke('import_legacy_electron_data');
+}

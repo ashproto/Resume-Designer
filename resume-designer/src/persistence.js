@@ -339,26 +339,21 @@ export function exportFullBackup(filename) {
 }
 
 /**
- * Replace all owned localStorage keys with the contents of a backup JSON
- * file. Used both by the in-app "Import Backup" button and by users
- * migrating from the old Electron build via `npm run migrate:electron`.
+ * Replace all owned localStorage keys with the contents of an already-
+ * parsed backup envelope. Auto-migration (which receives the envelope
+ * directly from a Rust command) and the file-based importer below both
+ * funnel through here.
  *
  * Returns { keysImported, removedExistingKeys }. The caller is
- * responsible for prompting/confirming and for reloading the page so
- * the in-memory store re-reads from localStorage.
+ * responsible for prompting/confirming and for ensuring the in-memory
+ * store re-reads from localStorage (via reload, or by running this
+ * BEFORE the store first reads).
  */
-export async function importFullBackup(file) {
-  const text = await file.text();
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (e) {
-    throw new Error('Selected file is not valid JSON.');
-  }
+export function importFullBackupFromEnvelope(parsed) {
   if (!parsed || parsed.backupFormat !== 1 ||
       !parsed.keys || typeof parsed.keys !== 'object') {
     throw new Error(
-      'Not a Resume Designer backup file (missing "backupFormat: 1" envelope).'
+      'Not a Resume Designer backup envelope (missing "backupFormat: 1").'
     );
   }
   // Every value must be a string — that's what `localStorage.setItem`
@@ -384,6 +379,24 @@ export async function importFullBackup(file) {
     keysImported: Object.keys(parsed.keys).length,
     removedExistingKeys: removed.length,
   };
+}
+
+/**
+ * Replace all owned localStorage keys with the contents of a backup JSON
+ * file (Tools → Import Backup). Thin wrapper around
+ * `importFullBackupFromEnvelope` that handles file-read + JSON-parse
+ * with a distinct error message so the UI can distinguish "not JSON"
+ * from "wrong envelope shape".
+ */
+export async function importFullBackup(file) {
+  const text = await file.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error('Selected file is not valid JSON.');
+  }
+  return importFullBackupFromEnvelope(parsed);
 }
 
 // Generate markdown from resume data
