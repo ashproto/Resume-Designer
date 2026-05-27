@@ -342,6 +342,25 @@ async function handleImportLegacyElectron() {
   }
 
   try {
+    // Flush any pending debounced save (store.scheduleSave uses a 500 ms
+    // setTimeout; src/store.js:415). The import writes localStorage
+    // directly, bypassing the in-memory store — so a save callback
+    // already queued in the macrotask queue would still hold the
+    // PRE-import `data` reference, and would run during
+    // reloadWithOverlay's 16 ms event-loop yield and overwrite the
+    // freshly-imported `resume-designer-data`. saveNow() both clears
+    // the timer and synchronously persists the latest in-memory state,
+    // which matters for the Merge path (current data wins on collision,
+    // so unsaved edits need to be in localStorage when the merge runs).
+    try {
+      store.saveNow();
+    } catch (err) {
+      // Don't block the import — worst case the user's last few
+      // keystrokes since the last debounced save are lost, but the
+      // imported data is what they explicitly asked for.
+      console.warn('[legacy-import] pre-import flush failed:', err);
+    }
+
     let summary;
     let skipNote = '';
     if (choice === 'merge') {
@@ -1145,6 +1164,17 @@ function setupHeaderEventListeners() {
             `The app will reload after import.`
           );
           if (!ok) return;
+          // Flush any pending debounced save before the destructive
+          // restore runs. See handleImportLegacyElectron above for the
+          // full reasoning — short version: reloadWithOverlay yields to
+          // the event loop for 16 ms before reload(), and a queued save
+          // callback holding the pre-import in-memory state would fire
+          // in that window and overwrite resume-designer-data.
+          try {
+            store.saveNow();
+          } catch (err) {
+            console.warn('[backup] pre-import flush failed:', err);
+          }
           const result = await importFullBackup(file);
           let backupNote = '';
           if (result.historySkipped > 0) {
