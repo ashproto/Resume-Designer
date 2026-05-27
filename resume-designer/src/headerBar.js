@@ -217,6 +217,84 @@ function showLegacyImportDialog(probe) {
 }
 
 /**
+ * Bridge the visual gap between "user clicked OK on the post-import
+ * alert" and "the WebView finishes reloading and painting the new
+ * state."
+ *
+ * Native `alert()` is modal but synchronous: as soon as the user
+ * dismisses it, JS resumes and `window.location.reload()` runs. The
+ * actual reload takes 1-3 seconds though (page unload, fetch, re-init,
+ * font load, render of 200+ KB of imported data), and during the
+ * unload window the WebView keeps painting the OLD DOM — so the user
+ * sees the stale, unchanged page and thinks OK didn't fire. Then the
+ * page goes blank, then the app reappears.
+ *
+ * This helper paints a full-viewport "Reloading…" overlay before the
+ * reload kicks in, so the moment OK fires the user has continuous
+ * "we're working on it" feedback through the transition. Using
+ * `void overlay.offsetHeight` + a 16 ms timeout guarantees the
+ * browser paints the overlay BEFORE `reload()` blocks the renderer.
+ */
+function reloadWithOverlay(message = 'Reloading…') {
+  const overlay = document.createElement('div');
+  overlay.id = 'reload-overlay';
+  // Inline styles so the overlay works even if main.css has been
+  // partially purged during a teardown — we don't want to depend on
+  // class lookups during what's effectively a page-shutdown moment.
+  overlay.style.cssText = [
+    'position: fixed',
+    'inset: 0',
+    'z-index: 99999',
+    'background: var(--color-bg, #ffffff)',
+    'color: var(--color-text, #333333)',
+    'font-family: var(--font-body, system-ui, -apple-system, sans-serif)',
+    'font-size: 16px',
+    'display: flex',
+    'align-items: center',
+    'justify-content: center',
+    'flex-direction: column',
+    'gap: 12px',
+    // Important: opacity 1 from the start, no transition — we want
+    // INSTANT coverage of the stale DOM, not a fade-in.
+    'opacity: 1',
+  ].join(';');
+
+  const spinner = document.createElement('div');
+  spinner.style.cssText = [
+    'width: 28px',
+    'height: 28px',
+    'border: 3px solid var(--color-border, #ccc)',
+    'border-top-color: var(--color-accent, #c45c3e)',
+    'border-radius: 50%',
+    'animation: rd-reload-spin 0.7s linear infinite',
+  ].join(';');
+
+  // Inject the keyframes once (defensive — the class might already
+  // exist on a re-entry, but we don't track it; the duplicate <style>
+  // is harmless).
+  const style = document.createElement('style');
+  style.textContent =
+    '@keyframes rd-reload-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+  document.head.appendChild(style);
+
+  const text = document.createElement('div');
+  text.textContent = message;
+
+  overlay.append(spinner, text);
+  document.body.appendChild(overlay);
+
+  // Force a synchronous layout + paint so the overlay is on screen
+  // before we ask the browser to unload.
+  void overlay.offsetHeight;
+
+  // 16 ms = roughly one frame; enough to ensure the overlay paint
+  // commits before reload() begins. setTimeout (not requestAnimationFrame)
+  // because the rAF callback can be deferred when the page is about
+  // to unload.
+  setTimeout(() => window.location.reload(), 16);
+}
+
+/**
  * Tools → Import from previous Electron version… handler.
  *
  * - Probe via Rust. If nothing found, show a friendly alert with the
@@ -292,7 +370,7 @@ async function handleImportLegacyElectron() {
       }
     }
     alert(`${summary}${skipNote}\n\nReloading…`);
-    window.location.reload();
+    reloadWithOverlay('Loading your imported data…');
   } catch (err) {
     console.error('[legacy-import] apply failed:', err);
     alert(`Import failed: ${err?.message ?? String(err)}`);
@@ -1088,7 +1166,11 @@ function setupHeaderEventListeners() {
           );
           // Reload so the store re-reads from localStorage; the UI
           // would otherwise still show the pre-import in-memory state.
-          window.location.reload();
+          // Use the overlay variant so the user gets immediate visual
+          // feedback during the multi-second reload+reinit, rather
+          // than seeing the stale pre-import DOM and assuming the
+          // OK click was ignored.
+          reloadWithOverlay('Loading your imported data…');
         } catch (err) {
           console.error('[backup] Import failed:', err);
           alert(`Import failed: ${err.message ?? String(err)}`);
