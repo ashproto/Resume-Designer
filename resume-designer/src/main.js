@@ -209,11 +209,19 @@ async function maybeAutoMigrateLegacyData() {
     localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'imported');
     console.log(
       `[migration] Imported ${result.keysImported} keys from legacy Electron data` +
-      ` (removed ${result.removedExistingKeys} pre-existing keys).`
+      ` (removed ${result.removedExistingKeys} pre-existing keys` +
+      (result.historySkipped > 0
+        ? `; skipped ${result.historySkipped} oversize history entries`
+        : '') +
+      `).`
     );
     // Defer the toast slightly so it shows AFTER the UI mounts —
     // otherwise the toast element gets clobbered by re-renders.
-    setTimeout(() => showMigrationToast(probe), 800);
+    // Pass `result` so the toast can mention any quota-skipped
+    // history (the Tools-menu callers surface this in their alerts;
+    // the silent boot path needs to surface it too — otherwise the
+    // user has no way of knowing some history was dropped).
+    setTimeout(() => showMigrationToast(probe, result), 800);
   } catch (err) {
     console.warn('[migration] Auto-import failed; continuing with empty store:', err);
     localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'failed');
@@ -226,13 +234,27 @@ async function maybeAutoMigrateLegacyData() {
  * Non-blocking "your data was imported" toast. Reuses the existing
  * `.update-status-toast` class so it inherits styling, dark-mode
  * support, and the print-mode hide rule.
+ *
+ * `result` is optional; when present and `result.historySkipped > 0`,
+ * the toast appends a second sentence noting how many undo/redo
+ * history entries were dropped because they hit the localStorage
+ * quota. Keeping the user informed matters here because the silent
+ * auto-migration path has no other surface to report the skip — and
+ * a "history is now missing" surprise weeks later is worse UX than a
+ * 10-second toast at boot.
  */
-function showMigrationToast(probe) {
+function showMigrationToast(probe, result = null) {
   const variantWord = probe.variantCount === 1 ? 'resume' : 'resumes';
   const jdWord = probe.jobDescriptionCount === 1 ? 'job description' : 'job descriptions';
-  const message =
+  let message =
     `Imported ${probe.variantCount} ${variantWord} and ` +
     `${probe.jobDescriptionCount} ${jdWord} from your previous version.`;
+  if (result?.historySkipped > 0) {
+    const n = result.historySkipped;
+    message +=
+      ` (${n} oversize undo/redo history ${n === 1 ? 'entry was' : 'entries were'} ` +
+      `skipped due to browser storage limits.)`;
+  }
 
   let toast = document.getElementById('migration-toast');
   if (!toast) {

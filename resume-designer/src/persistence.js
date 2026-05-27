@@ -305,6 +305,56 @@ function isOwnedKey(key) {
   return BACKUP_FIXED_KEYS.includes(key) || key.startsWith(BACKUP_HISTORY_PREFIX);
 }
 
+/**
+ * Recognize a localStorage QuotaExceededError across browser engines.
+ * Different browsers report this differently and JS doesn't expose a
+ * single canonical predicate; we accept the four common forms:
+ *   - WebKit/Blink: `e.name === 'QuotaExceededError'`
+ *   - Firefox:      `e.name === 'NS_ERROR_DOM_QUOTA_REACHED'` or `e.code === 1014`
+ *   - Legacy:       `e.code === 22` (DOMException quota code)
+ *   - Fallback:     message text contains "quota" (defensive)
+ */
+function isQuotaExceededError(e) {
+  if (!e) return false;
+  if (e.name === 'QuotaExceededError') return true;
+  if (e.name === 'NS_ERROR_DOM_QUOTA_REACHED') return true;
+  if (e.code === 22 || e.code === 1014) return true;
+  return /quota/i.test(String(e.message ?? ''));
+}
+
+/**
+ * Write a localStorage key with graceful fallback for history keys
+ * specifically. Returns true on success, false if the write was
+ * skipped because we hit the storage quota AND it was a history key.
+ *
+ * History (undo/redo per variant) can be 100s of KB to multiple MB
+ * for users with long edit sessions. WKWebView's per-origin
+ * localStorage cap is ~5 MB — large legacy data sets blow past it on
+ * import. Treating history as best-effort means resumes / job
+ * descriptions / user profile (a few hundred KB total) always fit,
+ * and we drop the least-important data instead of failing the
+ * entire import.
+ *
+ * Critical keys (resume-designer-data, job descriptions, etc.)
+ * still throw on quota — they shouldn't be that big, and silently
+ * losing them would be a much worse failure mode than surfacing
+ * an error.
+ */
+function writeOwnedKeyOrSkip(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    if (isQuotaExceededError(e) && key.startsWith(BACKUP_HISTORY_PREFIX)) {
+      console.warn(
+        `[backup] Skipping history key "${key}" — storage quota exceeded.`
+      );
+      return false;
+    }
+    throw e;
+  }
+}
+
 // Iterate localStorage and return all owned keys. We snapshot first
 // because mutating localStorage during iteration can shift indices.
 function collectOwnedKeys() {
@@ -370,14 +420,42 @@ export function importFullBackupFromEnvelope(parsed) {
   const removed = collectOwnedKeys();
   for (const k of removed) localStorage.removeItem(k);
 
-  // Write the backup's keys.
-  for (const [k, v] of Object.entries(parsed.keys)) {
+  // Two-pass write to handle the localStorage quota safely:
+  //
+  //   Pass 1: every NON-history key (resume-designer-data, JDs, chat
+  //   threads, all settings keys). These are small in aggregate
+  //   (~250 KB for the typical user), well under any WebView's
+  //   per-origin localStorage cap. We write them first so they
+  //   ALWAYS land — even if pass 2 runs out of room. A
+  //   QuotaExceededError here would be unrecoverable and bubbles up.
+  //
+  //   Pass 2: every history key (`resume-designer-history-*`). These
+  //   are best-effort because they can be 100s of KB to MB per
+  //   variant and routinely add up to 3-4 MB total. If any one of
+  //   them exceeds the remaining quota, we skip just that key and
+  //   keep going. Losing some undo/redo history is a fair trade for
+  //   keeping the resumes themselves.
+  //
+  // Without this split, a one-pass loop in BTreeMap-alphabetical
+  // order (which is what the Rust side produces) would write history
+  // BEFORE job-descriptions — so a history blow-out would take the
+  // critical JD key down with it.
+  const entries = Object.entries(parsed.keys);
+  const nonHistory = entries.filter(([k]) => !k.startsWith(BACKUP_HISTORY_PREFIX));
+  const history = entries.filter(([k]) => k.startsWith(BACKUP_HISTORY_PREFIX));
+
+  for (const [k, v] of nonHistory) {
     localStorage.setItem(k, v);
+  }
+  let historySkipped = 0;
+  for (const [k, v] of history) {
+    if (!writeOwnedKeyOrSkip(k, v)) historySkipped++;
   }
 
   return {
-    keysImported: Object.keys(parsed.keys).length,
+    keysImported: entries.length - historySkipped,
     removedExistingKeys: removed.length,
+    historySkipped,
   };
 }
 
@@ -452,8 +530,20 @@ export function importFullBackupMerge(parsed) {
   let variantsAdded = 0;
   let jobDescriptionsAdded = 0;
   let settingsKeysAdded = 0;
+  let historySkipped = 0;
 
-  for (const [key, incomingValue] of Object.entries(parsed.keys)) {
+  // Sort incoming so non-history keys are processed first. Same
+  // reasoning as importFullBackupFromEnvelope: critical data gets
+  // written while there's quota; history (the bulky stuff) goes
+  // last and is allowed to fall off the end if it doesn't fit.
+  const sortedEntries = Object.entries(parsed.keys).sort(([a], [b]) => {
+    const aHist = a.startsWith(BACKUP_HISTORY_PREFIX);
+    const bHist = b.startsWith(BACKUP_HISTORY_PREFIX);
+    if (aHist === bHist) return 0;
+    return aHist ? 1 : -1;
+  });
+
+  for (const [key, incomingValue] of sortedEntries) {
     const existingValue = localStorage.getItem(key);
 
     if (key === 'resume-designer-data') {
@@ -527,14 +617,25 @@ export function importFullBackupMerge(parsed) {
     } else {
       // All other owned keys (history, theme, settings, chat threads,
       // etc.): current wins. Only write incoming if no current value.
+      // History keys are quota-tolerant (best-effort) since they can
+      // easily blow past the localStorage cap; non-history fall back
+      // to a normal setItem that propagates errors.
       if (existingValue === null) {
-        localStorage.setItem(key, incomingValue);
-        settingsKeysAdded++;
+        if (key.startsWith(BACKUP_HISTORY_PREFIX)) {
+          if (writeOwnedKeyOrSkip(key, incomingValue)) {
+            settingsKeysAdded++;
+          } else {
+            historySkipped++;
+          }
+        } else {
+          localStorage.setItem(key, incomingValue);
+          settingsKeysAdded++;
+        }
       }
     }
   }
 
-  return { variantsAdded, jobDescriptionsAdded, settingsKeysAdded };
+  return { variantsAdded, jobDescriptionsAdded, settingsKeysAdded, historySkipped };
 }
 
 // Generate markdown from resume data
