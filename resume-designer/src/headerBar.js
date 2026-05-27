@@ -1068,10 +1068,23 @@ function setupHeaderEventListeners() {
           );
           if (!ok) return;
           const result = await importFullBackup(file);
+          let backupNote = '';
+          if (result.historySkipped > 0) {
+            // Same skip-note shape as handleImportLegacyElectron so a
+            // user sees consistent language whether they import via
+            // file picker or via the legacy-Electron menu item.
+            backupNote =
+              `\n\nNote: ${result.historySkipped} undo/redo history ` +
+              `${result.historySkipped === 1 ? 'entry was' : 'entries were'} ` +
+              `too large to fit in browser storage and ` +
+              `${result.historySkipped === 1 ? 'was' : 'were'} skipped. ` +
+              `Your resumes themselves are intact.`;
+          }
           alert(
             `Restored ${result.keysImported} keys from backup ` +
-            `(removed ${result.removedExistingKeys} existing keys).\n\n` +
-            `Reloading…`
+            `(removed ${result.removedExistingKeys} existing keys).` +
+            backupNote +
+            `\n\nReloading…`
           );
           // Reload so the store re-reads from localStorage; the UI
           // would otherwise still show the pre-import in-memory state.
