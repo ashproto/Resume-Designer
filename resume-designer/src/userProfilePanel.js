@@ -639,9 +639,20 @@ function parseCustomSections(content) {
  * Close the user profile panel
  */
 export function closePanel() {
-  // Save any pending changes before closing
+  // Save any pending changes before closing.
+  //
+  // Critical: null `saveTimeout` after `clearTimeout` so this module's
+  // "saveTimeout truthy ⇒ a save is pending" contract holds. Without
+  // this null, the handle stays truthy after the timer is gone, and
+  // any later caller using `if (saveTimeout)` as a pending-save check
+  // (scheduleSave's de-dup branch, flushPendingProfileSave) would
+  // wrongly re-flush the now-stale `profileData` and clobber state
+  // written by other paths in the meantime — e.g. `aiService.js`
+  // calls `saveUserProfile(mergedProfile)` directly after the AI
+  // interview, completely independent of this module's `profileData`.
   if (saveTimeout) {
     clearTimeout(saveTimeout);
+    saveTimeout = null;
     saveUserProfile(profileData);
   }
   panelContainer?.classList.remove('show');
@@ -661,6 +672,32 @@ function scheduleSave() {
     showSaveIndicator();
     saveTimeout = null;
   }, 500);
+}
+
+/**
+ * Cancel any pending debounced profile save and synchronously flush the
+ * latest in-memory profile state to localStorage. Mirror of
+ * `store.saveNow()` for the resume store; used by import handlers in
+ * headerBar.js right before they trigger a delayed `reload()`.
+ *
+ * The race this closes: the profile autosave callback inside
+ * `scheduleSave()`'s setTimeout reads `loadFromStorage()` (i.e. the
+ * latest `resume-designer-data`), splices `userProfile` with the
+ * in-memory `profileData`, and writes back. If the import wrote a
+ * fresh `resume-designer-data` and then yielded the event loop (which
+ * `reloadWithOverlay()` does for ~16 ms to commit its overlay paint),
+ * the queued autosave fires during that yield and silently mutates the
+ * just-imported backup — imported `userProfile` would be clobbered by
+ * the stale `profileData`. Flushing the timer here prevents that.
+ *
+ * No-op when no save is pending — safe to call unconditionally.
+ */
+export function flushPendingProfileSave() {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+    saveUserProfile(profileData);
+  }
 }
 
 /**

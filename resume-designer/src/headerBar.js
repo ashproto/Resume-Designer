@@ -16,12 +16,12 @@ import {
   exportAsJSON,
   exportAsMarkdown,
   exportFullBackup,
-  importFullBackup,
   importFullBackupFromEnvelope,
   importFullBackupMerge,
   generateUniqueVariantName
 } from './persistence.js';
 import { store, generateId, EMPTY_RESUME } from './store.js';
+import { flushPendingProfileSave } from './userProfilePanel.js';
 import {
   isElectron,
   isTauri,
@@ -217,6 +217,84 @@ function showLegacyImportDialog(probe) {
 }
 
 /**
+ * Bridge the visual gap between "user clicked OK on the post-import
+ * alert" and "the WebView finishes reloading and painting the new
+ * state."
+ *
+ * Native `alert()` is modal but synchronous: as soon as the user
+ * dismisses it, JS resumes and `window.location.reload()` runs. The
+ * actual reload takes 1-3 seconds though (page unload, fetch, re-init,
+ * font load, render of 200+ KB of imported data), and during the
+ * unload window the WebView keeps painting the OLD DOM — so the user
+ * sees the stale, unchanged page and thinks OK didn't fire. Then the
+ * page goes blank, then the app reappears.
+ *
+ * This helper paints a full-viewport "Reloading…" overlay before the
+ * reload kicks in, so the moment OK fires the user has continuous
+ * "we're working on it" feedback through the transition. Using
+ * `void overlay.offsetHeight` + a 16 ms timeout guarantees the
+ * browser paints the overlay BEFORE `reload()` blocks the renderer.
+ */
+function reloadWithOverlay(message = 'Reloading…') {
+  const overlay = document.createElement('div');
+  overlay.id = 'reload-overlay';
+  // Inline styles so the overlay works even if main.css has been
+  // partially purged during a teardown — we don't want to depend on
+  // class lookups during what's effectively a page-shutdown moment.
+  overlay.style.cssText = [
+    'position: fixed',
+    'inset: 0',
+    'z-index: 99999',
+    'background: var(--color-bg, #ffffff)',
+    'color: var(--color-text, #333333)',
+    'font-family: var(--font-body, system-ui, -apple-system, sans-serif)',
+    'font-size: 16px',
+    'display: flex',
+    'align-items: center',
+    'justify-content: center',
+    'flex-direction: column',
+    'gap: 12px',
+    // Important: opacity 1 from the start, no transition — we want
+    // INSTANT coverage of the stale DOM, not a fade-in.
+    'opacity: 1',
+  ].join(';');
+
+  const spinner = document.createElement('div');
+  spinner.style.cssText = [
+    'width: 28px',
+    'height: 28px',
+    'border: 3px solid var(--color-border, #ccc)',
+    'border-top-color: var(--color-accent, #c45c3e)',
+    'border-radius: 50%',
+    'animation: rd-reload-spin 0.7s linear infinite',
+  ].join(';');
+
+  // Inject the keyframes once (defensive — the class might already
+  // exist on a re-entry, but we don't track it; the duplicate <style>
+  // is harmless).
+  const style = document.createElement('style');
+  style.textContent =
+    '@keyframes rd-reload-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+  document.head.appendChild(style);
+
+  const text = document.createElement('div');
+  text.textContent = message;
+
+  overlay.append(spinner, text);
+  document.body.appendChild(overlay);
+
+  // Force a synchronous layout + paint so the overlay is on screen
+  // before we ask the browser to unload.
+  void overlay.offsetHeight;
+
+  // 16 ms = roughly one frame; enough to ensure the overlay paint
+  // commits before reload() begins. setTimeout (not requestAnimationFrame)
+  // because the rAF callback can be deferred when the page is about
+  // to unload.
+  setTimeout(() => window.location.reload(), 16);
+}
+
+/**
  * Tools → Import from previous Electron version… handler.
  *
  * - Probe via Rust. If nothing found, show a friendly alert with the
@@ -264,6 +342,37 @@ async function handleImportLegacyElectron() {
   }
 
   try {
+    // Flush ALL pending debounced writers that target owned localStorage
+    // keys, then run the import. Two writers exist today:
+    //   1. resume store (src/store.js:415) — 500 ms setTimeout that
+    //      writes `data` to localStorage via saveCallback(data).
+    //   2. profile panel (src/userProfilePanel.js:654) — 500 ms
+    //      setTimeout whose saveUserProfile() re-reads
+    //      `resume-designer-data`, splices in `userProfile` from
+    //      `profileData`, and writes back.
+    //
+    // Both bypass the import path entirely. The import writes
+    // localStorage directly, and reloadWithOverlay() yields the event
+    // loop for ~16 ms so its overlay paint commits before reload. Any
+    // save callback whose timer already fired (and is sitting in the
+    // macrotask queue) will run during that yield — writing PRE-import
+    // state on top of the freshly-imported data and reloading into a
+    // corrupted backup. Flushing both writers here closes that race.
+    //
+    // saveNow() and flushPendingProfileSave() both clearTimeout +
+    // synchronously persist — the synchronous-persist matters for the
+    // Merge path (current data wins on collision, so unsaved edits
+    // need to be in localStorage when the merge runs).
+    try {
+      store.saveNow();
+      flushPendingProfileSave();
+    } catch (err) {
+      // Don't block the import — worst case the user's last few
+      // keystrokes since the last debounced save are lost, but the
+      // imported data is what they explicitly asked for.
+      console.warn('[legacy-import] pre-import flush failed:', err);
+    }
+
     let summary;
     let skipNote = '';
     if (choice === 'merge') {
@@ -292,7 +401,7 @@ async function handleImportLegacyElectron() {
       }
     }
     alert(`${summary}${skipNote}\n\nReloading…`);
-    window.location.reload();
+    reloadWithOverlay('Loading your imported data…');
   } catch (err) {
     console.error('[legacy-import] apply failed:', err);
     alert(`Import failed: ${err?.message ?? String(err)}`);
@@ -1044,9 +1153,11 @@ function setupHeaderEventListeners() {
         try {
           // Parse FIRST so we can show key count BEFORE confirming
           // (avoids the "destructive confirm with unknown payload"
-          // anti-pattern). We re-parse inside importFullBackup, which
-          // also handles the actual write — that's the authoritative
-          // pass; this peek is just for the confirm dialog.
+          // anti-pattern). This is also the ONLY parse pass — we feed
+          // the already-validated `preview` straight into
+          // importFullBackupFromEnvelope below, so there's no second
+          // `await file.text()` between the flush and the writes (see
+          // the comment at that call site).
           const text = await file.text();
           let preview;
           try {
@@ -1067,7 +1178,29 @@ function setupHeaderEventListeners() {
             `The app will reload after import.`
           );
           if (!ok) return;
-          const result = await importFullBackup(file);
+          // Flush all pending debounced writers (resume store + profile
+          // panel) before the destructive restore. See
+          // handleImportLegacyElectron above for the full reasoning —
+          // short version: reloadWithOverlay yields to the event loop
+          // for 16 ms before reload(), and any queued save callback
+          // (resume `data` OR profile `profileData`) fires in that
+          // window and overwrites the just-imported resume-designer-data.
+          try {
+            store.saveNow();
+            flushPendingProfileSave();
+          } catch (err) {
+            console.warn('[backup] pre-import flush failed:', err);
+          }
+          // SYNCHRONOUS call (not `await importFullBackup(file)`) on
+          // purpose. importFullBackup() would do a second `file.text()`
+          // — that await would yield the event loop AFTER our flush
+          // but BEFORE the writes, leaving a window where the user's
+          // next keystroke could schedule a fresh debounced save that
+          // we haven't flushed. importFullBackupFromEnvelope() takes
+          // the already-parsed preview and runs the writes
+          // synchronously, so flush→writes→alert→reload is one
+          // uninterrupted call chain — no yield points, no race.
+          const result = importFullBackupFromEnvelope(preview);
           let backupNote = '';
           if (result.historySkipped > 0) {
             // Same skip-note shape as handleImportLegacyElectron so a
@@ -1088,7 +1221,11 @@ function setupHeaderEventListeners() {
           );
           // Reload so the store re-reads from localStorage; the UI
           // would otherwise still show the pre-import in-memory state.
-          window.location.reload();
+          // Use the overlay variant so the user gets immediate visual
+          // feedback during the multi-second reload+reinit, rather
+          // than seeing the stale pre-import DOM and assuming the
+          // OK click was ignored.
+          reloadWithOverlay('Loading your imported data…');
         } catch (err) {
           console.error('[backup] Import failed:', err);
           alert(`Import failed: ${err.message ?? String(err)}`);
