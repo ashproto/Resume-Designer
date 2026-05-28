@@ -639,9 +639,20 @@ function parseCustomSections(content) {
  * Close the user profile panel
  */
 export function closePanel() {
-  // Save any pending changes before closing
+  // Save any pending changes before closing.
+  //
+  // Critical: null `saveTimeout` after `clearTimeout` so this module's
+  // "saveTimeout truthy ⇒ a save is pending" contract holds. Without
+  // this null, the handle stays truthy after the timer is gone, and
+  // any later caller using `if (saveTimeout)` as a pending-save check
+  // (scheduleSave's de-dup branch, flushPendingProfileSave) would
+  // wrongly re-flush the now-stale `profileData` and clobber state
+  // written by other paths in the meantime — e.g. `aiService.js`
+  // calls `saveUserProfile(mergedProfile)` directly after the AI
+  // interview, completely independent of this module's `profileData`.
   if (saveTimeout) {
     clearTimeout(saveTimeout);
+    saveTimeout = null;
     saveUserProfile(profileData);
   }
   panelContainer?.classList.remove('show');
