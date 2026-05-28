@@ -670,14 +670,30 @@ html[data-theme="dark"] .header-variant-select {
   background: var(--color-accent-light);
 }
 
+/*
+ * Theme-aware secondary button. Previously this used hardcoded
+ * rgba(248,246,243,...) (cream tint) plus --color-sidebar-text, which
+ * happened to render correctly only on the dark sidebar — but every
+ * modal in the app (legacy-import dialog, PDF save dialog, prompt
+ * modal, settings panels, onboarding back-buttons, JD picker, etc.)
+ * uses .btn-secondary too, and they live on --color-modal-bg / panel
+ * backgrounds that ARE light in light mode. Cream-on-cream made those
+ * buttons completely invisible in light mode.
+ *
+ * Using --color-bg-dark / --color-text / --color-border gives a soft
+ * neutral button that's distinguishable from any panel/modal bg in
+ * either theme: in light mode the warm-gray bg shows against the
+ * white modal; in dark mode the very-dark bg + faint border shows
+ * against the slightly-lighter modal.
+ */
 .btn-secondary {
-  background: rgba(248, 246, 243, 0.1);
-  color: var(--color-sidebar-text);
-  border: 1px solid rgba(248, 246, 243, 0.2);
+  background: var(--color-bg-dark);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: rgba(248, 246, 243, 0.15);
+  background: var(--color-border);
 }
 
 /* ==========================================================================

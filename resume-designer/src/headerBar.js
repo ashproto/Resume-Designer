@@ -295,6 +295,85 @@ function reloadWithOverlay(message = 'Reloading…') {
 }
 
 /**
+ * Show a DOM-based "Import successful" modal with an OK button.
+ * On OK, transitions into reloadWithOverlay() and reloads the app.
+ *
+ * Why this exists instead of native `alert(message); reloadWithOverlay()`:
+ * The previous flow used the browser's `alert()`, which on macOS
+ * WKWebView (and Windows WebView2) is implemented as a native OS
+ * dialog. Tightly coupling alert() with a subsequent
+ * `location.reload()` exposed a dialog state-machine race in the
+ * webview: the user reported the alert re-presenting itself 2-3
+ * times after each OK click, then becoming stuck on screen even
+ * though the underlying app was fully functional post-reload.
+ * Hypothesis: the NSAlert dismissal animation overlaps with the
+ * page-navigation handshake, and the webview re-fires the dialog
+ * because the JS context that owned it has already moved on.
+ *
+ * Switching to a fully DOM-based modal sidesteps the entire native
+ * dialog stack. The modal's lifetime is under our direct DOM control
+ * — created, painted, dismissed in one synchronous JS pass — and
+ * carries no dependency on the platform's modal-window manager.
+ *
+ * Uses the project's existing .modal-overlay / .modal classes so it
+ * picks up theming and dark-mode support automatically.
+ */
+function showImportSuccessAndReload(message) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'import-success-modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Import successful</h3>
+      </div>
+      <div class="modal-content">
+        <div id="import-success-body" style="white-space: pre-wrap; line-height: 1.5;"></div>
+        <div class="form-actions" style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+          <button class="btn btn-primary" id="import-success-ok">OK</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Inject as textContent so any unexpected characters in the message
+  // can never become HTML (the message comes from app-controlled
+  // strings, but defense-in-depth is cheap here).
+  overlay.querySelector('#import-success-body').textContent = message;
+
+  requestAnimationFrame(() => overlay.classList.add('show'));
+
+  const okBtn = overlay.querySelector('#import-success-ok');
+  // Auto-focus so Enter dismisses without requiring a mouse click.
+  setTimeout(() => okBtn.focus(), 50);
+
+  const proceed = () => {
+    // Remove the success modal first; reloadWithOverlay() will paint
+    // its own full-viewport overlay over whatever's left, but cleaning
+    // up here avoids a brief frame where the modal AND the overlay
+    // are both in the DOM.
+    overlay.remove();
+    document.removeEventListener('keydown', keyHandler);
+    reloadWithOverlay('Loading your imported data…');
+  };
+
+  const keyHandler = (e) => {
+    // Enter OR Escape both proceed — the dialog has no Cancel since
+    // the import has already happened; the only path forward is to
+    // reload into the new state.
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      e.preventDefault();
+      proceed();
+    }
+  };
+
+  // `{ once: true }` so a stray double-click can't fire reload twice.
+  okBtn.addEventListener('click', proceed, { once: true });
+  document.addEventListener('keydown', keyHandler);
+}
+
+/**
  * Tools → Import from previous Electron version… handler.
  *
  * - Probe via Rust. If nothing found, show a friendly alert with the
@@ -400,8 +479,11 @@ async function handleImportLegacyElectron() {
           `Your resumes themselves are intact.`;
       }
     }
-    alert(`${summary}${skipNote}\n\nReloading…`);
-    reloadWithOverlay('Loading your imported data…');
+    // Custom DOM modal instead of native alert() — see
+    // showImportSuccessAndReload's doc-comment for why. The "Reloading…"
+    // line is dropped from the message text because the OK click flows
+    // directly into the loading overlay, which IS the reload UX.
+    showImportSuccessAndReload(`${summary}${skipNote}`);
   } catch (err) {
     console.error('[legacy-import] apply failed:', err);
     alert(`Import failed: ${err?.message ?? String(err)}`);
@@ -1213,19 +1295,14 @@ function setupHeaderEventListeners() {
               `${result.historySkipped === 1 ? 'was' : 'were'} skipped. ` +
               `Your resumes themselves are intact.`;
           }
-          alert(
+          // Custom DOM modal owns both the OK confirmation AND the
+          // reload transition — see showImportSuccessAndReload's
+          // doc-comment for why we don't use native alert() here.
+          showImportSuccessAndReload(
             `Restored ${result.keysImported} keys from backup ` +
             `(removed ${result.removedExistingKeys} existing keys).` +
-            backupNote +
-            `\n\nReloading…`
+            backupNote
           );
-          // Reload so the store re-reads from localStorage; the UI
-          // would otherwise still show the pre-import in-memory state.
-          // Use the overlay variant so the user gets immediate visual
-          // feedback during the multi-second reload+reinit, rather
-          // than seeing the stale pre-import DOM and assuming the
-          // OK click was ignored.
-          reloadWithOverlay('Loading your imported data…');
         } catch (err) {
           console.error('[backup] Import failed:', err);
           alert(`Import failed: ${err.message ?? String(err)}`);
