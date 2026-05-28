@@ -16,7 +16,6 @@ import {
   exportAsJSON,
   exportAsMarkdown,
   exportFullBackup,
-  importFullBackup,
   importFullBackupFromEnvelope,
   importFullBackupMerge,
   generateUniqueVariantName
@@ -1154,9 +1153,11 @@ function setupHeaderEventListeners() {
         try {
           // Parse FIRST so we can show key count BEFORE confirming
           // (avoids the "destructive confirm with unknown payload"
-          // anti-pattern). We re-parse inside importFullBackup, which
-          // also handles the actual write — that's the authoritative
-          // pass; this peek is just for the confirm dialog.
+          // anti-pattern). This is also the ONLY parse pass — we feed
+          // the already-validated `preview` straight into
+          // importFullBackupFromEnvelope below, so there's no second
+          // `await file.text()` between the flush and the writes (see
+          // the comment at that call site).
           const text = await file.text();
           let preview;
           try {
@@ -1190,7 +1191,16 @@ function setupHeaderEventListeners() {
           } catch (err) {
             console.warn('[backup] pre-import flush failed:', err);
           }
-          const result = await importFullBackup(file);
+          // SYNCHRONOUS call (not `await importFullBackup(file)`) on
+          // purpose. importFullBackup() would do a second `file.text()`
+          // — that await would yield the event loop AFTER our flush
+          // but BEFORE the writes, leaving a window where the user's
+          // next keystroke could schedule a fresh debounced save that
+          // we haven't flushed. importFullBackupFromEnvelope() takes
+          // the already-parsed preview and runs the writes
+          // synchronously, so flush→writes→alert→reload is one
+          // uninterrupted call chain — no yield points, no race.
+          const result = importFullBackupFromEnvelope(preview);
           let backupNote = '';
           if (result.historySkipped > 0) {
             // Same skip-note shape as handleImportLegacyElectron so a
