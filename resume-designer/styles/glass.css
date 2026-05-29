@@ -1,0 +1,171 @@
+/* ==========================================================================
+   Liquid-Glass / Vibrancy Overrides
+   --------------------------------------------------------------------------
+   Active ONLY when <html data-tauri="true"> is set (by the inline detector in
+   index.html when running inside the Tauri desktop shell, or via the
+   ?translucent query param for browser previewing). Everything here is purely
+   additive: the base theme in main.css stays fully opaque, so a plain browser
+   and the hidden ?print=1 PDF-capture window are completely unaffected.
+
+   Layering model:
+     NSVisualEffect "popover" material   ← native macOS vibrancy (windowEffects
+       │                                    in tauri.conf.json). `popover` shows
+       │                                    wallpaper COLOR in both light & dark;
+       │                                    `underWindowBackground` reads dead in
+       │                                    light mode (flat frost, no color).
+       ▼
+     transparent <html>/<body>/.app/.preview-area   ← lets the vibrancy through
+       │
+       ├─ frosted chrome (header, side drawers, modals, toolbar)
+       │     a FAINT tint of the theme token + a LIGHT backdrop-filter blur
+       │
+       └─ the resume paper (.resume-container)   ← stays OPAQUE white; it is a
+             document, not glass.
+
+   TUNING NOTES (values matched to the git-time-editor tuning loop):
+   - Opacities are intentionally very low (panels 0.10/0.14, header 0.08/0.10).
+     The chrome is mostly empty frame, so the wallpaper carries the look.
+   - backdrop-filter is LIGHT: blur(20px) saturate(140%). Counterintuitively,
+     HEAVIER blur (e.g. 30px/180%) reads as MORE opaque — it averages the
+     wallpaper into a uniform solid-looking tint. Two blur sources stack here
+     (the OS material + this CSS layer), so keeping the CSS layer light lets the
+     OS material carry the effect.
+   - color-mix(token, transparent) keeps the frost following the active theme
+     from a single rule; per-theme strength lives in the *-pct tokens below.
+   ========================================================================== */
+
+/* --- Glass strength tokens (light mode) ----------------------------------- */
+:root[data-tauri="true"] {
+  /* One shared, deliberately-light backdrop filter for every frosted surface. */
+  --glass-blur: blur(20px) saturate(140%);
+
+  /* Surface opacities, as color-mix percentages (= the sibling project's
+     0.08 / 0.10 / 0.22 opacity tokens, expressed for color-mix). */
+  --glass-header-pct: 8%;   /* the top chrome / drag strip               */
+  --glass-panel-pct: 10%;   /* side drawers (chat + structure)           */
+  --glass-edge-pct: 22%;    /* hairline borders on glass surfaces        */
+  --glass-modal-pct: 70%;   /* modals carry dense forms → kept legible   */
+  --glass-input-pct: 22%;   /* inputs: a touch more solid than the panel */
+
+  /* Make form inputs subtly translucent too (matched to --input-bg 0.22).
+     --color-bg-light is #ffffff (light) / #2d2a26 (dark), i.e. the exact
+     opaque input color, so 100% (reduced-transparency mode) restores it. */
+  --color-input-bg: color-mix(in srgb, var(--color-bg-light) var(--glass-input-pct), transparent);
+}
+
+/* --- Glass strength tokens (dark mode: explicit + system preference) ------- */
+:root[data-tauri="true"][data-theme="dark"] {
+  --glass-header-pct: 10%;
+  --glass-panel-pct: 14%;
+  --glass-edge-pct: 26%;
+  --glass-modal-pct: 72%;
+  --glass-input-pct: 24%;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-tauri="true"]:not([data-theme="light"]) {
+    --glass-header-pct: 10%;
+    --glass-panel-pct: 14%;
+    --glass-edge-pct: 26%;
+    --glass-modal-pct: 72%;
+    --glass-input-pct: 24%;
+  }
+}
+
+/* --- 1. Clear the window down to the native vibrancy ---------------------- */
+:root[data-tauri="true"],
+:root[data-tauri="true"] body,
+:root[data-tauri="true"] .app,
+:root[data-tauri="true"] .app-content,
+:root[data-tauri="true"] .preview-area {
+  background: transparent !important;
+}
+
+/* --- 2. Frosted top chrome (the drag region / titlebar replacement) ------- */
+:root[data-tauri="true"] .header-bar {
+  background: color-mix(in srgb, var(--color-panel-bg) var(--glass-header-pct), transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-bottom-color: color-mix(in srgb, var(--color-border) var(--glass-edge-pct), transparent);
+}
+
+/* --- 3. Frosted side drawers ---------------------------------------------- */
+:root[data-tauri="true"] .chat-panel,
+:root[data-tauri="true"] .structure-panel {
+  background: color-mix(in srgb, var(--color-panel-bg) var(--glass-panel-pct), transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+:root[data-tauri="true"] .chat-panel {
+  border-right: 1px solid color-mix(in srgb, var(--color-border) var(--glass-edge-pct), transparent);
+}
+:root[data-tauri="true"] .structure-panel {
+  border-left: 1px solid color-mix(in srgb, var(--color-border) var(--glass-edge-pct), transparent);
+}
+
+/* Sub-sections inside the drawers repaint the solid panel token; clear them so
+   the drawer reads as ONE pane of frosted glass rather than stacked sheets. */
+:root[data-tauri="true"] .chat-header,
+:root[data-tauri="true"] .chat-input-area,
+:root[data-tauri="true"] .structure-panel-header,
+:root[data-tauri="true"] .structure-panel-content {
+  background: transparent;
+}
+
+/* --- 4. Frosted modals + a gentle scrim ----------------------------------- */
+/* Modals stay more opaque than the panels: they hold dense forms (API keys,
+   usage tables) and sit over a dimming scrim, so legibility wins here. */
+:root[data-tauri="true"] .modal {
+  background: color-mix(in srgb, var(--color-modal-bg) var(--glass-modal-pct), transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+:root[data-tauri="true"] .modal-overlay {
+  background: color-mix(in srgb, var(--color-modal-overlay) 70%, transparent);
+}
+
+/* --- 5. Floating zoom / text-tools toolbar pill --------------------------- */
+/* Intentionally dark in BOTH themes (it floats over the resume); just made
+   translucent + lightly blurred to sit in the same glass family. */
+:root[data-tauri="true"] .zoom-controls {
+  background: rgba(45, 42, 38, 0.5);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* --- 6. The resume is paper: keep it solid, lift it off the glass --------- */
+:root[data-tauri="true"] .resume-container {
+  background: #ffffff; /* never translucent — it is the document being edited */
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    0 12px 48px rgba(0, 0, 0, 0.24);
+}
+
+/* --- 7. Accessibility: honor macOS "Reduce transparency" ------------------ */
+/* macOS already makes the NSVisualEffect view near-opaque in this mode; restore
+   solid chrome + opaque inputs and drop the blur so nothing is hard to read. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-tauri="true"] {
+    --glass-input-pct: 100%; /* color-mix → fully opaque input color again */
+  }
+  :root[data-tauri="true"] body,
+  :root[data-tauri="true"] .preview-area {
+    background: var(--color-bg-dark) !important;
+  }
+  :root[data-tauri="true"] .header-bar,
+  :root[data-tauri="true"] .chat-panel,
+  :root[data-tauri="true"] .structure-panel {
+    background: var(--color-panel-bg);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  :root[data-tauri="true"] .modal {
+    background: var(--color-modal-bg);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  :root[data-tauri="true"] .zoom-controls {
+    background: rgba(45, 42, 38, 0.95);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

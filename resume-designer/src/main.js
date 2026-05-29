@@ -23,6 +23,7 @@ import { initStructurePanel, setDesignSettings } from './structurePanel.js';
 import { initHeaderBar, getCurrentId, loadVariant } from './headerBar.js';
 import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initZoomControls } from './zoomControls.js';
+import { initWindowDrag } from './tauriDrag.js';
 import {
   migrateBuiltInVariants,
   saveSettings,
@@ -327,6 +328,12 @@ async function init() {
       },
       true
     );
+
+    // Make the header bar act as the window's drag region (overlay titlebar).
+    // Uses the manual startDragging() handler instead of data-tauri-drag-region,
+    // which is unreliable in Tauri v2 (#9901). Fire-and-forget: it resolves the
+    // window asynchronously, then attaches a synchronous mousedown handler.
+    initWindowDrag(document.getElementById('header-bar'));
   }
   
   // Load saved settings
