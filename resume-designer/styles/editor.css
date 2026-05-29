@@ -132,7 +132,11 @@
   left: 0;
   right: 0;
   margin-bottom: var(--space-xs);
-  background: var(--color-sidebar-bg);
+  /* Dark sidebar-style dropdown: its .export-option text is cream
+     (rgba(248,246,243,...)), so it needs a DARK fill. The previous value here
+     referenced an undefined custom property (invalid → transparent fallback);
+     --color-sidebar is the intended dark token (#2d2a26 light / #0d0c0c dark). */
+  background: var(--color-sidebar);
   border: 1px solid rgba(248, 246, 243, 0.2);
   border-radius: 6px;
   overflow: hidden;
