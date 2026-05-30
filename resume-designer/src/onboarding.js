@@ -1677,6 +1677,7 @@ Name: ${resume.name || 'Not provided'}
 Current Title: ${resume.tagline || 'Not provided'}
 Summary: ${resume.summary || 'Not provided'}
 Skills: ${(resume.skills || []).join(', ') || 'Not provided'}
+Tools: ${(Array.isArray(resume.tools) ? resume.tools.join(', ') : (resume.tools || '')) || 'Not provided'}
 Experience: ${(resume.experience || []).map(e => `${e.title} at ${e.company}`).join('; ') || 'Not provided'}
 `;
 

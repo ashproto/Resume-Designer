@@ -768,6 +768,18 @@ function getResumeContext() {
     }
   }
   
+  // Concrete tools/software live in a separate top-level field (kept out of the
+  // Skills section since #3), so serialize them explicitly — otherwise follow-up
+  // AI chat and tailoring would no longer see tools like Figma/Docker. (PR#13)
+  if (data.tools) {
+    const toolsList = (Array.isArray(data.tools) ? data.tools : String(data.tools).split('•'))
+      .map(t => String(t).trim())
+      .filter(Boolean);
+    if (toolsList.length > 0) {
+      context += `Tools:\n${toolsList.join(', ')}\n\n`;
+    }
+  }
+
   if (data.experience && data.experience.length > 0) {
     context += `Experience:\n`;
     for (const exp of data.experience) {
