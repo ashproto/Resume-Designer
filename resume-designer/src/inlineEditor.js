@@ -693,10 +693,20 @@ function startEditing(element) {
   // user to click a second time to actually edit it. (#11)
   if (activeElement && activeElement !== element) {
     const targetPath = element.dataset.editable;
+    // Tool chips all share data-editable="tools", so a bare querySelector would
+    // re-resolve to the FIRST chip after the rerender and the user would end up
+    // editing the wrong tool. Record the clicked element's position among
+    // same-path siblings and restore that same one. (Unique paths — skills,
+    // experience fields — have a single match, so the index is just 0.) (#11, PR#13)
+    let targetIndex = 0;
+    if (targetPath) {
+      targetIndex = Math.max(0, [...document.querySelectorAll(`[data-editable="${targetPath}"]`)].indexOf(element));
+    }
     finishEditing(activeElement);
     if (targetPath) {
-      const refreshed = document.querySelector(`[data-editable="${targetPath}"]`);
-      if (refreshed) element = refreshed;
+      const refreshed = document.querySelectorAll(`[data-editable="${targetPath}"]`);
+      if (refreshed[targetIndex]) element = refreshed[targetIndex];
+      else if (refreshed[0]) element = refreshed[0];
     }
   }
   

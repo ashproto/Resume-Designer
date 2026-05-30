@@ -24,12 +24,20 @@ export function experienceSortValue(exp) {
   const years = raw.match(/\d{4}/g);
   if (!years || years.length === 0) return 0;
   const year = parseInt(years[years.length - 1], 10);
-  // Optional month from a trailing "YYYY-MM"
+  // Month precision for same-year ordering. Prefer a "YYYY-MM" in the visible
+  // dates; if absent, borrow the month from the machine-readable endDate, but
+  // only when endDate refers to the same end year — so a later edit to the
+  // visible year still wins (a changed year de-syncs endDate and we ignore it).
+  // (#7, PR#13)
   const ym = raw.match(/(\d{4})-(\d{1,2})/g);
   let month = 0;
   if (ym && ym.length) {
-    month = Math.min(12, Math.max(0, parseInt(ym[ym.length - 1].split('-')[1], 10) || 0));
+    month = parseInt(ym[ym.length - 1].split('-')[1], 10) || 0;
+  } else if (exp.endDate) {
+    const em = String(exp.endDate).match(/(\d{4})-(\d{1,2})/);
+    if (em && parseInt(em[1], 10) === year) month = parseInt(em[2], 10) || 0;
   }
+  month = Math.min(12, Math.max(0, month));
   return year * 12 + month;
 }
 
