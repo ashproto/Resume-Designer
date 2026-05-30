@@ -4,6 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Resume Designer — Colleen Sinclair</title>
+  <!-- Liquid-glass opt-in. MUST run before the stylesheets below so the
+       <html>/<body> background is transparent from the first paint — otherwise
+       the opaque theme background flashes for a frame before the JS bundle
+       loads, hiding the macOS vibrancy. Tauri injects its runtime globals at
+       document-start, so this classic (non-module) script can detect the shell
+       synchronously here. `?translucent` forces it on in a plain browser for
+       CSS previewing; the hidden `?print=1` PDF-capture window is excluded so
+       the captured resume keeps a solid background. -->
+  <script>
+    (function () {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        if (params.has('print')) return; // PDF-capture window stays opaque
+        var inTauri =
+          'isTauri' in window ||
+          '__TAURI_INTERNALS__' in window ||
+          '__TAURI__' in window;
+        if (inTauri || params.has('translucent')) {
+          document.documentElement.setAttribute('data-tauri', 'true');
+        }
+      } catch (_) {
+        /* never block boot on detection */
+      }
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
@@ -22,17 +47,22 @@
        file must be loaded WITHOUT media="print" so the class-based rules can
        fire during WKWebView's createPDF, which does not trigger print mode. -->
   <link rel="stylesheet" href="/styles/print.css">
+  <!-- Liquid-glass / vibrancy overrides. Loaded LAST and fully gated behind
+       :root[data-tauri="true"], so it is inert in a plain browser and only
+       turns the chrome translucent inside the Tauri desktop shell. -->
+  <link rel="stylesheet" href="/styles/glass.css">
 </head>
 <body>
   <div class="app">
     <!-- Header Bar -->
-    <!-- data-tauri-drag-region marks this element as a window-drag handle.
-         Tauri 2's WKWebView/WebView2 honor this attribute for moving the
-         OS window; interactive descendants (buttons, inputs, dropdowns)
-         remain clickable because Tauri checks the actual click target. The
-         legacy `-webkit-app-region: drag` CSS in main.css is kept for any
-         non-Tauri (browser) fallback path. -->
-    <header class="header-bar" id="header-bar" data-tauri-drag-region>
+    <!-- Acts as the custom (overlay) titlebar / window-drag handle. Dragging is
+         wired in JS via src/tauriDrag.js (a synchronous mousedown →
+         startDragging() handler) rather than the declarative
+         data-tauri-drag-region attribute, which is unreliable in Tauri v2
+         (tauri-apps/tauri#9901). Interactive descendants stay clickable because
+         the handler skips events whose target is inside a control. The inert
+         `-webkit-app-region` CSS in main.css is a harmless no-op in WKWebView. -->
+    <header class="header-bar" id="header-bar">
       <!-- Rendered by headerBar.js -->
     </header>
     

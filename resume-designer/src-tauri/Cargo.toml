@@ -13,8 +13,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# `macos-private-api` is REQUIRED for `transparent: true` to take effect on
+# macOS (it's gated behind this Cargo feature AND `app.macOSPrivateApi` in
+# tauri.conf.json — both are needed, and neither warns if missing). It unlocks
+# the NSVisualEffect vibrancy used by `windowEffects` for the glassy look.
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"

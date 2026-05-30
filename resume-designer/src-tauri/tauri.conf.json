@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -18,13 +19,17 @@
         "height": 900,
         "minWidth": 750,
         "minHeight": 600,
-        "backgroundColor": "#f8f6f3",
+        "transparent": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": { "x": 19, "y": 22 },
         "decorations": true,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "windowEffects": {
+          "effects": ["popover", "acrylic"],
+          "state": "followsWindowActiveState"
+        }
       }
     ],
     "security": {
@@ -50,7 +55,7 @@
     "macOS": {
       "entitlements": "Entitlements.plist",
       "hardenedRuntime": true,
-      "minimumSystemVersion": "11.0",
+      "minimumSystemVersion": "12.3",
       "providerShortName": null
     },
     "windows": {
