@@ -10,14 +10,15 @@ export function generateId(prefix = 'item') {
 
 // Comparable sort key for an experience entry: higher = more recent. Drives the
 // chronological (newest-first) default order and the "Date" sort button.
-// Prefers the machine-readable endDate, falling back to scanning the
-// human-readable `dates` string. An ongoing role ("Present"/"Current"/
+// Prefers the human-readable `dates` string — the field the structure panel
+// exposes for editing — so the sort stays in sync when the user edits it; falls
+// back to the machine-readable endDate. An ongoing role ("Present"/"Current"/
 // "Currently"/"to date"/etc.) sorts newest; an entry with no parseable date
 // sorts oldest. Finite values only (no Infinity) so two
 // equal keys subtract to 0, never NaN. (#7)
 export function experienceSortValue(exp) {
   if (!exp) return 0;
-  const raw = String(exp.endDate || exp.dates || '').trim();
+  const raw = String(exp.dates || exp.endDate || '').trim();
   if (!raw) return 0;
   if (/\b(present|current|currently|ongoing|now|to date|till date)\b/i.test(raw)) return 9999 * 12;
   const years = raw.match(/\d{4}/g);

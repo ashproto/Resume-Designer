@@ -744,7 +744,7 @@ export function renderResumeClassic(data) {
           ${data.tools ? `
             <div class="section">
               <h2 class="section-title">Tools</h2>
-              <div class="classic-skill-content">${renderToolsInline(data.tools, 'tools')}</div>
+              <div class="classic-skill-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
             </div>
           ` : ''}
         </div>
@@ -820,7 +820,7 @@ export function renderResumeClassicFeatured(data) {
           ${data.tools ? `
             <div class="section">
               <h2 class="section-title">Tools</h2>
-              <div class="classic-skill-content">${renderToolsInline(data.tools, 'tools')}</div>
+              <div class="classic-skill-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
             </div>
           ` : ''}
         </div>
@@ -1022,7 +1022,7 @@ export function renderResumeCreative(data) {
           ${data.tools ? `
             <div class="creative-card">
               <h3 class="creative-card-title">Tools</h3>
-              <div class="creative-card-content">${renderToolsInline(data.tools, 'tools')}</div>
+              <div class="creative-card-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
             </div>
           ` : ''}
         </div>
