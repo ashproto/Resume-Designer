@@ -731,9 +731,9 @@ export function renderResumeClassic(data) {
         </div>
       ` : ''}
       
-      ${data.sections && data.sections.length > 0 ? `
+      ${(data.sections && data.sections.length > 0) || data.tools ? `
         <div class="classic-skills-section">
-          ${data.sections.map((section, sIdx) => `
+          ${(data.sections || []).map((section, sIdx) => `
             <div class="section">
               <h2 class="section-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h2>
               <div class="classic-skill-content">
@@ -741,6 +741,12 @@ export function renderResumeClassic(data) {
               </div>
             </div>
           `).join('')}
+          ${data.tools ? `
+            <div class="section">
+              <h2 class="section-title">Tools</h2>
+              <div class="classic-skill-content">${renderToolsInline(data.tools, 'tools')}</div>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
     </div>
@@ -801,7 +807,7 @@ export function renderResumeClassicFeatured(data) {
         </div>
       ` : ''}
       
-      ${skills.length > 0 ? `
+      ${skills.length > 0 || data.tools ? `
         <div class="classic-skills-section">
           ${skills.map(({ section, sIdx }) => `
             <div class="section">
@@ -811,6 +817,12 @@ export function renderResumeClassicFeatured(data) {
               </div>
             </div>
           `).join('')}
+          ${data.tools ? `
+            <div class="section">
+              <h2 class="section-title">Tools</h2>
+              <div class="classic-skill-content">${renderToolsInline(data.tools, 'tools')}</div>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
     </div>
@@ -997,9 +1009,9 @@ export function renderResumeCreative(data) {
         </div>
       ` : ''}
       
-      ${data.sections && data.sections.length > 0 ? `
+      ${(data.sections && data.sections.length > 0) || data.tools ? `
         <div class="creative-grid">
-          ${data.sections.map((section, sIdx) => `
+          ${(data.sections || []).map((section, sIdx) => `
             <div class="creative-card">
               <h3 class="creative-card-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h3>
               <div class="creative-card-content">
@@ -1007,6 +1019,12 @@ export function renderResumeCreative(data) {
               </div>
             </div>
           `).join('')}
+          ${data.tools ? `
+            <div class="creative-card">
+              <h3 class="creative-card-title">Tools</h3>
+              <div class="creative-card-content">${renderToolsInline(data.tools, 'tools')}</div>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
       
