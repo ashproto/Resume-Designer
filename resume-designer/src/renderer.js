@@ -61,6 +61,20 @@ function renderSectionLine(line, mode, variant = 'sidebar') {
 
 function renderSectionContent(section, sIdx, variant = 'sidebar') {
   const mode = normalizeSectionType(section?.type);
+  if (mode === 'skills') {
+    // Skills render as individual, separately-editable tags that flow inline and
+    // wrap — NOT one block <p> per item (which would stack them vertically once
+    // skills are stored one-per-item). Mirrors the default sidebar skills branch
+    // and keeps the look consistent across layouts. (#2)
+    return (section.content || [])
+      .map((line, i) => {
+        const rendered = renderSectionLine(line, mode, variant);
+        if (!rendered) return '';
+        return `<span class="skill-tag-row" data-editable="sections[${sIdx}].content[${i}]">${rendered}</span>`;
+      })
+      .filter(Boolean)
+      .join('<span class="skill-sep">•</span>');
+  }
   return (section.content || [])
     .map((line, i) => `
       <p data-editable="sections[${sIdx}].content[${i}]">${renderSectionLine(line, mode, variant)}</p>

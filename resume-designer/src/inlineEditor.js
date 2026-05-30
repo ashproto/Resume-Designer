@@ -684,9 +684,20 @@ function handleClick(e) {
 
 // Start editing an element
 function startEditing(element) {
-  // Deactivate any currently active element
+  // Deactivate any currently active element.
+  // finishEditing() calls store.update(), which SYNCHRONOUSLY triggers a full
+  // renderCurrentResume() (via the store subscription in main.js) that replaces
+  // the DOM node we're about to edit. So capture the target's editable path
+  // first, then re-resolve to the freshly-rendered node — otherwise we'd make a
+  // detached node contentEditable and focus() would silently no-op, forcing the
+  // user to click a second time to actually edit it. (#11)
   if (activeElement && activeElement !== element) {
+    const targetPath = element.dataset.editable;
     finishEditing(activeElement);
+    if (targetPath) {
+      const refreshed = document.querySelector(`[data-editable="${targetPath}"]`);
+      if (refreshed) element = refreshed;
+    }
   }
   
   // Hide AI button when editing

@@ -157,6 +157,17 @@
   margin: 0;
 }
 
+/* Space consecutive highlight entries in sidebar-based layouts (default, right-
+   sidebar, compact, executive, …). Each highlight is its own <p> holding a
+   single .highlight-bullet, so the bullet's own margin-bottom is always killed
+   by :last-child — drive the inter-entry gap from the wrapper <p> instead.
+   :has(.highlight-bullet) targets only highlight wrappers, so education entries
+   (which reuse a bare .sidebar-content in compact/executive) are left untouched;
+   skills and tools carry .sidebar-skills and are excluded too. (#6) */
+.sidebar-content:not(.sidebar-skills) p:has(.highlight-bullet):not(:last-child) {
+  margin-bottom: 0.5rem;
+}
+
 /* Sidebar skills - inline flow layout */
 .sidebar-skills {
   display: block;
@@ -240,7 +251,7 @@
   display: block;
   position: relative;
   padding-left: 0.7rem;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.5rem;
   line-height: 1.45;
 }
 
@@ -285,6 +296,11 @@
   padding-bottom: 0.3rem;
   border-bottom: 1px solid var(--resume-border);
   position: relative;
+  /* Shrink-wrap to the title text so the accent bar below can span the full
+     width of the text (and no further). max-width keeps long titles from
+     overflowing a narrow column. */
+  width: fit-content;
+  max-width: 100%;
 }
 
 .section-title::after {
@@ -292,7 +308,9 @@
   position: absolute;
   bottom: -1px;
   left: 0;
-  width: 60px;
+  /* 100% of the (now text-width) title, so the bold accent reaches the end of
+     the title text. See .section-title width: fit-content above. */
+  width: 100%;
   height: var(--title-underline-width, 2px);
   background: var(--resume-accent);
 }
@@ -573,6 +591,15 @@
   margin: 0;
 }
 
+/* Same flush fix as .sidebar-content (above): the stacked layout's highlight
+   entries are one <p> each with a single :last-child bullet, so the bullet's own
+   margin is killed. Drive the inter-entry gap from the wrapper. Scoped to
+   .highlight-section so skill sections (which share .stacked-skill-content) keep
+   their inline tag flow. (#6) */
+.stacked-skill-section.highlight-section .stacked-skill-content p:not(:last-child) {
+  margin-bottom: 0.5rem;
+}
+
 .skill-tag-inline {
   display: inline;
 }
@@ -638,7 +665,7 @@
 .stacked-vertical-section.highlight-section .stacked-vertical-content {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.5rem;
 }
 
 .stacked-vertical-section.highlight-section .highlight-bullet {
@@ -868,7 +895,7 @@
 }
 
 .executive-main .section-title::after {
-  width: 80px;
+  width: 100%;
 }
 
 .executive-side {
@@ -937,6 +964,9 @@
   letter-spacing: 0.08em;
   border-bottom: 2px solid var(--resume-accent);
   margin-bottom: 0.5rem;
+  /* Classic intentionally uses a full-width rule as its underline (the ::after
+     is hidden below), so opt out of the base fit-content. */
+  width: auto;
 }
 
 .classic-body .section-title::after {
@@ -997,6 +1027,8 @@
   letter-spacing: 0.08em;
   border-bottom: 2px solid var(--resume-accent);
   margin-bottom: 0.5rem;
+  /* Full-width rule underline (::after hidden) — opt out of base fit-content. */
+  width: auto;
 }
 
 .classic-featured-body .section-title::after {
@@ -1034,7 +1066,7 @@
 .classic-featured-highlight-content {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.5rem;
 }
 
 .classic-featured-highlight-content .highlight-item {
@@ -1273,6 +1305,8 @@
 
 .creative-experience .section-title {
   text-align: center;
+  /* Keep the centered title full-width (base fit-content would left-collapse it). */
+  width: auto;
 }
 
 /* Hide decorative elements in modern layouts */

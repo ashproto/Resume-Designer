@@ -3,7 +3,7 @@
  * Guides new users through creating their first resume
  */
 
-import { store } from './store.js';
+import { store, generateId, experienceSortValue } from './store.js';
 import { getSettings, saveSettings, getVariants, saveVariant, setCurrentVariantId, initPersistence, generateUniqueVariantName, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { getConfiguredProviders, getDefaultModelId, generateResumeChanges, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels, isProviderConfigured } from './aiService.js';
 import { loadVariant } from './headerBar.js';
@@ -1683,7 +1683,7 @@ Experience: ${(resume.experience || []).map(e => `${e.title} at ${e.company}`).j
   const prompt = `You are helping tailor a resume for specific job applications. Based on the resume and target job(s) below, create:
 
 1. A compelling professional SUMMARY (2-3 sentences) that positions the candidate as ideal for the target role(s)
-2. A HIGHLIGHTS section (4-6 bullet points) showcasing the most relevant achievements and skills for these jobs
+2. A HIGHLIGHTS section (3-4 bullet points) of DISTINCT, career-level achievements for these jobs — NOT restatements of the experience bullets
 3. Identify KEY SKILLS that match the job requirements
 
 Resume Information:
@@ -1723,10 +1723,10 @@ Return ONLY valid JSON (no markdown, no explanation):
       wizardData.parsedResume.highlights = tailored.highlights;
     }
     if (tailored.relevantSkills && tailored.relevantSkills.length > 0) {
-      // Merge with existing skills
+      // Merge with existing skills, keeping only the 12 most relevant (#5)
       const existingSkills = wizardData.parsedResume.skills || [];
       const allSkills = [...new Set([...tailored.relevantSkills, ...existingSkills])];
-      wizardData.parsedResume.skills = allSkills;
+      wizardData.parsedResume.skills = allSkills.slice(0, 12);
     }
     
     console.log('[Onboarding] Resume tailored with AI:', tailored);
@@ -1741,6 +1741,11 @@ Return ONLY valid JSON (no markdown, no explanation):
  */
 function renderReviewStep(content, footer) {
   const resume = wizardData.parsedResume;
+  // Normalize skills to the same <=12 cap the saved resume uses, so the preview
+  // list and its "+N more" badge match what actually gets saved. (audit I1 / #5)
+  if (Array.isArray(resume?.skills) && resume.skills.length > 12) {
+    resume.skills = resume.skills.slice(0, 12);
+  }
   console.log('[Onboarding] Review step - resume data:', resume);
   
   // Check if we have meaningful data
@@ -1796,7 +1801,7 @@ function renderReviewStep(content, footer) {
               ${isTailored ? '<span class="ai-badge-inline">✨ AI</span>' : ''}
               Key Skills
             </label>
-            <p class="skills-list">${resume.skills.slice(0, 10).map(s => `<span class="skill-tag">${escapeHtml(s)}</span>`).join('')}${resume.skills.length > 10 ? '<span class="more-skills">+' + (resume.skills.length - 10) + ' more</span>' : ''}</p>
+            <p class="skills-list">${resume.skills.slice(0, 12).map(s => `<span class="skill-tag">${escapeHtml(s)}</span>`).join('')}</p>
           </div>
         ` : ''}
         
@@ -1911,12 +1916,16 @@ function renderReviewStep(content, footer) {
       });
     }
     
-    // Add skills as a section if present
+    // Add skills as a section if present. Store each skill as its OWN content
+    // item (like highlights) and tag the section type:'skills' so the renderer
+    // lays them out as individual, separately-editable tag pills instead of one
+    // joined blob. Cap to the 12 most relevant. (#2, #5)
     if (resume.skills && resume.skills.length > 0) {
       sections.push({
         id: 'skills',
         title: 'Skills',
-        content: [resume.skills.join(' • ')]
+        type: 'skills',
+        content: resume.skills.slice(0, 12).map(s => String(s))
       });
     }
     
@@ -1939,6 +1948,17 @@ function renderReviewStep(content, footer) {
       }
     }
     
+    // Normalize + order experience. Give every entry a stable id and capture the
+    // AI's relevance order in _relevanceRank BEFORE re-sorting, then default to
+    // chronological (newest first). The Date/Relevance sort buttons in the
+    // structure panel rely on both. (#7)
+    const experience = (resume.experience || []).map((exp, i) => ({
+      ...exp,
+      id: exp.id || generateId('exp'),
+      _relevanceRank: i
+    }));
+    experience.sort((a, b) => experienceSortValue(b) - experienceSortValue(a));
+
     // Ensure we have a valid resume structure matching renderer expectations
     const resumeData = {
       name: resume.name || 'Your Name',
@@ -1951,9 +1971,12 @@ function renderReviewStep(content, footer) {
         linkedin: resume.linkedin || '',
         portfolio: resume.portfolio || ''
       },
-      experience: resume.experience || [],
+      experience: experience,
       education: educationLines,
-      sections: sections
+      sections: sections,
+      // Concrete tools/software the model placed in `tools` (kept out of skills).
+      // Renderer expects a ' • '-joined string. (#3)
+      tools: Array.isArray(resume.tools) ? resume.tools.join(' • ') : (resume.tools || '')
     };
     
     console.log('[Onboarding] Saving variant:', variantId, resumeData);

@@ -8,6 +8,30 @@ export function generateId(prefix = 'item') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+// Comparable sort key for an experience entry: higher = more recent. Drives the
+// chronological (newest-first) default order and the "Date" sort button.
+// Prefers the machine-readable endDate, falling back to scanning the
+// human-readable `dates` string. An ongoing role ("Present"/"Current"/
+// "Currently"/"to date"/etc.) sorts newest; an entry with no parseable date
+// sorts oldest. Finite values only (no Infinity) so two
+// equal keys subtract to 0, never NaN. (#7)
+export function experienceSortValue(exp) {
+  if (!exp) return 0;
+  const raw = String(exp.endDate || exp.dates || '').trim();
+  if (!raw) return 0;
+  if (/\b(present|current|currently|ongoing|now|to date|till date)\b/i.test(raw)) return 9999 * 12;
+  const years = raw.match(/\d{4}/g);
+  if (!years || years.length === 0) return 0;
+  const year = parseInt(years[years.length - 1], 10);
+  // Optional month from a trailing "YYYY-MM"
+  const ym = raw.match(/(\d{4})-(\d{1,2})/g);
+  let month = 0;
+  if (ym && ym.length) {
+    month = Math.min(12, Math.max(0, parseInt(ym[ym.length - 1].split('-')[1], 10) || 0));
+  }
+  return year * 12 + month;
+}
+
 // Deep clone utility
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
@@ -145,7 +169,20 @@ function createStore() {
       this.emit('change', data);
       this.scheduleSave();
     },
-    
+
+    // Update a field by path WITHOUT recording history or emitting a change.
+    // Use for transient UI-only state (e.g. an accordion's collapsed/expanded
+    // flag): it persists on the next debounced save — so the value DOES land in
+    // localStorage and exported backups — but must NOT pollute undo history or
+    // trigger a re-render (a re-render here would defeat the DOM-class toggle the
+    // caller just performed). (#9)
+    updateSilent(path, value) {
+      if (!data) return;
+      setByPath(data, path, value);
+      isDirty = true;
+      this.scheduleSave();
+    },
+
     // Set metadata for next history entry
     setChangeMetadata(description, changeType = CHANGE_TYPES.EDIT) {
       pendingChangeDescription = description;
