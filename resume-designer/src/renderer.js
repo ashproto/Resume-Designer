@@ -61,6 +61,20 @@ function renderSectionLine(line, mode, variant = 'sidebar') {
 
 function renderSectionContent(section, sIdx, variant = 'sidebar') {
   const mode = normalizeSectionType(section?.type);
+  if (mode === 'skills') {
+    // Skills render as individual, separately-editable tags that flow inline and
+    // wrap — NOT one block <p> per item (which would stack them vertically once
+    // skills are stored one-per-item). Mirrors the default sidebar skills branch
+    // and keeps the look consistent across layouts. (#2)
+    return (section.content || [])
+      .map((line, i) => {
+        const rendered = renderSectionLine(line, mode, variant);
+        if (!rendered) return '';
+        return `<span class="skill-tag-row" data-editable="sections[${sIdx}].content[${i}]">${rendered}</span>`;
+      })
+      .filter(Boolean)
+      .join('<span class="skill-sep">•</span>');
+  }
   return (section.content || [])
     .map((line, i) => `
       <p data-editable="sections[${sIdx}].content[${i}]">${renderSectionLine(line, mode, variant)}</p>
@@ -717,9 +731,9 @@ export function renderResumeClassic(data) {
         </div>
       ` : ''}
       
-      ${data.sections && data.sections.length > 0 ? `
+      ${(data.sections && data.sections.length > 0) || data.tools ? `
         <div class="classic-skills-section">
-          ${data.sections.map((section, sIdx) => `
+          ${(data.sections || []).map((section, sIdx) => `
             <div class="section">
               <h2 class="section-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h2>
               <div class="classic-skill-content">
@@ -727,6 +741,12 @@ export function renderResumeClassic(data) {
               </div>
             </div>
           `).join('')}
+          ${data.tools ? `
+            <div class="section">
+              <h2 class="section-title">Tools</h2>
+              <div class="classic-skill-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
     </div>
@@ -787,7 +807,7 @@ export function renderResumeClassicFeatured(data) {
         </div>
       ` : ''}
       
-      ${skills.length > 0 ? `
+      ${skills.length > 0 || data.tools ? `
         <div class="classic-skills-section">
           ${skills.map(({ section, sIdx }) => `
             <div class="section">
@@ -797,6 +817,12 @@ export function renderResumeClassicFeatured(data) {
               </div>
             </div>
           `).join('')}
+          ${data.tools ? `
+            <div class="section">
+              <h2 class="section-title">Tools</h2>
+              <div class="classic-skill-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
     </div>
@@ -983,9 +1009,9 @@ export function renderResumeCreative(data) {
         </div>
       ` : ''}
       
-      ${data.sections && data.sections.length > 0 ? `
+      ${(data.sections && data.sections.length > 0) || data.tools ? `
         <div class="creative-grid">
-          ${data.sections.map((section, sIdx) => `
+          ${(data.sections || []).map((section, sIdx) => `
             <div class="creative-card">
               <h3 class="creative-card-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h3>
               <div class="creative-card-content">
@@ -993,6 +1019,12 @@ export function renderResumeCreative(data) {
               </div>
             </div>
           `).join('')}
+          ${data.tools ? `
+            <div class="creative-card">
+              <h3 class="creative-card-title">Tools</h3>
+              <div class="creative-card-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
       

@@ -889,7 +889,8 @@ html[data-theme="dark"] .editable-ai-menu-actions .apply-btn svg {
 .structure-panel-toggle {
   position: fixed;
   right: var(--space-lg);
-  bottom: var(--space-lg);
+  /* Top-right, just below the header bar (was bottom-right). (#1) */
+  top: calc(var(--header-height) + var(--space-md));
   width: 52px;
   height: 52px;
   display: flex;
@@ -1310,6 +1311,36 @@ html[data-theme="dark"] .editable-ai-menu-actions .apply-btn svg {
   flex: 1;
   padding: var(--space-xs) var(--space-sm);
   font-size: 0.85rem;
+}
+
+/* Experience sort controls (#7) */
+.experience-sort-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+  margin-bottom: var(--space-sm);
+}
+
+.experience-sort-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-right: var(--space-xs, 4px);
+}
+
+.experience-sort-btn {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.experience-sort-btn:hover {
+  background: var(--color-bg);
+  border-color: var(--color-accent);
 }
 
 /* Accordion */

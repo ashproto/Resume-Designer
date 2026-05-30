@@ -475,10 +475,14 @@ ${jobDescription.description}
 Create a complete, ATS-optimized resume that:
 1. Highlights the most relevant experience and skills for this specific job
 2. Uses keywords and phrases from the job description naturally
-3. Prioritizes and reorders experience based on relevance to the target role
+3. Orders experience by relevance to the target role (most relevant first), and
+   ALSO provides machine-readable startDate/endDate per role so the app can
+   re-sort chronologically
 4. Writes a compelling professional summary tailored to this position
 5. Creates impactful bullet points with quantifiable achievements where possible
-6. Includes a highlights section with the top 4-6 most relevant achievements/skills
+6. Includes 3-4 highlights that are DISTINCT, career-level achievements — not
+   restatements of the experience bullets
+7. Separates concrete tools/software from competency skills (see the fields below)
 
 Return ONLY a valid JSON object (no markdown, no explanation) in this exact format:
 {
@@ -491,18 +495,20 @@ Return ONLY a valid JSON object (no markdown, no explanation) in this exact form
   "portfolio": "portfolio url if available",
   "summary": "2-3 sentence compelling summary tailored for this specific job",
   "highlights": [
-    "Most relevant achievement or skill for this job",
-    "Another key qualification that matches the job requirements",
-    "Quantifiable achievement relevant to the role",
-    "Important skill or expertise mentioned in the job description"
+    "Career-level achievement, distinct from the experience bullets below",
+    "Another high-level qualification matching the job (not repeated below)",
+    "Quantifiable, summary-level achievement relevant to the role"
   ],
-  "skills": ["skill1", "skill2", "skill3", "..."],
+  "skills": ["competency1", "competency2", "... (at most 12, most relevant only)"],
+  "tools": ["Concrete tool/software/platform e.g. Figma", "Git", "Docker"],
   "experience": [
     {
       "title": "Job Title",
       "company": "Company Name",
       "location": "City, State",
-      "dates": "Start Date - End Date",
+      "startDate": "YYYY-MM (machine-readable; YYYY ok if month unknown)",
+      "endDate": "YYYY-MM or \"Present\" (machine-readable)",
+      "dates": "Human-readable range shown on the resume, e.g. Jan 2022 - Jun 2024",
       "bullets": [
         "Achievement bullet with quantifiable results relevant to target job",
         "Another impactful bullet highlighting relevant skills",
@@ -522,7 +528,13 @@ Return ONLY a valid JSON object (no markdown, no explanation) in this exact form
 
 IMPORTANT:
 - Only include sections that have relevant content from the profile
-- Prioritize and reorder experience based on relevance to the target job
+- Order experience by relevance (most relevant first); ALWAYS include
+  machine-readable startDate/endDate so the app can offer a chronological view
+- Put concrete tools/software/platforms (e.g. Figma, Git, Docker, Excel) in
+  "tools"; keep "skills" for competencies. Do NOT duplicate an item across both.
+- Limit "highlights" to 3-4 entries, each a DISTINCT career-level achievement,
+  not a copy of an experience bullet
+- Select at most 12 of the most relevant skills (quality over quantity)
 - Use action verbs and quantify achievements where possible
 - Include keywords from the job description naturally
 - Make the summary compelling and specific to this role`;
@@ -756,6 +768,18 @@ function getResumeContext() {
     }
   }
   
+  // Concrete tools/software live in a separate top-level field (kept out of the
+  // Skills section since #3), so serialize them explicitly — otherwise follow-up
+  // AI chat and tailoring would no longer see tools like Figma/Docker. (PR#13)
+  if (data.tools) {
+    const toolsList = (Array.isArray(data.tools) ? data.tools : String(data.tools).split('•'))
+      .map(t => String(t).trim())
+      .filter(Boolean);
+    if (toolsList.length > 0) {
+      context += `Tools:\n${toolsList.join(', ')}\n\n`;
+    }
+  }
+
   if (data.experience && data.experience.length > 0) {
     context += `Experience:\n`;
     for (const exp of data.experience) {

@@ -3,7 +3,7 @@
  * Side panel for editing resume structure with tabbed interface
  */
 
-import { store, generateId } from './store.js';
+import { store, generateId, experienceSortValue } from './store.js';
 import { 
   FONT_PAIRINGS, 
   POPULAR_GOOGLE_FONTS, 
@@ -442,7 +442,15 @@ function renderMainTab(data) {
     </button>
   `;
 
+  const showExperienceSort = (data.experience || []).length > 1;
   const experienceContent = `
+    ${showExperienceSort ? `
+      <div class="experience-sort-bar">
+        <span class="experience-sort-label">Sort by</span>
+        <button class="experience-sort-btn" data-action="sort-experience" data-sort="date" type="button" title="Sort by date (most recent first)">Date</button>
+        <button class="experience-sort-btn" data-action="sort-experience" data-sort="relevance" type="button" title="Sort by relevance to the target role">Relevance</button>
+      </div>
+    ` : ''}
     <div class="accordion-list" id="experience-list" data-sortable="experience">
       ${(data.experience || []).map((exp, i) => renderExperienceItem(exp, i)).join('')}
     </div>
@@ -1760,6 +1768,10 @@ function setupEventHandlers() {
         addExperience();
         break;
 
+      case 'sort-experience':
+        sortExperience(target.dataset.sort);
+        break;
+
       case 'add-education':
         addEducation();
         break;
@@ -2102,17 +2114,28 @@ function setupDragAndDrop(panel) {
   panel.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    
-    const sortableList = e.target.closest('[data-sortable]');
-    if (!sortableList || !draggedItem) return;
-    
-    const afterElement = getDragAfterElement(sortableList, e.clientY);
-    const items = [...sortableList.querySelectorAll('[draggable="true"]:not(.dragging)')];
-    
-    // Remove previous drag-over states
+
+    if (!draggedItem) return;
+    // Resolve the sortable list from the DRAGGED item, not the hovered target.
+    // An expanded item contains nested [data-sortable] lists (e.g. an
+    // experience entry's bullets), so e.target.closest() would pick the inner
+    // list and corrupt the reorder. The dragged item is always a direct child
+    // of its own list. (#8)
+    const sortableList = draggedItem.closest('[data-sortable]');
+    if (!sortableList) return;
+
+    const items = [...sortableList.querySelectorAll(':scope > [draggable="true"]:not(.dragging)')];
+
+    // Clear any stale drop indicators first.
     items.forEach(item => item.classList.remove('drag-over', 'drag-over-bottom'));
     sortableList.classList.remove('drag-over-end');
-    
+
+    // Only preview a drop while the cursor is actually over the dragged item's
+    // own list. Hovering elsewhere in the panel (another section, the sort bar,
+    // whitespace) must not show — or imply — a reorder. (#8)
+    if (!sortableList.contains(e.target)) return;
+
+    const afterElement = getDragAfterElement(sortableList, e.clientY);
     if (afterElement) {
       // Dropping before this element - show indicator on top
       afterElement.classList.add('drag-over');
@@ -2126,16 +2149,27 @@ function setupDragAndDrop(panel) {
   panel.addEventListener('drop', (e) => {
     e.preventDefault();
     
-    const sortableList = e.target.closest('[data-sortable]');
-    if (!sortableList || !draggedItem) return;
-    
+    if (!draggedItem) return;
+    // Resolve from the dragged item (see the dragover note) so nested sortable
+    // lists — bullets inside experiences, content inside sections — don't hijack
+    // the index math. (#8)
+    const sortableList = draggedItem.closest('[data-sortable]');
+    if (!sortableList) return;
+
+    // Ignore drops that land outside the dragged item's own list (panel
+    // whitespace, the sort bar, a different section). Resolving the list from the
+    // dragged item prevents nested-list hijacking, but it also means we must
+    // confirm the cursor is over this list before moving — otherwise a stray drop
+    // would snap the entry to the top or bottom. (#8, PR#13 review)
+    if (!sortableList.contains(e.target)) return;
+
     // Save scroll position before re-render
     const panelContent = document.getElementById('structure-panel-content');
     const tabContent = panelContent?.querySelector('.panel-tab-content');
     const scrollTop = tabContent?.scrollTop || 0;
-    
+
     const sortablePath = sortableList.dataset.sortable;
-    const items = [...sortableList.querySelectorAll('[draggable="true"]')];
+    const items = [...sortableList.querySelectorAll(':scope > [draggable="true"]')];
     const fromIndex = parseInt(draggedItem.dataset.index);
     
     const afterElement = getDragAfterElement(sortableList, e.clientY);
@@ -2170,7 +2204,9 @@ function setupDragAndDrop(panel) {
 
 // Get the element to insert after during drag
 function getDragAfterElement(container, y) {
-  const draggableElements = [...container.querySelectorAll('[draggable="true"]:not(.dragging)')];
+  // Direct children only — nested sortable lists (bullets, section content) must
+  // not be considered when reordering the outer list. (#8)
+  const draggableElements = [...container.querySelectorAll(':scope > [draggable="true"]:not(.dragging)')];
   
   return draggableElements.reduce((closest, child) => {
     const box = child.getBoundingClientRect();
@@ -2319,6 +2355,28 @@ function addExperience() {
   if (onChangeCallback) onChangeCallback();
 }
 
+// Re-sort experience entries. 'relevance' => the AI's original ranking
+// (_relevanceRank, ascending); anything else => chronological, most recent
+// first (via experienceSortValue). One-shot: it writes the reordered array, so
+// a later manual drag persists until the user clicks a sort button again. (#7)
+function sortExperience(mode) {
+  const experience = store.get('experience');
+  if (!Array.isArray(experience) || experience.length < 2) return;
+
+  const sorted = [...experience];
+  if (mode === 'relevance') {
+    const rank = (exp) =>
+      Number.isFinite(exp?._relevanceRank) ? exp._relevanceRank : Number.MAX_SAFE_INTEGER;
+    sorted.sort((a, b) => rank(a) - rank(b));
+  } else {
+    sorted.sort((a, b) => experienceSortValue(b) - experienceSortValue(a));
+  }
+
+  store.update('experience', sorted);
+  renderPanel();
+  if (onChangeCallback) onChangeCallback();
+}
+
 // Delete experience
 function deleteExperience(index) {
   if (confirm('Delete this experience entry?')) {
@@ -2331,12 +2389,18 @@ function deleteExperience(index) {
 // Toggle experience accordion
 function toggleExperience(index) {
   const accordion = document.querySelector(`.accordion-item[data-index="${index}"]`);
-  if (accordion) {
-    const content = accordion.querySelector('.accordion-content');
-    const chevron = accordion.querySelector('.accordion-chevron');
-    content?.classList.toggle('expanded');
-    chevron?.classList.toggle('expanded');
-  }
+  if (!accordion) return;
+  const content = accordion.querySelector('.accordion-content');
+  const chevron = accordion.querySelector('.accordion-chevron');
+  content?.classList.toggle('expanded');
+  chevron?.classList.toggle('expanded');
+  // Persist the collapse state so a later full re-render (Add Experience / Add
+  // bullet, which call renderPanel()) doesn't reset every entry back to
+  // expanded. updateSilent() => no history entry and no re-render, so the DOM
+  // class we just toggled stays put. renderExperienceItem reads
+  // `exp._expanded !== false`, so we store the post-toggle expanded state. (#9)
+  const isExpanded = content ? content.classList.contains('expanded') : true;
+  store.updateSilent(`experience[${index}]._expanded`, isExpanded);
 }
 
 // Add bullet to experience

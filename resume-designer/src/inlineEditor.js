@@ -684,9 +684,30 @@ function handleClick(e) {
 
 // Start editing an element
 function startEditing(element) {
-  // Deactivate any currently active element
+  // Deactivate any currently active element.
+  // finishEditing() calls store.update(), which SYNCHRONOUSLY triggers a full
+  // renderCurrentResume() (via the store subscription in main.js) that replaces
+  // the DOM node we're about to edit. So capture the target's editable path
+  // first, then re-resolve to the freshly-rendered node — otherwise we'd make a
+  // detached node contentEditable and focus() would silently no-op, forcing the
+  // user to click a second time to actually edit it. (#11)
   if (activeElement && activeElement !== element) {
+    const targetPath = element.dataset.editable;
+    // Tool chips all share data-editable="tools", so a bare querySelector would
+    // re-resolve to the FIRST chip after the rerender and the user would end up
+    // editing the wrong tool. Record the clicked element's position among
+    // same-path siblings and restore that same one. (Unique paths — skills,
+    // experience fields — have a single match, so the index is just 0.) (#11, PR#13)
+    let targetIndex = 0;
+    if (targetPath) {
+      targetIndex = Math.max(0, [...document.querySelectorAll(`[data-editable="${targetPath}"]`)].indexOf(element));
+    }
     finishEditing(activeElement);
+    if (targetPath) {
+      const refreshed = document.querySelectorAll(`[data-editable="${targetPath}"]`);
+      if (refreshed[targetIndex]) element = refreshed[targetIndex];
+      else if (refreshed[0]) element = refreshed[0];
+    }
   }
   
   // Hide AI button when editing

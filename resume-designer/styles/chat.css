@@ -272,7 +272,8 @@
 .chat-panel-toggle {
   position: fixed;
   left: var(--space-lg);
-  bottom: var(--space-lg);
+  /* Top-left, just below the header bar (was bottom-left). (#1) */
+  top: calc(var(--header-height) + var(--space-md));
   width: 52px;
   height: 52px;
   display: flex;
