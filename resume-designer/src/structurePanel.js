@@ -2124,13 +2124,18 @@ function setupDragAndDrop(panel) {
     const sortableList = draggedItem.closest('[data-sortable]');
     if (!sortableList) return;
 
-    const afterElement = getDragAfterElement(sortableList, e.clientY);
     const items = [...sortableList.querySelectorAll(':scope > [draggable="true"]:not(.dragging)')];
-    
-    // Remove previous drag-over states
+
+    // Clear any stale drop indicators first.
     items.forEach(item => item.classList.remove('drag-over', 'drag-over-bottom'));
     sortableList.classList.remove('drag-over-end');
-    
+
+    // Only preview a drop while the cursor is actually over the dragged item's
+    // own list. Hovering elsewhere in the panel (another section, the sort bar,
+    // whitespace) must not show — or imply — a reorder. (#8)
+    if (!sortableList.contains(e.target)) return;
+
+    const afterElement = getDragAfterElement(sortableList, e.clientY);
     if (afterElement) {
       // Dropping before this element - show indicator on top
       afterElement.classList.add('drag-over');
@@ -2150,6 +2155,13 @@ function setupDragAndDrop(panel) {
     // the index math. (#8)
     const sortableList = draggedItem.closest('[data-sortable]');
     if (!sortableList) return;
+
+    // Ignore drops that land outside the dragged item's own list (panel
+    // whitespace, the sort bar, a different section). Resolving the list from the
+    // dragged item prevents nested-list hijacking, but it also means we must
+    // confirm the cursor is over this list before moving — otherwise a stray drop
+    // would snap the entry to the top or bottom. (#8, PR#13 review)
+    if (!sortableList.contains(e.target)) return;
 
     // Save scroll position before re-render
     const panelContent = document.getElementById('structure-panel-content');
