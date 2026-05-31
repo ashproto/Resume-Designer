@@ -5,7 +5,7 @@
 
 import { store, generateId, experienceSortValue } from './store.js';
 import { getSettings, saveSettings, getVariants, saveVariant, setCurrentVariantId, initPersistence, generateUniqueVariantName, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
-import { getConfiguredProviders, getDefaultModelId, generateResumeChanges, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels, isProviderConfigured } from './aiService.js';
+import { getConfiguredProviders, isConfigured, getDefaultModelId, generateResumeChanges, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels } from './aiService.js';
 import { loadVariant } from './headerBar.js';
 import { refreshChatPanel } from './chatPanel.js';
 import { parseResumeText } from './resumeParser.js';
@@ -15,51 +15,13 @@ import { renderHeaderBar } from './headerBar.js';
 const ONBOARDING_KEY = 'resume-designer-onboarding-complete';
 
 /**
- * Validate Anthropic API key
+ * Validate an OpenRouter API key by hitting the key-info endpoint.
  */
-async function validateAnthropicKey(key) {
+async function validateOpenRouterKey(key) {
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'test' }]
-      })
-    });
-    // 200 = success, 400 = bad request but key is valid
-    return response.status === 200 || response.status === 400;
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * Validate OpenAI API key
- */
-async function validateOpenAIKey(key) {
-  try {
-    const response = await fetch('https://api.openai.com/v1/models', {
+    const response = await fetch('https://openrouter.ai/api/v1/key', {
       headers: { 'Authorization': `Bearer ${key}` }
     });
-    return response.status === 200;
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * Validate Gemini API key
- */
-async function validateGeminiKey(key) {
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
     return response.status === 200;
   } catch (e) {
     return false;
@@ -129,49 +91,15 @@ function attachSettingsSyncListener() {
  * Get available models for the model selector dropdown
  */
 function getAvailableModelsForSelector() {
-  const allModels = getAllModels();
+  if (!isConfigured()) return [];
+  const grouped = getAllModels(); // { Anthropic: [{ id, label, group }], ... }
   const available = [];
-  
-  // Add models from each configured provider
-  for (const [provider, models] of Object.entries(allModels)) {
-    if (isProviderConfigured(provider)) {
-      for (const model of models) {
-        available.push({
-          id: model.id,
-          label: formatModelName(model.id),
-          provider: provider
-        });
-      }
+  for (const models of Object.values(grouped)) {
+    for (const model of models) {
+      available.push({ id: model.id, label: model.label, group: model.group });
     }
   }
-  
   return available;
-}
-
-/**
- * Format model name for display in dropdown
- */
-function formatModelName(modelId) {
-  const parts = modelId.split(':');
-  if (parts.length !== 2) return modelId;
-  
-  const provider = parts[0];
-  const model = parts[1];
-  
-  // Format provider name
-  const providerNames = {
-    'anthropic': 'Anthropic',
-    'openai': 'OpenAI',
-    'gemini': 'Google'
-  };
-  
-  // Format model name (capitalize, clean up)
-  const modelName = model
-    .split('-')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-  
-  return `${providerNames[provider] || provider} ${modelName}`;
 }
 
 // Interview questions for AI-guided resume creation
@@ -443,41 +371,20 @@ function renderApiKeyStep(content, footer) {
         </svg>
       </div>
       <h1>Welcome to Resume Designer</h1>
-      <p class="step-description">This app uses AI to help you create professional resumes. Enter at least one API key to get started.</p>
+      <p class="step-description">This app uses AI to help you create professional resumes. Enter your OpenRouter API key to get started.</p>
       
       <div class="api-config-panel" id="api-config-panel">
-        <div class="api-input-group" id="anthropic-group">
-          <label for="api-anthropic">
-            <span class="provider-name">Anthropic (Claude)</span>
-            <span class="provider-hint">Recommended for best results</span>
+        <div class="api-input-group" id="openrouter-group">
+          <label for="api-openrouter">
+            <span class="provider-name">OpenRouter</span>
+            <span class="provider-hint">One key for Claude, GPT, Gemini &amp; 300+ models</span>
           </label>
           <div class="api-input-wrapper">
-            <input type="password" id="api-anthropic" placeholder="sk-ant-api03-..." value="${settings.anthropicKey || ''}">
-            <span class="api-input-status" id="anthropic-status"></span>
+            <input type="password" id="api-openrouter" placeholder="sk-or-v1-..." value="${settings.openrouterKey || ''}">
+            <span class="api-input-status" id="openrouter-status"></span>
           </div>
+          <span class="provider-hint">Get a key at openrouter.ai/keys</span>
         </div>
-        
-        <div class="api-input-group" id="openai-group">
-          <label for="api-openai">
-            <span class="provider-name">OpenAI (GPT)</span>
-          </label>
-          <div class="api-input-wrapper">
-            <input type="password" id="api-openai" placeholder="sk-..." value="${settings.openaiKey || ''}">
-            <span class="api-input-status" id="openai-status"></span>
-          </div>
-        </div>
-        
-        <div class="api-input-group" id="gemini-group">
-          <label for="api-gemini">
-            <span class="provider-name">Google (Gemini)</span>
-          </label>
-          <div class="api-input-wrapper">
-            <input type="password" id="api-gemini" placeholder="AIza..." value="${settings.geminiKey || ''}">
-            <span class="api-input-status" id="gemini-status"></span>
-          </div>
-        </div>
-        
-        <div class="api-validation-result" id="api-validation-result"></div>
       </div>
       
       <p class="api-privacy-note">
@@ -485,7 +392,7 @@ function renderApiKeyStep(content, footer) {
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
           <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
         </svg>
-        Your API keys are stored locally and never sent to our servers.
+        Your API key is stored locally on your device and is sent only to OpenRouter to make AI requests.
       </p>
     </div>
   `;
@@ -503,154 +410,48 @@ function renderApiKeyStep(content, footer) {
     continueBtn.onclick = async function(e) {
       e.preventDefault();
       
-      const anthropicInput = document.getElementById('api-anthropic');
-      const openaiInput = document.getElementById('api-openai');
-      const geminiInput = document.getElementById('api-gemini');
-      const resultDiv = document.getElementById('api-validation-result');
-      
-      const anthropicKey = anthropicInput?.value.trim() || '';
-      const openaiKey = openaiInput?.value.trim() || '';
-      const geminiKey = geminiInput?.value.trim() || '';
-      const enteredKeys = { anthropicKey, openaiKey, geminiKey };
-      
-      // Check if any keys entered
-      if (!anthropicKey && !openaiKey && !geminiKey) {
-        if (resultDiv) {
-          resultDiv.innerHTML = `
-            <div class="validation-error">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              <div>
-                <strong>API key required</strong>
-                <p>Please enter at least one API key to use AI features.</p>
-              </div>
-            </div>
-          `;
-        }
+      const keyInput = document.getElementById('api-openrouter');
+      const openrouterKey = keyInput?.value.trim() || '';
+
+      // Require a key
+      if (!openrouterKey) {
+        showApiKeyStatus('Enter your OpenRouter API key to use AI features.', false);
         return;
       }
 
-      // Persist entered keys immediately so every AI entry point can use them.
-      saveSettings(enteredKeys);
+      // Persist immediately so every AI entry point can use it.
+      saveSettings({ openrouterKey });
       refreshChatPanel();
-      
-      // Show loading state
+
+      // Loading state
       continueBtn.disabled = true;
-      continueBtn.innerHTML = '<span class="btn-spinner"></span> Validating...';
-      
-      // Clear previous validation states
-      document.querySelectorAll('.api-input-status').forEach(s => {
-        s.innerHTML = '';
-        s.className = 'api-input-status';
-      });
-      document.querySelectorAll('.api-input-group').forEach(g => {
-        g.classList.remove('validated', 'invalid');
-      });
-      if (resultDiv) resultDiv.innerHTML = '';
-      
-      // Validate keys
-      const errors = [];
-      let validCount = 0;
-      
-      if (anthropicKey) {
-        document.getElementById('anthropic-status').innerHTML = '<span class="status-spinner"></span>';
-        const valid = await validateAnthropicKey(anthropicKey);
-        const status = document.getElementById('anthropic-status');
-        const group = document.getElementById('anthropic-group');
-        if (valid) {
-          status.innerHTML = '✓';
-          status.className = 'api-input-status valid';
-          group?.classList.add('validated');
-          validCount++;
-        } else {
-          errors.push('Anthropic');
-          status.innerHTML = '✗';
-          status.className = 'api-input-status invalid';
-          group?.classList.add('invalid');
-        }
+      continueBtn.textContent = 'Validating…';
+
+      const statusEl = document.getElementById('openrouter-status');
+      const groupEl = document.getElementById('openrouter-group');
+      if (statusEl) {
+        statusEl.textContent = '…';
+        statusEl.className = 'api-input-status';
       }
-      
-      if (openaiKey) {
-        document.getElementById('openai-status').innerHTML = '<span class="status-spinner"></span>';
-        const valid = await validateOpenAIKey(openaiKey);
-        const status = document.getElementById('openai-status');
-        const group = document.getElementById('openai-group');
-        if (valid) {
-          status.innerHTML = '✓';
-          status.className = 'api-input-status valid';
-          group?.classList.add('validated');
-          validCount++;
-        } else {
-          errors.push('OpenAI');
-          status.innerHTML = '✗';
-          status.className = 'api-input-status invalid';
-          group?.classList.add('invalid');
-        }
+      groupEl?.classList.remove('validated', 'invalid');
+
+      const valid = await validateOpenRouterKey(openrouterKey);
+      if (statusEl) {
+        statusEl.textContent = valid ? '✓' : '✗';
+        statusEl.className = `api-input-status ${valid ? 'valid' : 'invalid'}`;
       }
-      
-      if (geminiKey) {
-        document.getElementById('gemini-status').innerHTML = '<span class="status-spinner"></span>';
-        const valid = await validateGeminiKey(geminiKey);
-        const status = document.getElementById('gemini-status');
-        const group = document.getElementById('gemini-group');
-        if (valid) {
-          status.innerHTML = '✓';
-          status.className = 'api-input-status valid';
-          group?.classList.add('validated');
-          validCount++;
-        } else {
-          errors.push('Gemini');
-          status.innerHTML = '✗';
-          status.className = 'api-input-status invalid';
-          group?.classList.add('invalid');
-        }
-      }
-      
-      // Show result and proceed
-      if (validCount > 0) {
-        if (resultDiv) {
-          resultDiv.innerHTML = `
-            <div class="validation-success">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                <polyline points="22 4 12 14.01 9 11.01"/>
-              </svg>
-              <div>
-                <strong>${validCount} API key${validCount > 1 ? 's' : ''} validated!</strong>
-                <p>AI features are ready to use.</p>
-              </div>
-            </div>
-          `;
-        }
-        // Proceed to next step after brief delay
-        setTimeout(() => {
-          currentStep = 1;
-          renderStep();
-        }, 1000);
+      groupEl?.classList.add(valid ? 'validated' : 'invalid');
+
+      if (valid) {
+        showApiKeyStatus('API key validated! AI features are ready to use.', true);
       } else {
-        if (resultDiv) {
-          resultDiv.innerHTML = `
-            <div class="validation-warning">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              <div>
-                <strong>Could not validate key${errors.length > 1 ? 's' : ''}: ${errors.join(', ')}</strong>
-                <p>We saved your keys and you can continue. You can re-check them later in Settings.</p>
-              </div>
-            </div>
-          `;
-        }
-        setTimeout(() => {
-          currentStep = 1;
-          renderStep();
-        }, 1200);
+        showApiKeyStatus('Could not validate your key. We saved it — you can re-check it later in Settings.', false);
       }
+
+      setTimeout(() => {
+        currentStep = 1;
+        renderStep();
+      }, valid ? 1000 : 1200);
     };
   }
 }
@@ -1145,7 +946,7 @@ function renderInterviewStep(content, footer) {
     }
     
     const settings = getSettings();
-    const modelId = settings.defaultModel || 'anthropic:claude-sonnet-4-5';
+    const modelId = settings.defaultModel || 'anthropic/claude-sonnet-4.5';
     
     try {
       const response = await chat(modelId, [{

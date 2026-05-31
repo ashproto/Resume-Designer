@@ -192,7 +192,7 @@ Currently **not** signed. Users will see a Microsoft Defender SmartScreen warnin
 
 **`tauri dev` opens a window but the frontend never appears** — check that Vite is running on port 3000 (the configured `devUrl`). The Vite config uses `strictPort: true`, so a port conflict will fail loudly.
 
-**CSP violation when calling Anthropic/OpenAI/Gemini** — the CSP `connect-src` in `tauri.conf.json` must include each provider's API origin. Test by running `fetch('https://api.anthropic.com/v1/messages', { method: 'POST' })` in DevTools and watching for `Refused to connect` errors.
+**CSP violation when calling OpenRouter** — the CSP `connect-src` in `tauri.conf.json` must include `https://openrouter.ai`. Test by running `fetch('https://openrouter.ai/api/v1/key')` in DevTools and watching for `Refused to connect` errors.
 
 **`xcrun: error: invalid active developer path`** — install Xcode Command Line Tools: `xcode-select --install`.
 

@@ -5,40 +5,9 @@
 
 const STORAGE_KEY = 'resume-designer-token-usage';
 
-// Pricing per 1M tokens (in USD)
-// Sources: 
-// - Anthropic: https://docs.anthropic.com/en/docs/about-claude/pricing
-// - OpenAI: https://platform.openai.com/docs/pricing (Standard tier)
-const PRICING = {
-  anthropic: {
-    // Claude Opus 4.5: $5 input, $25 output per MTok
-    'claude-opus-4-5-20251101': { input: 5.00, output: 25.00 },
-    // Claude Sonnet 4.5: $3 input, $15 output per MTok
-    'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
-    // Claude Haiku 4.5: $1 input, $5 output per MTok
-    'claude-haiku-4-5-20251001': { input: 1.00, output: 5.00 }
-  },
-  openai: {
-    // GPT-5.2 Standard: $1.75 input, $14.00 output per 1M tokens
-    'gpt-5.2': { input: 1.75, output: 14.00 },
-    // GPT-5.2-pro Standard: $21.00 input, $168.00 output per 1M tokens
-    'gpt-5.2-pro': { input: 21.00, output: 168.00 },
-    // GPT-4o Standard: $2.50 input, $10.00 output per 1M tokens
-    'gpt-4o': { input: 2.50, output: 10.00 },
-    // GPT-4o-mini Standard: $0.15 input, $0.60 output per 1M tokens
-    'gpt-4o-mini': { input: 0.15, output: 0.60 },
-    // Search preview models
-    'gpt-4o-search-preview': { input: 2.50, output: 10.00 },
-    'gpt-4o-mini-search-preview': { input: 0.15, output: 0.60 }
-  },
-  gemini: {
-    // Gemini pricing (estimated, check Google's pricing page for current rates)
-    'gemini-3-pro': { input: 1.25, output: 5.00 },
-    'gemini-3-flash': { input: 0.075, output: 0.30 },
-    'gemini-2.0-flash': { input: 0.075, output: 0.30 },
-    'gemini-1.5-pro': { input: 1.25, output: 5.00 }
-  }
-};
+// Cost is taken from OpenRouter's reported `usage.cost` (see trackUsage), which
+// is accurate for the actual model used — including custom slugs. No local
+// pricing table is maintained: slugs span 300+ models and OpenRouter prices drift.
 
 // Default storage structure
 const DEFAULT_STORAGE = {
@@ -93,36 +62,16 @@ function saveUsageData(data) {
 }
 
 /**
- * Calculate cost for a usage event
- */
-export function calculateCost(provider, model, inputTokens, outputTokens) {
-  const providerPricing = PRICING[provider];
-  if (!providerPricing) {
-    console.warn(`[TokenTracking] Unknown provider: ${provider}`);
-    return 0;
-  }
-  
-  const modelPricing = providerPricing[model];
-  if (!modelPricing) {
-    console.warn(`[TokenTracking] Unknown model: ${model} for provider ${provider}`);
-    // Use a default/fallback pricing
-    return 0;
-  }
-  
-  // Price is per 1M tokens, so divide by 1,000,000
-  const inputCost = (inputTokens / 1_000_000) * modelPricing.input;
-  const outputCost = (outputTokens / 1_000_000) * modelPricing.output;
-  
-  return inputCost + outputCost;
-}
-
-/**
  * Track a usage event
  */
-export function trackUsage({ provider, model, feature, inputTokens, outputTokens, cacheRead = 0, cacheCreation = 0 }) {
+export function trackUsage({ provider, model, feature, inputTokens, outputTokens, cacheRead = 0, cacheCreation = 0, cost: reportedCost }) {
   const data = loadUsageData();
-  
-  const cost = calculateCost(provider, model, inputTokens, outputTokens);
+
+  // Cost comes from OpenRouter's reported usage.cost (requested via
+  // usage:{include:true} in aiService); 0 if the API didn't return one.
+  const cost = (typeof reportedCost === 'number' && !Number.isNaN(reportedCost))
+    ? reportedCost
+    : 0;
   
   // Create event record
   const event = {
@@ -146,8 +95,9 @@ export function trackUsage({ provider, model, feature, inputTokens, outputTokens
   data.summary.totalOutputTokens += event.outputTokens;
   data.summary.totalCost += cost;
   
-  // Update by model
-  const modelKey = `${provider}:${model}`;
+  // Update by model. The slug already encodes the provider (provider/model) and
+  // is globally unique, so key on it directly — no `anthropic:anthropic/...` doubling.
+  const modelKey = model;
   if (!data.summary.byModel[modelKey]) {
     data.summary.byModel[modelKey] = {
       provider,
@@ -180,7 +130,7 @@ export function trackUsage({ provider, model, feature, inputTokens, outputTokens
   // Save updated data
   saveUsageData(data);
   
-  console.log(`[TokenTracking] Tracked: ${provider}/${model} - ${feature} - ${inputTokens} in / ${outputTokens} out - $${cost.toFixed(6)}`);
+  console.log(`[TokenTracking] Tracked: ${model} - ${feature} - ${inputTokens} in / ${outputTokens} out - $${cost.toFixed(6)}`);
   
   return event;
 }
@@ -276,11 +226,4 @@ export function formatCost(cost) {
     return `$${cost.toFixed(3)}`;
   }
   return `$${cost.toFixed(2)}`;
-}
-
-/**
- * Get pricing table for reference
- */
-export function getPricingTable() {
-  return PRICING;
 }

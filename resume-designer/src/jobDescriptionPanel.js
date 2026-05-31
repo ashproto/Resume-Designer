@@ -18,7 +18,7 @@ import {
 } from './jobDescriptions.js';
 
 import { analyzeAgainstJobs, tailorForJob, generateResumeChanges } from './aiService.js';
-import { getConfiguredProviders, getAllModels, isProviderConfigured } from './aiService.js';
+import { getConfiguredProviders, getAllModels, isConfigured, validateModelId } from './aiService.js';
 import { getSettings, saveVariantAnalysis, getVariantAnalysis } from './persistence.js';
 import { createChangeSet } from './diffEngine.js';
 import { showDiffView } from './diffView.js';
@@ -842,7 +842,7 @@ async function performAnalysis(selectedJDs, modelId, reasoningEffort) {
   // Use provided model or fall back to default
   if (!modelId) {
     const settings = getSettings();
-    modelId = settings.defaultModel || 'anthropic:claude-sonnet-4-5';
+    modelId = settings.defaultModel || 'anthropic/claude-sonnet-4.5';
   }
   
   // Use provided reasoning effort or fall back to medium
@@ -888,7 +888,7 @@ async function handleTailor() {
   }
   
   const settings = getSettings();
-  const modelId = settings.defaultModel || 'anthropic:claude-sonnet-4-5';
+  const modelId = settings.defaultModel || 'anthropic/claude-sonnet-4.5';
   
   try {
     const result = await generateResumeChanges(
@@ -1458,49 +1458,15 @@ function showJobSelectionModal(onConfirm) {
  * Get available models for the model selector
  */
 function getAvailableModelsForSelector() {
-  const allModels = getAllModels();
+  if (!isConfigured()) return [];
+  const grouped = getAllModels(); // { Anthropic: [{ id, label, group }], ... }
   const available = [];
-  
-  // Add models from each configured provider
-  for (const [provider, models] of Object.entries(allModels)) {
-    if (isProviderConfigured(provider)) {
-      for (const model of models) {
-        available.push({
-          id: model.id,
-          label: formatModelName(model.id),
-          provider: provider
-        });
-      }
+  for (const models of Object.values(grouped)) {
+    for (const model of models) {
+      available.push({ id: model.id, label: model.label, provider: model.group });
     }
   }
-  
   return available;
-}
-
-/**
- * Format model name for display
- */
-function formatModelName(modelId) {
-  const parts = modelId.split(':');
-  if (parts.length !== 2) return modelId;
-  
-  const provider = parts[0];
-  const model = parts[1];
-  
-  // Format provider name
-  const providerNames = {
-    'anthropic': 'Anthropic',
-    'openai': 'OpenAI',
-    'gemini': 'Google'
-  };
-  
-  // Format model name (capitalize, clean up)
-  const modelName = model
-    .split('-')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-  
-  return `${providerNames[provider] || provider} ${modelName}`;
 }
 
 /**
@@ -1510,7 +1476,7 @@ function renderJobSelectionModalContent(jobDescriptions) {
   const selectedCount = selectedJobsForAnalysis.size;
   const availableModels = getAvailableModelsForSelector();
   const settings = getSettings();
-  const defaultModel = selectedModelForAnalysis || settings.defaultModel || 'anthropic:claude-sonnet-4-5';
+  const defaultModel = selectedModelForAnalysis || validateModelId(settings.defaultModel) || 'anthropic/claude-sonnet-4.5';
   
   return `
     <div class="jd-select-modal">

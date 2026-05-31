@@ -33,7 +33,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com data:; style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com data:; img-src 'self' data: blob: asset: https://asset.localhost; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ipc: https://ipc.localhost https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com; worker-src 'self' blob:;"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com data:; style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com data:; img-src 'self' data: blob: asset: https://asset.localhost; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ipc: https://ipc.localhost https://openrouter.ai; worker-src 'self' blob:;"
     }
   },
   "bundle": {

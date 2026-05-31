@@ -1,6 +1,6 @@
 /**
  * AI Service
- * Unified interface for Anthropic, OpenAI, and Gemini APIs
+ * Unified interface to AI models via OpenRouter (single aggregate provider).
  */
 
 import { getSettings, getUserProfile, saveUserProfile } from './persistence.js';
@@ -8,71 +8,42 @@ import { store } from './store.js';
 import { getActiveJobDescriptions } from './jobDescriptions.js';
 import { trackUsage } from './tokenTrackingService.js';
 
-// API Endpoints
-const ENDPOINTS = {
-  anthropic: 'https://api.anthropic.com/v1/messages',
-  openai: 'https://api.openai.com/v1/chat/completions',
-  gemini: 'https://generativelanguage.googleapis.com/v1beta/models'
+// OpenRouter — a single OpenAI-compatible endpoint fronting every provider.
+const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_KEY_ENDPOINT = 'https://openrouter.ai/api/v1/key';
+// Optional attribution headers (OpenRouter app leaderboard); harmless if unused.
+const OPENROUTER_REFERER = 'https://github.com/SiriusA7/Resume-Designer';
+const OPENROUTER_TITLE = 'Resume Designer';
+
+// Curated model catalog, keyed by OpenRouter slug. The slug is the SINGLE
+// canonical identifier: it is the storage key, the dropdown value, AND the
+// `model` field sent on the wire. Users may also type any other OpenRouter
+// slug via the custom-model field — see validateModelId().
+// Slugs verified against GET https://openrouter.ai/api/v1/models (catalog
+// drifts; re-verify when refreshing this list).
+const MODELS = {
+  'anthropic/claude-opus-4.5':     { label: 'Claude Opus 4.5',   group: 'Anthropic', maxTokens: 8192 },
+  'anthropic/claude-sonnet-4.5':   { label: 'Claude Sonnet 4.5', group: 'Anthropic', maxTokens: 8192 },
+  'anthropic/claude-haiku-4.5':    { label: 'Claude Haiku 4.5',  group: 'Anthropic', maxTokens: 4096 },
+  'openai/gpt-5.2':                { label: 'GPT-5.2',           group: 'OpenAI',    maxTokens: 8192 },
+  'openai/gpt-5.2-pro':            { label: 'GPT-5.2 Pro',       group: 'OpenAI',    maxTokens: 16384 },
+  'openai/gpt-4o':                 { label: 'GPT-4o',            group: 'OpenAI',    maxTokens: 4096 },
+  'openai/gpt-4o-mini':            { label: 'GPT-4o Mini',       group: 'OpenAI',    maxTokens: 4096 },
+  // No bare `google/gemini-3-pro` exists; 3.1-pro-preview is the current 3.x pro text model.
+  'google/gemini-3.1-pro-preview': { label: 'Gemini 3 Pro',     group: 'Google',    maxTokens: 8192 },
+  'google/gemini-3-flash-preview': { label: 'Gemini 3 Flash',   group: 'Google',    maxTokens: 8192 },
+  // gemini-1.5-* is retired on OpenRouter; 2.5 Pro is the stable replacement.
+  'google/gemini-2.5-pro':         { label: 'Gemini 2.5 Pro',   group: 'Google',    maxTokens: 8192 },
+  'google/gemini-2.0-flash-001':   { label: 'Gemini 2.0 Flash', group: 'Google',    maxTokens: 4096 }
 };
 
-// Model configurations - Model IDs verified from provider documentation
-const MODELS = {
-  'anthropic:claude-opus-4-5': {
-    provider: 'anthropic',
-    model: 'claude-opus-4-5-20251101',
-    maxTokens: 8192
-  },
-  'anthropic:claude-sonnet-4-5': {
-    provider: 'anthropic',
-    model: 'claude-sonnet-4-5-20250929',
-    maxTokens: 8192
-  },
-  'anthropic:claude-haiku-4-5': {
-    provider: 'anthropic',
-    model: 'claude-haiku-4-5-20251001',
-    maxTokens: 4096
-  },
-  'openai:gpt-5.2': {
-    provider: 'openai',
-    model: 'gpt-5.2',
-    maxTokens: 8192
-  },
-  'openai:gpt-5.2-pro': {
-    provider: 'openai',
-    model: 'gpt-5.2-pro',
-    maxTokens: 16384
-  },
-  'openai:gpt-4o': {
-    provider: 'openai',
-    model: 'gpt-4o',
-    maxTokens: 4096
-  },
-  'openai:gpt-4o-mini': {
-    provider: 'openai',
-    model: 'gpt-4o-mini',
-    maxTokens: 4096
-  },
-  'gemini:gemini-3-pro': {
-    provider: 'gemini',
-    model: 'gemini-3-pro',
-    maxTokens: 8192
-  },
-  'gemini:gemini-3-flash': {
-    provider: 'gemini',
-    model: 'gemini-3-flash',
-    maxTokens: 8192
-  },
-  'gemini:gemini-2.0-flash': {
-    provider: 'gemini',
-    model: 'gemini-2.0-flash',
-    maxTokens: 4096
-  },
-  'gemini:gemini-1.5-pro': {
-    provider: 'gemini',
-    model: 'gemini-1.5-pro',
-    maxTokens: 4096
-  }
-};
+// Default model used when nothing valid is selected.
+const DEFAULT_MODEL_ID = 'anthropic/claude-sonnet-4.5';
+
+// Cross-provider fallback chain for OpenRouter's `models` array (used only when
+// the autoFallback setting is on). Cross-provider on purpose: if one provider
+// is down/rate-limited, retrying the SAME provider's model wouldn't help.
+const FALLBACK_CHAIN = ['anthropic/claude-sonnet-4.5', 'openai/gpt-5.2', 'google/gemini-3.1-pro-preview'];
 
 // System prompt for resume assistant
 const SYSTEM_PROMPT = `You are an expert resume consultant and career coach. You help users improve their resumes by:
@@ -228,74 +199,66 @@ Rules:
 4. Infer proficiency levels from context clues
 5. Output ONLY the JSON, no explanation`;
 
-// Get the API key for a provider
-function getApiKey(provider) {
-  const settings = getSettings();
-  switch (provider) {
-    case 'anthropic':
-      return settings.anthropicKey;
-    case 'openai':
-      return settings.openaiKey;
-    case 'gemini':
-      return settings.geminiKey;
-    default:
-      return null;
-  }
+// Get the OpenRouter API key (one aggregate provider now).
+function getApiKey() {
+  return getSettings().openrouterKey || '';
 }
 
-// Check if a provider is configured
-export function isProviderConfigured(provider) {
-  const key = getApiKey(provider);
-  return key && key.length > 0;
+// Whether the app has an OpenRouter key configured.
+export function isConfigured() {
+  return getApiKey().length > 0;
 }
 
-// Get configured providers
+// Back-compat shim: getConfiguredProviders() is still used for UI gating
+// (callers only check .length). One aggregate provider → ['openrouter'] or [].
 export function getConfiguredProviders() {
-  return ['anthropic', 'openai', 'gemini'].filter(p => isProviderConfigured(p));
+  return isConfigured() ? ['openrouter'] : [];
 }
 
-// Get the default model ID based on configured providers
+// Default model when nothing valid is selected.
 export function getDefaultModelId() {
-  const providers = getConfiguredProviders();
-  if (providers.includes('anthropic')) {
-    return 'anthropic:claude-sonnet-4-5';
-  }
-  if (providers.includes('openai')) {
-    return 'openai:gpt-5.2';
-  }
-  if (providers.includes('gemini')) {
-    return 'gemini:gemini-3-flash';
-  }
-  return null;
+  return isConfigured() ? DEFAULT_MODEL_ID : null;
 }
 
-// Validate and migrate a model ID - returns valid model ID or fallback
+// Legacy provider:model IDs → OpenRouter slugs. One-time migration of a
+// `defaultModel` saved by the pre-OpenRouter build (see persistence.js too).
+const LEGACY_MODEL_MAP = {
+  'anthropic:claude-opus-4-5': 'anthropic/claude-opus-4.5',
+  'anthropic:claude-sonnet-4-5': 'anthropic/claude-sonnet-4.5',
+  'anthropic:claude-haiku-4-5': 'anthropic/claude-haiku-4.5',
+  'openai:gpt-5.2': 'openai/gpt-5.2',
+  'openai:gpt-5.2-pro': 'openai/gpt-5.2-pro',
+  'openai:gpt-4o': 'openai/gpt-4o',
+  'openai:gpt-4o-mini': 'openai/gpt-4o-mini',
+  'gemini:gemini-3-pro': 'google/gemini-3.1-pro-preview',
+  'gemini:gemini-3-flash': 'google/gemini-3-flash-preview',
+  'gemini:gemini-2.0-flash': 'google/gemini-2.0-flash-001',
+  'gemini:gemini-1.5-pro': 'google/gemini-2.5-pro'
+};
+
+// Validate/normalize a model ID. Curated slugs pass through; any well-formed
+// custom OpenRouter slug (contains "/") is allowed; legacy colon IDs migrate;
+// unknown/empty falls back to the default.
 export function validateModelId(modelId) {
-  // If model exists in config, use it
-  if (MODELS[modelId]) {
-    return modelId;
+  if (modelId && MODELS[modelId]) return modelId;
+  if (typeof modelId === 'string') {
+    if (modelId.includes('/')) return modelId; // custom OpenRouter slug
+    if (LEGACY_MODEL_MAP[modelId]) return LEGACY_MODEL_MAP[modelId];
   }
-  
-  // Try to find a fallback based on the provider
-  const provider = modelId?.split(':')[0];
-  if (provider && isProviderConfigured(provider)) {
-    // Return default model for this provider
-    const fallbacks = {
-      'anthropic': 'anthropic:claude-sonnet-4-5',
-      'openai': 'openai:gpt-5.2',
-      'gemini': 'gemini:gemini-3-flash'
-    };
-    console.warn(`Model "${modelId}" not found, falling back to ${fallbacks[provider]}`);
-    return fallbacks[provider];
-  }
-  
-  // Return any available default
   return getDefaultModelId();
 }
 
-// Get list of available model IDs
+// Get list of available (curated) model IDs.
 export function getAvailableModelIds() {
   return Object.keys(MODELS);
+}
+
+// Cross-provider fallback models for a primary (used only when autoFallback on).
+function getFallbackModels(modelId) {
+  const primaryGroup = MODELS[modelId]?.group;
+  return FALLBACK_CHAIN
+    .filter(slug => slug !== modelId && MODELS[slug]?.group !== primaryGroup)
+    .slice(0, 2);
 }
 
 // Check if user profile has meaningful content
@@ -349,15 +312,9 @@ export async function generateResumeFromProfileForJob(modelId, jobDescription, o
     throw new Error('User profile is empty. Please fill out your profile first.');
   }
   
-  const modelConfig = MODELS[modelId];
-  if (!modelConfig) {
-    throw new Error(`Unknown model: ${modelId}`);
-  }
-  
-  const apiKey = getApiKey(modelConfig.provider);
-  
-  if (!apiKey) {
-    throw new Error(`No API key configured for ${modelConfig.provider}`);
+  const validModelId = validateModelId(modelId);
+  if (!isConfigured()) {
+    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
   
   // Build comprehensive profile context
@@ -541,25 +498,10 @@ IMPORTANT:
 
   const messages = [{ role: 'user', content: prompt }];
   
-  let response;
-  const featureOptions = { 
+  const response = await callOpenRouter(validModelId, messages, {
     feature: 'generate-from-profile',
     reasoningEffort: options.reasoningEffort
-  };
-  
-  switch (modelConfig.provider) {
-    case 'anthropic':
-      response = await callAnthropic(modelConfig, messages, apiKey, featureOptions);
-      break;
-    case 'openai':
-      response = await callOpenAI(modelConfig, messages, apiKey, featureOptions);
-      break;
-    case 'gemini':
-      response = await callGemini(modelConfig, messages, apiKey, featureOptions);
-      break;
-    default:
-      throw new Error(`Unsupported provider: ${modelConfig.provider}`);
-  }
+  });
   
   // Parse the JSON response
   try {
@@ -803,370 +745,131 @@ function getResumeContext() {
   return context;
 }
 
-// Map reasoning effort levels to Anthropic thinking budget tokens
-const ANTHROPIC_THINKING_BUDGETS = {
-  'low': 1024,      // Minimum required
-  'medium': 4096,   // Moderate thinking
-  'high': 8192      // Extended thinking
-};
+// Single OpenRouter call path — replaces the per-provider callAnthropic /
+// callOpenAI / callOpenAIResponses / callGemini (and the *WithSystem variants).
+//
+// Returns a string by default. When `structured` is true (the chat UI) and the
+// model emitted reasoning or web-search annotations, returns
+// { text, thinking, usedWebSearch } — preserving the contract callAnthropic()
+// previously had with chatPanel.
+async function callOpenRouter(modelId, messages, options = {}) {
+  const {
+    systemPrompt = SYSTEM_PROMPT,
+    reasoningEffort,
+    webSearch,
+    feature,
+    structured = false
+  } = options;
 
-// Call Anthropic API
-async function callAnthropic(modelConfig, messages, apiKey, options = {}) {
-  const { reasoningEffort, webSearch } = options;
-  
-  const requestBody = {
-    model: modelConfig.model,
-    max_tokens: modelConfig.maxTokens,
-    system: SYSTEM_PROMPT,
-    messages: messages.map(m => ({
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
+  }
+
+  const cfg = MODELS[modelId];
+
+  // OpenAI-shaped messages: the system prompt is just a leading system message
+  // (no more Anthropic `system` / Gemini `systemInstruction` special-casing).
+  const apiMessages = [];
+  if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
+  for (const m of messages) {
+    apiMessages.push({
       role: m.role === 'user' ? 'user' : 'assistant',
       content: m.content
-    }))
+    });
+  }
+
+  const requestBody = {
+    model: modelId,
+    messages: apiMessages,
+    max_tokens: cfg?.maxTokens || 8192,
+    usage: { include: true } // ask OpenRouter to return real cost in `usage`
   };
-  
-  // Add extended thinking if reasoning effort is specified
-  // Note: Extended thinking requires max_tokens > budget_tokens
-  if (reasoningEffort && reasoningEffort !== 'none' && ANTHROPIC_THINKING_BUDGETS[reasoningEffort]) {
-    const budgetTokens = ANTHROPIC_THINKING_BUDGETS[reasoningEffort];
-    // Ensure max_tokens is greater than budget_tokens
-    requestBody.max_tokens = Math.max(modelConfig.maxTokens, budgetTokens + 2048);
-    requestBody.thinking = {
-      type: 'enabled',
-      budget_tokens: budgetTokens
-    };
+
+  // Automatic model fallback (opt-in via settings): retry alternates on outage/429.
+  if (getSettings().autoFallback) {
+    const fallbacks = getFallbackModels(modelId);
+    if (fallbacks.length) requestBody.models = [modelId, ...fallbacks];
   }
-  
-  // Add web search tool if enabled
-  // Uses the web_search_20250305 tool type
+
+  // Unified reasoning — replaces Anthropic thinking budgets AND OpenAI reasoning_effort.
+  if (reasoningEffort && reasoningEffort !== 'none') {
+    requestBody.reasoning = { effort: reasoningEffort };
+  }
+
+  // Unified web search via OpenRouter's server tool (replaces the deprecated
+  // `plugins:[{id:'web'}]` and the three per-provider tool shapes). Citations
+  // still arrive at choices[0].message.annotations.
   if (webSearch) {
-    requestBody.tools = [
-      {
-        type: 'web_search_20250305',
-        name: 'web_search'
-      }
-    ];
+    requestBody.tools = [{ type: 'openrouter:web_search' }];
   }
-  
-  const response = await fetch(ENDPOINTS.anthropic, {
+
+  const response = await fetch(OPENROUTER_ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': OPENROUTER_REFERER,
+      'X-Title': OPENROUTER_TITLE
     },
     body: JSON.stringify(requestBody)
   });
-  
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
+    throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
   }
-  
+
   const data = await response.json();
-  
-  // Track token usage
+  const message = data.choices?.[0]?.message || {};
+  const text = message.content || '';
+
+  // Track usage. Prefer OpenRouter's reported cost; provider is derived from the
+  // actual model used (fallback-aware) for the Developer-panel breakdown.
   if (data.usage) {
+    const usedModel = data.model || modelId;
     trackUsage({
-      provider: 'anthropic',
-      model: modelConfig.model,
-      feature: options.feature || 'chat',
-      inputTokens: data.usage.input_tokens || 0,
-      outputTokens: data.usage.output_tokens || 0,
-      cacheRead: data.usage.cache_read_input_tokens || 0,
-      cacheCreation: data.usage.cache_creation_input_tokens || 0
+      provider: String(usedModel).split('/')[0] || 'openrouter',
+      model: usedModel,
+      feature: feature || 'chat',
+      inputTokens: data.usage.prompt_tokens || 0,
+      outputTokens: data.usage.completion_tokens || 0,
+      cost: typeof data.usage.cost === 'number' ? data.usage.cost : undefined
     });
   }
-  
-  // Handle response with extended thinking or tool use (may have multiple content blocks)
-  if (Array.isArray(data.content)) {
-    // Extract thinking/reasoning summary if present
-    const thinkingBlock = data.content.find(block => block.type === 'thinking');
-    const thinkingSummary = thinkingBlock?.thinking || null;
-    
-    // Find the text content block (not the thinking block or tool_use block)
-    const textBlock = data.content.find(block => block.type === 'text');
-    const text = textBlock?.text || '';
-    
-    // If there's a web search result, note it
-    const webSearchResult = data.content.find(block => block.type === 'web_search_tool_result');
-    const usedWebSearch = !!webSearchResult;
-    
-    // Return structured response if we have thinking or web search
-    if (thinkingSummary || usedWebSearch) {
+
+  if (structured) {
+    const usedWebSearch = Array.isArray(message.annotations) && message.annotations.length > 0;
+    if (message.reasoning || usedWebSearch) {
       return {
-        text: text || data.content.find(block => block.text)?.text || JSON.stringify(data.content),
-        thinking: thinkingSummary,
+        text: text || JSON.stringify(data.choices?.[0] || {}),
+        thinking: message.reasoning || null,
         usedWebSearch
       };
     }
-    
-    // Fallback to simple text
-    return text || data.content[0]?.text || JSON.stringify(data.content);
   }
-  
-  return data.content[0].text;
-}
 
-// Map our reasoning levels to OpenAI reasoning_effort values
-const OPENAI_REASONING_EFFORT = {
-  'none': 'none',
-  'low': 'low',
-  'medium': 'medium',
-  'high': 'high'
-};
-
-// OpenAI search-enabled model mappings
-// When web search is enabled, we can use search-preview models for gpt-4o variants
-const OPENAI_SEARCH_MODELS = {
-  'gpt-4o': 'gpt-4o-search-preview',
-  'gpt-4o-mini': 'gpt-4o-mini-search-preview'
-};
-
-// Call OpenAI API (routes to appropriate endpoint based on model)
-async function callOpenAI(modelConfig, messages, apiKey, options = {}) {
-  const { reasoningEffort, webSearch } = options;
-  
-  // GPT-5.x models require the Responses API (not Chat Completions)
-  const isGpt5 = modelConfig.model.startsWith('gpt-5');
-  if (isGpt5) {
-    return callOpenAIResponses(modelConfig, messages, apiKey, options);
-  }
-  
-  // Determine which model to use
-  let modelToUse = modelConfig.model;
-  
-  // For web search with gpt-4o models, use search-preview variants
-  if (webSearch && OPENAI_SEARCH_MODELS[modelConfig.model]) {
-    modelToUse = OPENAI_SEARCH_MODELS[modelConfig.model];
-  }
-  
-  // Check if this is an o1 reasoning model (uses 'developer' role instead of 'system')
-  const isO1Model = modelConfig.model.startsWith('o1');
-  
-  // Build messages array - o1 models use 'developer' role instead of 'system'
-  const apiMessages = isO1Model 
-    ? [
-        { role: 'developer', content: SYSTEM_PROMPT },
-        ...messages.map(m => ({
-          role: m.role,
-          content: m.content
-        }))
-      ]
-    : [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...messages.map(m => ({
-          role: m.role,
-          content: m.content
-        }))
-      ];
-  
-  const requestBody = {
-    model: modelToUse,
-    max_completion_tokens: modelConfig.maxTokens,
-    messages: apiMessages
-  };
-  
-  // Add reasoning_effort for o1 models
-  if (reasoningEffort && OPENAI_REASONING_EFFORT[reasoningEffort] && isO1Model) {
-    requestBody.reasoning_effort = OPENAI_REASONING_EFFORT[reasoningEffort];
-  }
-  
-  const response = await fetch(ENDPOINTS.openai, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(requestBody)
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Track token usage
-  if (data.usage) {
-    trackUsage({
-      provider: 'openai',
-      model: modelToUse,
-      feature: options.feature || 'chat',
-      inputTokens: data.usage.prompt_tokens || 0,
-      outputTokens: data.usage.completion_tokens || 0
-    });
-  }
-  
-  return data.choices[0].message.content;
-}
-
-// Call OpenAI Responses API (for GPT-5 with web search and reasoning)
-async function callOpenAIResponses(modelConfig, messages, apiKey, options = {}) {
-  const { reasoningEffort, webSearch } = options;
-  
-  // Build input from messages
-  const input = messages.map(m => ({
-    role: m.role === 'user' ? 'user' : 'assistant',
-    content: m.content
-  }));
-  
-  // Add system message context to first user message
-  if (input.length > 0 && input[0].role === 'user') {
-    input[0].content = `${SYSTEM_PROMPT}\n\n${input[0].content}`;
-  }
-  
-  const requestBody = {
-    model: modelConfig.model,
-    input: input
-  };
-  
-  // Add reasoning configuration
-  if (reasoningEffort && OPENAI_REASONING_EFFORT[reasoningEffort]) {
-    requestBody.reasoning = {
-      effort: OPENAI_REASONING_EFFORT[reasoningEffort]
-    };
-  }
-  
-  // Add web search tool
-  if (webSearch) {
-    requestBody.tools = [{ type: 'web_search' }];
-  }
-  
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(requestBody)
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Track token usage
-  if (data.usage) {
-    trackUsage({
-      provider: 'openai',
-      model: modelConfig.model,
-      feature: options.feature || 'chat',
-      inputTokens: data.usage.input_tokens || data.usage.prompt_tokens || 0,
-      outputTokens: data.usage.output_tokens || data.usage.completion_tokens || 0
-    });
-  }
-  
-  // Responses API returns output differently
-  // Look for the message output item
-  if (data.output_text) {
-    return data.output_text;
-  }
-  
-  // Or extract from output array
-  if (Array.isArray(data.output)) {
-    const messageItem = data.output.find(item => item.type === 'message');
-    if (messageItem?.content?.[0]?.text) {
-      return messageItem.content[0].text;
-    }
-  }
-  
-  throw new Error('Unexpected response format from OpenAI Responses API');
-}
-
-// Call Gemini API
-async function callGemini(modelConfig, messages, apiKey, options = {}) {
-  const { webSearch } = options;
-  
-  const url = `${ENDPOINTS.gemini}/${modelConfig.model}:generateContent?key=${apiKey}`;
-  
-  // Convert messages to Gemini format
-  const contents = [];
-  
-  // Add system instruction as first user message context
-  const systemContext = SYSTEM_PROMPT;
-  
-  for (const msg of messages) {
-    contents.push({
-      role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.content }]
-    });
-  }
-  
-  const requestBody = {
-    contents,
-    systemInstruction: {
-      parts: [{ text: systemContext }]
-    },
-    generationConfig: {
-      maxOutputTokens: modelConfig.maxTokens
-    }
-  };
-  
-  // Add Google Search grounding if web search is enabled
-  if (webSearch) {
-    requestBody.tools = [
-      { google_search: {} }
-    ];
-  }
-  
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(requestBody)
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `Gemini API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Track token usage (Gemini returns usage in usageMetadata)
-  if (data.usageMetadata) {
-    trackUsage({
-      provider: 'gemini',
-      model: modelConfig.model,
-      feature: options.feature || 'chat',
-      inputTokens: data.usageMetadata.promptTokenCount || 0,
-      outputTokens: data.usageMetadata.candidatesTokenCount || 0
-    });
-  }
-  
-  return data.candidates[0].content.parts[0].text;
+  return text;
 }
 
 /**
  * Main chat function
- * @param {string} modelId - Model identifier (e.g., 'anthropic:claude-sonnet-4-5')
+ * @param {string} modelId - OpenRouter model slug (e.g., 'anthropic/claude-sonnet-4.5')
  * @param {Array} messages - Array of message objects with role and content
  * @param {boolean} includeContext - Whether to include resume context
  * @param {Object} options - Additional options
  * @param {string} options.reasoningEffort - Reasoning effort level: 'none', 'low', 'medium', 'high'
- * @param {boolean} options.webSearch - Whether to enable web search (Gemini only)
+ * @param {boolean} options.webSearch - Whether to enable web search (OpenRouter web plugin)
  * @returns {Promise<string>} AI response
  */
 export async function chat(modelId, messages, includeContext = true, options = {}) {
-  // Validate and potentially migrate the model ID
+  // Validate / migrate the model ID (custom slugs pass through).
   const validModelId = validateModelId(modelId);
-  const modelConfig = MODELS[validModelId];
-  if (!modelConfig) {
-    throw new Error(`No valid model available. Please configure an API key in settings.`);
+  if (!getApiKey()) {
+    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
-  
-  const apiKey = getApiKey(modelConfig.provider);
-  if (!apiKey) {
-    throw new Error(`No API key configured for ${modelConfig.provider}. Please add your API key in settings.`);
-  }
-  
-  // Inject resume context into the first user message if enabled
+
+  // Inject resume context into the last user message if enabled
   let processedMessages = [...messages];
   if (includeContext && processedMessages.length > 0) {
     const context = getResumeContext();
@@ -1178,18 +881,12 @@ export async function chat(modelId, messages, includeContext = true, options = {
       };
     }
   }
-  
-  // Call the appropriate API with options
-  switch (modelConfig.provider) {
-    case 'anthropic':
-      return callAnthropic(modelConfig, processedMessages, apiKey, options);
-    case 'openai':
-      return callOpenAI(modelConfig, processedMessages, apiKey, options);
-    case 'gemini':
-      return callGemini(modelConfig, processedMessages, apiKey, options);
-    default:
-      throw new Error(`Unsupported provider: ${modelConfig.provider}`);
-  }
+
+  // Single OpenRouter call. Returns a plain string by default; the chat UI opts
+  // into the structured { text, thinking, usedWebSearch } object via
+  // options.structured so it can render reasoning/web-search. Everything else
+  // (helpers, onboarding, JSON dispatchers) gets a string.
+  return callOpenRouter(validModelId, processedMessages, options);
 }
 
 // Helper functions for common operations
@@ -1245,14 +942,8 @@ export async function improveSummary(modelId) {
 export async function generateResumeChanges(modelId, instruction, targetPath = null, additionalContext = null, featureName = 'generate') {
   // Validate and potentially migrate the model ID
   const validModelId = validateModelId(modelId);
-  const modelConfig = MODELS[validModelId];
-  if (!modelConfig) {
-    throw new Error(`No valid model available. Please configure an API key in settings.`);
-  }
-  
-  const apiKey = getApiKey(modelConfig.provider);
-  if (!apiKey) {
-    throw new Error(`No API key configured for ${modelConfig.provider}. Please add your API key in settings.`);
+  if (!getApiKey()) {
+    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
   
   const resumeData = store.getData();
@@ -1289,24 +980,12 @@ export async function generateResumeChanges(modelId, instruction, targetPath = n
   
   prompt += `\nRespond with ONLY a valid JSON object in the format specified. No markdown formatting, no code blocks, just the raw JSON.`;
   
-  // Call AI with the change generation system prompt
-  let response;
+  // Call AI with the change-generation system prompt
   const messages = [{ role: 'user', content: prompt }];
-  const featureOptions = { feature: featureName };
-  
-  switch (modelConfig.provider) {
-    case 'anthropic':
-      response = await callAnthropicWithSystem(modelConfig, messages, apiKey, CHANGE_GENERATION_PROMPT, featureOptions);
-      break;
-    case 'openai':
-      response = await callOpenAIWithSystem(modelConfig, messages, apiKey, CHANGE_GENERATION_PROMPT, featureOptions);
-      break;
-    case 'gemini':
-      response = await callGeminiWithSystem(modelConfig, messages, apiKey, CHANGE_GENERATION_PROMPT, featureOptions);
-      break;
-    default:
-      throw new Error(`Unsupported provider: ${modelConfig.provider}`);
-  }
+  const response = await callOpenRouter(validModelId, messages, {
+    feature: featureName,
+    systemPrompt: CHANGE_GENERATION_PROMPT
+  });
   
   // Parse the JSON response
   try {
@@ -1328,249 +1007,6 @@ export async function generateResumeChanges(modelId, instruction, targetPath = n
   }
 }
 
-// API calls with custom system prompts
-async function callAnthropicWithSystem(modelConfig, messages, apiKey, systemPrompt, options = {}) {
-  const { reasoningEffort } = options;
-  
-  const requestBody = {
-    model: modelConfig.model,
-    max_tokens: modelConfig.maxTokens,
-    system: systemPrompt,
-    messages: messages.map(m => ({
-      role: m.role === 'user' ? 'user' : 'assistant',
-      content: m.content
-    }))
-  };
-  
-  // Add extended thinking if reasoning effort is specified
-  if (reasoningEffort && reasoningEffort !== 'none' && ANTHROPIC_THINKING_BUDGETS[reasoningEffort]) {
-    const budgetTokens = ANTHROPIC_THINKING_BUDGETS[reasoningEffort];
-    // Ensure max_tokens is greater than budget_tokens
-    requestBody.max_tokens = Math.max(modelConfig.maxTokens, budgetTokens + 2048);
-    requestBody.thinking = {
-      type: 'enabled',
-      budget_tokens: budgetTokens
-    };
-  }
-  
-  const response = await fetch(ENDPOINTS.anthropic, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify(requestBody)
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Track token usage
-  if (data.usage) {
-    trackUsage({
-      provider: 'anthropic',
-      model: modelConfig.model,
-      feature: options.feature || 'chat',
-      inputTokens: data.usage.input_tokens || 0,
-      outputTokens: data.usage.output_tokens || 0,
-      cacheRead: data.usage.cache_read_input_tokens || 0,
-      cacheCreation: data.usage.cache_creation_input_tokens || 0
-    });
-  }
-  
-  // Handle response with extended thinking (may have multiple content blocks)
-  if (Array.isArray(data.content)) {
-    const textBlock = data.content.find(block => block.type === 'text');
-    if (textBlock?.text) {
-      return textBlock.text;
-    }
-  }
-  
-  return data.content[0].text;
-}
-
-async function callOpenAIWithSystem(modelConfig, messages, apiKey, systemPrompt, options = {}) {
-  const { reasoningEffort } = options;
-  
-  // GPT-5.x models require the Responses API (not Chat Completions)
-  const isGpt5 = modelConfig.model.startsWith('gpt-5');
-  if (isGpt5) {
-    return callOpenAIResponsesWithSystem(modelConfig, messages, apiKey, systemPrompt, options);
-  }
-  
-  // Check if this is an o1 reasoning model (uses 'developer' role instead of 'system')
-  const isO1Model = modelConfig.model.startsWith('o1');
-  
-  // Build messages array with appropriate role for system instructions
-  const apiMessages = isO1Model
-    ? [
-        { role: 'developer', content: systemPrompt },
-        ...messages.map(m => ({
-          role: m.role,
-          content: m.content
-        }))
-      ]
-    : [
-        { role: 'system', content: systemPrompt },
-        ...messages.map(m => ({
-          role: m.role,
-          content: m.content
-        }))
-      ];
-  
-  const requestBody = {
-    model: modelConfig.model,
-    max_completion_tokens: modelConfig.maxTokens,
-    messages: apiMessages
-  };
-  
-  // Add reasoning_effort for o1 models
-  if (reasoningEffort && OPENAI_REASONING_EFFORT[reasoningEffort] && isO1Model) {
-    requestBody.reasoning_effort = OPENAI_REASONING_EFFORT[reasoningEffort];
-  }
-  
-  const response = await fetch(ENDPOINTS.openai, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(requestBody)
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Track token usage
-  if (data.usage) {
-    trackUsage({
-      provider: 'openai',
-      model: modelConfig.model,
-      feature: options.feature || 'chat',
-      inputTokens: data.usage.prompt_tokens || 0,
-      outputTokens: data.usage.completion_tokens || 0
-    });
-  }
-  
-  return data.choices[0].message.content;
-}
-
-// Call OpenAI Responses API with custom system prompt (for GPT-5.x)
-async function callOpenAIResponsesWithSystem(modelConfig, messages, apiKey, systemPrompt, options = {}) {
-  // Build input from messages
-  const input = messages.map(m => ({
-    role: m.role === 'user' ? 'user' : 'assistant',
-    content: m.content
-  }));
-  
-  // Add system prompt context to first user message
-  if (input.length > 0 && input[0].role === 'user') {
-    input[0].content = `${systemPrompt}\n\n${input[0].content}`;
-  }
-  
-  const requestBody = {
-    model: modelConfig.model,
-    input: input
-  };
-  
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(requestBody)
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `OpenAI API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Track token usage
-  if (data.usage) {
-    trackUsage({
-      provider: 'openai',
-      model: modelConfig.model,
-      feature: options.feature || 'chat',
-      inputTokens: data.usage.input_tokens || data.usage.prompt_tokens || 0,
-      outputTokens: data.usage.output_tokens || data.usage.completion_tokens || 0
-    });
-  }
-  
-  // Responses API returns output differently
-  if (data.output_text) {
-    return data.output_text;
-  }
-  
-  // Or extract from output array
-  if (Array.isArray(data.output)) {
-    const messageItem = data.output.find(item => item.type === 'message');
-    if (messageItem?.content?.[0]?.text) {
-      return messageItem.content[0].text;
-    }
-  }
-  
-  throw new Error('Unexpected response format from OpenAI Responses API');
-}
-
-async function callGeminiWithSystem(modelConfig, messages, apiKey, systemPrompt, options = {}) {
-  const url = `${ENDPOINTS.gemini}/${modelConfig.model}:generateContent?key=${apiKey}`;
-  
-  const contents = messages.map(msg => ({
-    role: msg.role === 'user' ? 'user' : 'model',
-    parts: [{ text: msg.content }]
-  }));
-  
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents,
-      systemInstruction: {
-        parts: [{ text: systemPrompt }]
-      },
-      generationConfig: {
-        maxOutputTokens: modelConfig.maxTokens
-      }
-    })
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `Gemini API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  
-  // Track token usage (Gemini returns usage in usageMetadata)
-  if (data.usageMetadata) {
-    trackUsage({
-      provider: 'gemini',
-      model: modelConfig.model,
-      feature: options.feature || 'chat',
-      inputTokens: data.usageMetadata.promptTokenCount || 0,
-      outputTokens: data.usageMetadata.candidatesTokenCount || 0
-    });
-  }
-  
-  return data.candidates[0].content.parts[0].text;
-}
-
 /**
  * Analyze resume against job descriptions
  * @param {string} modelId - Model to use
@@ -1582,14 +1018,8 @@ async function callGeminiWithSystem(modelConfig, messages, apiKey, systemPrompt,
 export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {}) {
   // Validate and potentially migrate the model ID
   const validModelId = validateModelId(modelId);
-  const modelConfig = MODELS[validModelId];
-  if (!modelConfig) {
-    throw new Error(`No valid model available. Please configure an API key in settings.`);
-  }
-  
-  const apiKey = getApiKey(modelConfig.provider);
-  if (!apiKey) {
-    throw new Error(`No API key configured for ${modelConfig.provider}. Please add your API key in settings.`);
+  if (!getApiKey()) {
+    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
   
   const resumeData = store.getData();
@@ -1617,25 +1047,11 @@ export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {})
   prompt += `\nProvide your analysis as a JSON object. No markdown, just raw JSON.`;
   
   const messages = [{ role: 'user', content: prompt }];
-  const featureOptions = { 
+  const response = await callOpenRouter(validModelId, messages, {
     feature: 'analyze',
-    reasoningEffort: options.reasoningEffort
-  };
-  
-  let response;
-  switch (modelConfig.provider) {
-    case 'anthropic':
-      response = await callAnthropicWithSystem(modelConfig, messages, apiKey, JOB_ANALYSIS_PROMPT, featureOptions);
-      break;
-    case 'openai':
-      response = await callOpenAIWithSystem(modelConfig, messages, apiKey, JOB_ANALYSIS_PROMPT, featureOptions);
-      break;
-    case 'gemini':
-      response = await callGeminiWithSystem(modelConfig, messages, apiKey, JOB_ANALYSIS_PROMPT, featureOptions);
-      break;
-    default:
-      throw new Error(`Unsupported provider: ${modelConfig.provider}`);
-  }
+    reasoningEffort: options.reasoningEffort,
+    systemPrompt: JOB_ANALYSIS_PROMPT
+  });
   
   try {
     let jsonStr = response.trim();
@@ -1672,31 +1088,27 @@ export async function tailorForJob(modelId, jobDescription, section = null) {
  * @param {string} provider - Provider name
  * @returns {Array} Array of model info objects
  */
-export function getModelsForProvider(provider) {
+export function getModelsForProvider(group) {
   return Object.entries(MODELS)
-    .filter(([, config]) => config.provider === provider)
-    .map(([id, config]) => ({
-      id,
-      model: config.model,
-      provider: config.provider
-    }));
+    .filter(([, config]) => config.group === group)
+    .map(([id, config]) => ({ id, model: id, label: config.label, group: config.group }));
 }
 
 /**
- * Get all available models
- * @returns {Object} Models grouped by provider
+ * Get all curated models grouped by display group (Anthropic / OpenAI / Google).
+ * The slug IS the id and the wire `model`. Custom slugs aren't listed here.
+ * @returns {Object} Models grouped by group label
  */
 export function getAllModels() {
-  const grouped = { anthropic: [], openai: [], gemini: [] };
-  
+  const grouped = {};
   for (const [id, config] of Object.entries(MODELS)) {
-    grouped[config.provider].push({
+    (grouped[config.group] = grouped[config.group] || []).push({
       id,
-      model: config.model,
-      provider: config.provider
+      model: id,
+      label: config.label,
+      group: config.group
     });
   }
-  
   return grouped;
 }
 
@@ -1708,32 +1120,18 @@ export function getAllModels() {
  */
 export async function profileInterviewChat(modelId, conversationHistory) {
   const validModelId = validateModelId(modelId);
-  const modelConfig = MODELS[validModelId];
-  if (!modelConfig) {
-    throw new Error(`No valid model available. Please configure an API key in settings.`);
-  }
-  
-  const apiKey = getApiKey(modelConfig.provider);
-  if (!apiKey) {
-    throw new Error(`No API key configured for ${modelConfig.provider}. Please add your API key in settings.`);
+  if (!getApiKey()) {
+    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
   
   const messages = conversationHistory.map(m => ({
     role: m.role === 'user' ? 'user' : 'assistant',
     content: m.content
   }));
-  const featureOptions = { feature: 'profile' };
-  
-  switch (modelConfig.provider) {
-    case 'anthropic':
-      return callAnthropicWithSystem(modelConfig, messages, apiKey, PROFILE_INTERVIEW_PROMPT, featureOptions);
-    case 'openai':
-      return callOpenAIWithSystem(modelConfig, messages, apiKey, PROFILE_INTERVIEW_PROMPT, featureOptions);
-    case 'gemini':
-      return callGeminiWithSystem(modelConfig, messages, apiKey, PROFILE_INTERVIEW_PROMPT, featureOptions);
-    default:
-      throw new Error(`Unsupported provider: ${modelConfig.provider}`);
-  }
+  return callOpenRouter(validModelId, messages, {
+    feature: 'profile',
+    systemPrompt: PROFILE_INTERVIEW_PROMPT
+  });
 }
 
 /**
@@ -1744,14 +1142,8 @@ export async function profileInterviewChat(modelId, conversationHistory) {
  */
 export async function extractProfileFromInterview(modelId, conversationHistory) {
   const validModelId = validateModelId(modelId);
-  const modelConfig = MODELS[validModelId];
-  if (!modelConfig) {
-    throw new Error(`No valid model available. Please configure an API key in settings.`);
-  }
-  
-  const apiKey = getApiKey(modelConfig.provider);
-  if (!apiKey) {
-    throw new Error(`No API key configured for ${modelConfig.provider}. Please add your API key in settings.`);
+  if (!getApiKey()) {
+    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
   
   // Format conversation for extraction
@@ -1762,22 +1154,10 @@ export async function extractProfileFromInterview(modelId, conversationHistory) 
   }
   
   const messages = [{ role: 'user', content: conversationText }];
-  const featureOptions = { feature: 'profile' };
-  
-  let response;
-  switch (modelConfig.provider) {
-    case 'anthropic':
-      response = await callAnthropicWithSystem(modelConfig, messages, apiKey, PROFILE_EXTRACTION_PROMPT, featureOptions);
-      break;
-    case 'openai':
-      response = await callOpenAIWithSystem(modelConfig, messages, apiKey, PROFILE_EXTRACTION_PROMPT, featureOptions);
-      break;
-    case 'gemini':
-      response = await callGeminiWithSystem(modelConfig, messages, apiKey, PROFILE_EXTRACTION_PROMPT, featureOptions);
-      break;
-    default:
-      throw new Error(`Unsupported provider: ${modelConfig.provider}`);
-  }
+  const response = await callOpenRouter(validModelId, messages, {
+    feature: 'profile',
+    systemPrompt: PROFILE_EXTRACTION_PROMPT
+  });
   
   try {
     let jsonStr = response.trim();
