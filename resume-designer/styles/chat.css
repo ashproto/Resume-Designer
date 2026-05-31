@@ -477,6 +477,11 @@
   border-color: var(--color-accent);
 }
 
+.custom-dropdown-custom .custom-model-input.invalid,
+.custom-dropdown-custom .custom-model-input.invalid:focus {
+  border-color: #dc2626;
+}
+
 .custom-dropdown-custom .custom-model-apply {
   flex-shrink: 0;
   padding: 5px 10px;

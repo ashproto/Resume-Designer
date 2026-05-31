@@ -236,13 +236,28 @@ const LEGACY_MODEL_MAP = {
   'gemini:gemini-1.5-pro': 'google/gemini-2.5-pro'
 };
 
-// Validate/normalize a model ID. Curated slugs pass through; any well-formed
-// custom OpenRouter slug (contains "/") is allowed; legacy colon IDs migrate;
-// unknown/empty falls back to the default.
+// A model slug is "safe" when it contains none of the characters that real
+// OpenRouter slugs never use but that would be dangerous if the slug were ever
+// rendered as HTML (e.g. in the model dropdown label). Deny-list, not allow-list,
+// so exotic-but-valid slugs (`:free`, `:nitro`, dotted/dated names, …) are never
+// wrongly rejected. Belt-and-suspenders behind escapeHtml at the render sites.
+export function isSafeModelSlug(slug) {
+  return typeof slug === 'string' && slug.length > 0 &&
+    !/[<>"'`\x00-\x1f\s]/.test(slug);
+}
+
+// Validate/normalize a model ID. Curated slugs pass through; any well-formed,
+// safe custom OpenRouter slug (contains "/") is allowed; legacy colon IDs
+// migrate; unknown/empty/unsafe falls back to the default.
 export function validateModelId(modelId) {
   if (modelId && MODELS[modelId]) return modelId;
   if (typeof modelId === 'string') {
-    if (modelId.includes('/')) return modelId; // custom OpenRouter slug
+    // Custom OpenRouter slug — accept only when it has no HTML-dangerous chars,
+    // so a poisoned `defaultModel` (typed, or restored from an imported backup)
+    // is normalized away here before it can reach any renderer.
+    if (modelId.includes('/')) {
+      return isSafeModelSlug(modelId) ? modelId : getDefaultModelId();
+    }
     if (LEGACY_MODEL_MAP[modelId]) return LEGACY_MODEL_MAP[modelId];
   }
   return getDefaultModelId();

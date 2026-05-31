@@ -3,7 +3,7 @@
  * AI chat interface with message history and actions
  */
 
-import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, getAllModels, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
+import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { store } from './store.js';
 import { marked } from 'marked';
@@ -246,7 +246,7 @@ function initModelDropdown() {
   const dropdownHTML = `
     <div class="custom-dropdown" id="model-dropdown">
       <button class="custom-dropdown-trigger" type="button">
-        <span class="dropdown-label">${currentModelLabel}</span>
+        <span class="dropdown-label">${escapeHtml(currentModelLabel)}</span>
         <svg class="dropdown-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
@@ -262,6 +262,26 @@ function initModelDropdown() {
   // Setup dropdown events
   const dropdown = document.getElementById('model-dropdown');
   const trigger = dropdown?.querySelector('.custom-dropdown-trigger');
+
+  // Custom-slug field: only apply a safe slug (no HTML-dangerous chars) so a
+  // bad or poisoned value is never persisted; invalid input flags the field
+  // instead of silently doing nothing.
+  const customInput = dropdown?.querySelector('.custom-model-input');
+  const applyCustomSlug = () => {
+    const slug = customInput?.value.trim();
+    if (!slug) return;
+    if (!isSafeModelSlug(slug)) {
+      customInput.classList.add('invalid');
+      customInput.title = 'Enter a valid OpenRouter slug, e.g. anthropic/claude-opus-4.8';
+      return;
+    }
+    selectModel(slug);
+    dropdown.classList.remove('open');
+  };
+  customInput?.addEventListener('input', () => {
+    customInput.classList.remove('invalid');
+    customInput.removeAttribute('title');
+  });
   
   trigger?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -289,23 +309,15 @@ function initModelDropdown() {
     const applyBtn = e.target.closest('.custom-model-apply');
     if (applyBtn) {
       e.stopPropagation();
-      const slug = dropdown.querySelector('.custom-model-input')?.value.trim();
-      if (slug) {
-        selectModel(slug);
-        dropdown.classList.remove('open');
-      }
+      applyCustomSlug();
     }
   });
 
   // Apply custom slug on Enter
-  dropdown?.querySelector('.custom-model-input')?.addEventListener('keydown', (e) => {
+  customInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const slug = e.target.value.trim();
-      if (slug) {
-        selectModel(slug);
-        dropdown.classList.remove('open');
-      }
+      applyCustomSlug();
     }
   });
   
