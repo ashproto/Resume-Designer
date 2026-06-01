@@ -62,75 +62,12 @@ export function initZoomControls() {
     }
   });
   
-  // Handle window resize for fit-to-view
-  let resizeTimeout;
-  window.addEventListener('resize', () => {
-    clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(() => {
-      // Re-apply current zoom on resize to maintain position
-      repositionToolbar();
-    }, 100);
-  });
-  
-  // Watch for sidebar changes to reposition toolbar
-  setupSidebarObserver();
-  
-  // Initial positioning
-  repositionToolbar();
-}
-
-// Reposition toolbar to center of content area
-export function repositionToolbar() {
-  const toolbar = document.getElementById('zoom-controls');
-  const chatPanel = document.getElementById('chat-panel');
-  const structurePanel = document.getElementById('structure-panel');
-  
-  if (!toolbar) return;
-  
-  // Calculate content area bounds using actual panel widths
-  const chatOpen = chatPanel && !chatPanel.classList.contains('closed');
-  const structureOpen = structurePanel && !structurePanel.classList.contains('closed');
-  
-  // Get actual panel widths from computed styles (handles responsive widths)
-  const leftOffset = chatOpen ? chatPanel.getBoundingClientRect().width : 0;
-  const rightOffset = structureOpen ? structurePanel.getBoundingClientRect().width : 0;
-  
-  // Calculate center of available content area
-  const viewportWidth = window.innerWidth;
-  const contentWidth = viewportWidth - leftOffset - rightOffset;
-  const centerX = leftOffset + (contentWidth / 2);
-  
-  // Position toolbar
-  toolbar.style.left = `${centerX}px`;
-  toolbar.style.transform = 'translateX(-50%)';
-}
-
-// Set up observer to watch for sidebar class changes
-function setupSidebarObserver() {
-  const chatPanel = document.getElementById('chat-panel');
-  const structurePanel = document.getElementById('structure-panel');
-  
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
-      if (mutation.attributeName === 'class') {
-        // Immediate reposition
-        repositionToolbar();
-        // Also reposition after transition completes (300ms is typical transition)
-        setTimeout(repositionToolbar, 50);
-        setTimeout(repositionToolbar, 150);
-        setTimeout(repositionToolbar, 300);
-      }
-    });
-  });
-  
-  const config = { attributes: true, attributeFilter: ['class'] };
-  
-  if (chatPanel) {
-    observer.observe(chatPanel, config);
-  }
-  if (structurePanel) {
-    observer.observe(structurePanel, config);
-  }
+  // The zoom toolbar centers itself purely via CSS (`position: absolute;
+  // left: 50%; transform: translateX(-50%)` anchored to `.preview-area`, a flex
+  // child that already shrinks/grows with the chat & structure panels). No JS
+  // repositioning is needed — a prior repositionToolbar() computed a
+  // viewport-relative left and applied it to the now preview-area-relative bar,
+  // double-counting the open chat panel's width and pushing it off-screen.
 }
 
 // Set zoom level

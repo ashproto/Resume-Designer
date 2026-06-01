@@ -71,7 +71,7 @@ function place(menuEl, triggerEl, opts) {
   }
 }
 
-const SHOWN_PROPS = ['opacity', 'visibility', 'pointerEvents', 'transform'];
+const SHOWN_PROPS = ['opacity', 'visibility', 'pointerEvents', 'transform', 'transition'];
 const PLACE_PROPS = ['position', 'left', 'right', 'top', 'bottom', 'margin', 'minWidth'];
 
 function openPortal(menuEl, triggerEl, opts) {
@@ -86,6 +86,11 @@ function openPortal(menuEl, triggerEl, opts) {
   const s = menuEl.style;
   // Force-visible: the original `.open .menu` descendant rule no longer matches
   // once the menu leaves its wrapper, so drive the shown state inline instead.
+  // Animate ONLY opacity while portaled. These menus carry `transition: all`, so
+  // without this override the position/left/top jump applied by place() below
+  // would animate as a long slide "from far away". Opacity-only keeps a gentle
+  // fade while the menu appears pinned at the trigger. (Cleared in closePortal.)
+  s.transition = 'opacity var(--transition-fast)';
   s.opacity = '1';
   s.visibility = 'visible';
   s.pointerEvents = 'auto';
