@@ -357,14 +357,14 @@
   border-radius: 4px;
   color: var(--color-text-muted);
   gap: 4px;
-  max-width: 160px;
+  max-width: 200px;
 }
 
 .chat-model-selector .custom-dropdown-trigger .dropdown-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 120px;
+  max-width: 160px;
 }
 
 .chat-model-selector .custom-dropdown-trigger:hover {
@@ -395,6 +395,43 @@
 
 .chat-model-selector .custom-dropdown-option:hover {
   background: var(--color-hover-bg);
+}
+
+/* Cached custom-model rows: ellipsize the label, float a subtle remove (×). */
+.custom-model-option .custom-model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-model-remove {
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.5;
+  cursor: pointer;
+}
+.custom-model-remove:hover {
+  opacity: 1;
+  color: #dc2626;
+}
+
+/* Reasoning control disabled when the selected model has no reasoning support. */
+#chat-reasoning-btn.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Wizard reasoning <select> when the chosen model can't reason. */
+.job-reasoning-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.reasoning-na-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
 }
 
 .chat-model-selector .custom-dropdown-option.selected {

@@ -5,7 +5,7 @@
 
 import { store, generateId, experienceSortValue } from './store.js';
 import { getSettings, saveSettings, getVariants, saveVariant, setCurrentVariantId, initPersistence, generateUniqueVariantName, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
-import { getConfiguredProviders, isConfigured, getDefaultModelId, generateResumeChanges, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels } from './aiService.js';
+import { getConfiguredProviders, isConfigured, getDefaultModelId, generateResumeChanges, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels, getCustomModels, modelSupportsReasoning, fetchModelCatalog } from './aiService.js';
 import { loadVariant } from './headerBar.js';
 import { refreshChatPanel } from './chatPanel.js';
 import { parseResumeText } from './resumeParser.js';
@@ -98,6 +98,10 @@ function getAvailableModelsForSelector() {
     for (const model of models) {
       available.push({ id: model.id, label: model.label, group: model.group });
     }
+  }
+  // Append the user's cached custom slugs so they're pickable in the wizard too.
+  for (const slug of getCustomModels()) {
+    available.push({ id: slug, label: slug, group: 'Custom' });
   }
   return available;
 }
@@ -1225,7 +1229,31 @@ function renderJobInputStep(content, footer) {
       alert('Unable to access clipboard. Please paste manually using Ctrl+V / Cmd+V.');
     }
   });
-  
+
+  // Reasoning availability tracks the selected model: disable the reasoning
+  // <select> and show a note when the chosen model has no reasoning support.
+  // (Send-time is also guarded centrally in aiService.callOpenRouter.)
+  const jobModelSelect = document.getElementById('job-model-select');
+  const jobReasoningSelect = document.getElementById('job-reasoning-select');
+  const jobReasoningWrap = jobReasoningSelect?.closest('.job-reasoning-selector');
+  const syncJobReasoning = () => {
+    if (!jobReasoningSelect) return;
+    const supported = modelSupportsReasoning(jobModelSelect?.value);
+    jobReasoningSelect.disabled = !supported;
+    let note = jobReasoningWrap?.querySelector('.reasoning-na-note');
+    if (!supported && jobReasoningWrap && !note) {
+      note = document.createElement('span');
+      note.className = 'reasoning-na-note';
+      note.textContent = 'Reasoning not available';
+      jobReasoningWrap.appendChild(note);
+    } else if (supported && note) {
+      note.remove();
+    }
+  };
+  jobModelSelect?.addEventListener('change', syncJobReasoning);
+  syncJobReasoning();
+  fetchModelCatalog().then(syncJobReasoning).catch(() => {});
+
   // Navigation
   document.getElementById('back-btn')?.addEventListener('click', () => {
     // Save current input state

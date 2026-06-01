@@ -718,13 +718,16 @@ html[data-theme="dark"] .header-variant-select {
   padding: var(--space-sm) var(--space-md);
   background: rgba(45, 42, 38, 0.95);
   border-radius: 8px;
-  position: fixed;
+  /* Anchored to .preview-area (position:relative) rather than the viewport, so
+     it centers on the content column at first paint and tracks sidebar open/close.
+     position:fixed centered on 50vw landed it far-left until a reflow corrected it. */
+  position: absolute;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 50;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  max-width: calc(100vw - 24px);
+  max-width: calc(100% - 24px);
   flex-wrap: wrap;
   justify-content: center;
 }
@@ -1132,6 +1135,9 @@ html[data-theme="dark"] .header-variant-select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Left-align so an over-long label ellipsizes at the END. Without this it
+     inherits text-align:center, which clips the START (left) of the name. */
+  text-align: left;
   flex: 1;
   min-width: 0;
 }
