@@ -3,6 +3,8 @@
  * Handles light/dark mode switching with system preference support
  */
 
+import { registerPortalMenu, isInPortal } from './menuPortal.js';
+
 const STORAGE_KEY = 'resume-designer-theme';
 const THEMES = ['light', 'dark', 'system'];
 
@@ -152,12 +154,17 @@ function setupThemeToggle() {
     }
   });
   
-  // Close menu when clicking outside
+  // Close menu when clicking outside (isInPortal keeps it open when the menu is
+  // re-parented into the glass portal).
   document.addEventListener('click', (e) => {
-    if (!dropdown.contains(e.target)) {
+    if (!dropdown.contains(e.target) && !isInPortal(e.target)) {
       dropdown.classList.remove('open');
     }
   });
+
+  // Glass theme: portal the menu out of the frosted header so its backdrop-filter
+  // blurs for real (no-op in a plain browser). The theme button is far right.
+  registerPortalMenu(menu, btn, { watch: dropdown, activeClass: 'open', placement: 'down', align: 'right' });
   
   // Close menu on escape
   document.addEventListener('keydown', (e) => {

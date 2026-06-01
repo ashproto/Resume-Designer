@@ -3,9 +3,10 @@
  * AI chat interface with message history and actions
  */
 
-import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
+import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, modelSupportsReasoning, getCustomModels, removeCustomModel, fetchModelCatalog, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { store } from './store.js';
+import { registerPortalMenu, isInPortal, purgePortal } from './menuPortal.js';
 import { marked } from 'marked';
 import { createChangeSet, diffResumeData } from './diffEngine.js';
 import { showDiffView, initDiffView } from './diffView.js';
@@ -80,7 +81,7 @@ function getInitialModel() {
     return validateModelId(settings.defaultModel);
   }
   // Otherwise the default (or a safe fallback if no key is configured yet).
-  return getDefaultModelId() || 'anthropic/claude-sonnet-4.5';
+  return getDefaultModelId() || 'anthropic/claude-sonnet-4.6';
 }
 
 // Initialize chat panel
@@ -198,7 +199,10 @@ function handleResizeEnd(e) {
 function initModelDropdown() {
   const selectorContainer = document.querySelector('.chat-model-selector');
   if (!selectorContainer) return;
-  
+  // Drop any menu still parked in the glass portal from a prior render so a
+  // re-init while the dropdown was open can't leave an orphaned copy behind.
+  purgePortal();
+
   // One aggregate provider now: either configured or not.
   const configured = isConfigured();
 
@@ -233,6 +237,24 @@ function initModelDropdown() {
         </div>
       `;
 
+  // Cached custom slugs the user has used before — shown as a removable "Custom"
+  // group so they don't have to re-type them. escapeHtml is belt-and-suspenders;
+  // getCustomModels already only returns isSafeModelSlug-valid slugs.
+  const customModels = configured ? getCustomModels() : [];
+  const customGroupHTML = customModels.length ? `
+        <div class="custom-dropdown-group-label">Custom</div>
+        ${customModels.map(slug => `
+          <button class="custom-dropdown-option custom-model-option ${slug === currentModel ? 'selected' : ''}"
+                  data-value="${escapeHtml(slug)}" type="button">
+            <svg class="check-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span class="custom-model-label">${escapeHtml(getModelLabel(slug))}</span>
+            <span class="custom-model-remove" data-slug="${escapeHtml(slug)}" title="Remove from list" role="button" aria-label="Remove">&times;</span>
+          </button>
+        `).join('')}
+      ` : '';
+
   // Custom-slug field: pick any OpenRouter model (e.g. anthropic/claude-opus-4.8).
   const customSlugHTML = configured ? `
         <div class="custom-dropdown-divider"></div>
@@ -252,7 +274,7 @@ function initModelDropdown() {
         </svg>
       </button>
       <div class="custom-dropdown-menu">
-        ${dropdownContent}${customSlugHTML}
+        ${dropdownContent}${customGroupHTML}${customSlugHTML}
       </div>
     </div>
   `;
@@ -262,6 +284,7 @@ function initModelDropdown() {
   // Setup dropdown events
   const dropdown = document.getElementById('model-dropdown');
   const trigger = dropdown?.querySelector('.custom-dropdown-trigger');
+  const menu = dropdown?.querySelector('.custom-dropdown-menu');
 
   // Custom-slug field: only apply a safe slug (no HTML-dangerous chars) so a
   // bad or poisoned value is never persisted; invalid input flags the field
@@ -288,8 +311,24 @@ function initModelDropdown() {
     dropdown.classList.toggle('open');
   });
   
-  // Handle option selection
-  dropdown?.addEventListener('click', (e) => {
+  // Handle option selection. Bound to the MENU (not the wrapper) so it keeps
+  // working after the menu is re-parented into the glass portal.
+  menu?.addEventListener('click', (e) => {
+    // Remove (×) on a cached custom model — handle before option-select so the
+    // same click doesn't also pick the model being removed.
+    const removeBtn = e.target.closest('.custom-model-remove');
+    if (removeBtn) {
+      e.stopPropagation();
+      const slug = removeBtn.dataset.slug;
+      removeCustomModel(slug);
+      // Fall back to the built-in default, NOT getInitialModel(): defaultModel
+      // still points at the just-removed slug (a valid custom slug), so
+      // getInitialModel() would re-select the model we just removed.
+      if (slug === currentModel) selectModel(getDefaultModelId() || 'anthropic/claude-sonnet-4.6');
+      initModelDropdown(); // rebuild without the removed entry
+      return;
+    }
+
     const option = e.target.closest('.custom-dropdown-option');
     if (option) {
       const value = option.dataset.value;
@@ -321,12 +360,19 @@ function initModelDropdown() {
     }
   });
   
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking outside. isInPortal keeps it open when the menu
+  // has been re-parented into the glass portal (clicks there count as "inside").
   document.addEventListener('click', (e) => {
-    if (!dropdown?.contains(e.target)) {
+    if (!dropdown?.contains(e.target) && !isInPortal(e.target)) {
       dropdown?.classList.remove('open');
     }
   });
+
+  // Glass theme: re-parent the menu out of the frosted chat panel so its
+  // backdrop-filter actually blurs (no-op in a plain browser). Opens upward.
+  if (menu && trigger) {
+    registerPortalMenu(menu, trigger, { watch: dropdown, activeClass: 'open', placement: 'up' });
+  }
 }
 
 // Open the settings modal
@@ -383,6 +429,9 @@ function selectModel(value) {
   dropdown?.querySelectorAll('.custom-dropdown-option').forEach(opt => {
     opt.classList.toggle('selected', opt.dataset.value === value);
   });
+
+  // Reasoning availability depends on the chosen model.
+  updateReasoningAvailability();
 }
 
 // Setup panel toggle
@@ -708,6 +757,7 @@ function setupChatOptions() {
   // Reasoning effort dropdown
   reasoningBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (reasoningBtn.classList.contains('disabled')) return; // unsupported model
     reasoningDropdown?.classList.toggle('open');
   });
   
@@ -734,10 +784,35 @@ function setupChatOptions() {
   
   // Close reasoning dropdown on click outside
   document.addEventListener('click', (e) => {
-    if (!reasoningDropdown?.contains(e.target)) {
+    if (!reasoningDropdown?.contains(e.target) && !isInPortal(e.target)) {
       reasoningDropdown?.classList.remove('open');
     }
   });
+
+  // Glass theme: portal the menu out of the frosted panel so its blur works.
+  if (reasoningMenu && reasoningBtn) {
+    registerPortalMenu(reasoningMenu, reasoningBtn, { watch: reasoningDropdown, activeClass: 'open', placement: 'up', align: 'right' });
+  }
+
+  // Reflect the current model's reasoning capability now, then refine once the
+  // live catalog loads (a model the catalog marks non-reasoning then disables it).
+  updateReasoningAvailability();
+  fetchModelCatalog().then(() => updateReasoningAvailability()).catch(() => {});
+}
+
+// Enable/disable the reasoning control based on whether the current model
+// supports reasoning. Unsupported → disabled button + "N/A" + tooltip.
+function updateReasoningAvailability() {
+  const btn = document.getElementById('chat-reasoning-btn');
+  const dropdown = document.getElementById('chat-reasoning-dropdown');
+  if (!btn) return;
+  const supported = modelSupportsReasoning(currentModel);
+  btn.classList.toggle('disabled', !supported);
+  if ('disabled' in btn) btn.disabled = !supported;
+  btn.title = supported ? 'Reasoning effort' : 'Reasoning not available for this model';
+  const label = btn.querySelector('.reasoning-label');
+  if (label) label.textContent = supported ? getReasoningLabel(currentReasoningEffort) : 'N/A';
+  if (!supported) dropdown?.classList.remove('open');
 }
 
 // Get display label for reasoning effort
@@ -798,6 +873,10 @@ function initSlashCommandsPopup() {
   
   // Insert before input wrapper
   inputWrapper.parentNode.insertBefore(slashCommandsPopup, inputWrapper);
+
+  // Glass theme: portal the popup so its blur escapes the frosted panel. It
+  // shows via the `.show` class and sits above the input.
+  registerPortalMenu(slashCommandsPopup, inputWrapper, { activeClass: 'show', placement: 'up', matchWidth: true });
 }
 
 // Handle slash command input detection
@@ -2048,7 +2127,9 @@ function getThreadDisplayName(thread) {
 function renderThreadSelector() {
   const container = document.getElementById('thread-selector');
   if (!container) return;
-  
+  // Clear any portaled menu from a prior render before rebuilding the trigger.
+  purgePortal();
+
   // Hide thread selector if no API keys are configured
   const configuredProviders = getConfiguredProviders();
   if (configuredProviders.length === 0) {
@@ -2144,10 +2225,15 @@ function renderThreadSelector() {
   
   // Close menu when clicking outside
   document.addEventListener('click', (e) => {
-    if (!container.contains(e.target)) {
+    if (!container.contains(e.target) && !isInPortal(e.target)) {
       menu?.classList.remove('open');
     }
   });
+
+  // Glass theme: portal the menu so its blur escapes the frosted panel.
+  if (menu && trigger) {
+    registerPortalMenu(menu, trigger, { activeClass: 'open', placement: 'down' });
+  }
 }
 
 // Escape HTML

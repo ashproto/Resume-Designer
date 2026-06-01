@@ -3,7 +3,7 @@
  * Unified interface to AI models via OpenRouter (single aggregate provider).
  */
 
-import { getSettings, getUserProfile, saveUserProfile } from './persistence.js';
+import { getSettings, saveSettings, getUserProfile, saveUserProfile } from './persistence.js';
 import { store } from './store.js';
 import { getActiveJobDescriptions } from './jobDescriptions.js';
 import { trackUsage } from './tokenTrackingService.js';
@@ -21,29 +21,33 @@ const OPENROUTER_TITLE = 'Resume Designer';
 // slug via the custom-model field — see validateModelId().
 // Slugs verified against GET https://openrouter.ai/api/v1/models (catalog
 // drifts; re-verify when refreshing this list).
+// This built-in shortlist is the "featured" set shown grouped in the picker. It
+// is best-effort current (verified against GET .../v1/models on 2026-05-31; the
+// catalog drifts — re-verify when refreshing). The live cached catalog
+// (fetchModelCatalog) is the runtime source of truth for reasoning support, and
+// users can pick any other slug via the custom-model field.
 const MODELS = {
-  'anthropic/claude-opus-4.5':     { label: 'Claude Opus 4.5',   group: 'Anthropic', maxTokens: 8192 },
-  'anthropic/claude-sonnet-4.5':   { label: 'Claude Sonnet 4.5', group: 'Anthropic', maxTokens: 8192 },
-  'anthropic/claude-haiku-4.5':    { label: 'Claude Haiku 4.5',  group: 'Anthropic', maxTokens: 4096 },
-  'openai/gpt-5.2':                { label: 'GPT-5.2',           group: 'OpenAI',    maxTokens: 8192 },
-  'openai/gpt-5.2-pro':            { label: 'GPT-5.2 Pro',       group: 'OpenAI',    maxTokens: 16384 },
-  'openai/gpt-4o':                 { label: 'GPT-4o',            group: 'OpenAI',    maxTokens: 4096 },
-  'openai/gpt-4o-mini':            { label: 'GPT-4o Mini',       group: 'OpenAI',    maxTokens: 4096 },
-  // No bare `google/gemini-3-pro` exists; 3.1-pro-preview is the current 3.x pro text model.
-  'google/gemini-3.1-pro-preview': { label: 'Gemini 3 Pro',     group: 'Google',    maxTokens: 8192 },
-  'google/gemini-3-flash-preview': { label: 'Gemini 3 Flash',   group: 'Google',    maxTokens: 8192 },
-  // gemini-1.5-* is retired on OpenRouter; 2.5 Pro is the stable replacement.
-  'google/gemini-2.5-pro':         { label: 'Gemini 2.5 Pro',   group: 'Google',    maxTokens: 8192 },
-  'google/gemini-2.0-flash-001':   { label: 'Gemini 2.0 Flash', group: 'Google',    maxTokens: 4096 }
+  'anthropic/claude-opus-4.8':     { label: 'Claude Opus 4.8',    group: 'Anthropic', maxTokens: 8192 },
+  'anthropic/claude-sonnet-4.6':   { label: 'Claude Sonnet 4.6',  group: 'Anthropic', maxTokens: 8192 },
+  'anthropic/claude-haiku-4.5':    { label: 'Claude Haiku 4.5',   group: 'Anthropic', maxTokens: 4096 },
+  'openai/gpt-5.5':                { label: 'GPT-5.5',            group: 'OpenAI',    maxTokens: 8192 },
+  'openai/gpt-5.5-pro':            { label: 'GPT-5.5 Pro',        group: 'OpenAI',    maxTokens: 16384 },
+  'openai/gpt-5-mini':             { label: 'GPT-5 Mini',         group: 'OpenAI',    maxTokens: 8192 },
+  'google/gemini-3.1-pro-preview': { label: 'Gemini 3 Pro',       group: 'Google',    maxTokens: 8192 },
+  'google/gemini-3.5-flash':       { label: 'Gemini 3.5 Flash',   group: 'Google',    maxTokens: 8192 },
+  'google/gemini-2.5-pro':         { label: 'Gemini 2.5 Pro',     group: 'Google',    maxTokens: 8192 },
+  'x-ai/grok-4.3':                 { label: 'Grok 4.3',           group: 'xAI',       maxTokens: 8192 },
+  'deepseek/deepseek-v4-pro':      { label: 'DeepSeek V4 Pro',    group: 'DeepSeek',  maxTokens: 8192 },
+  'mistralai/mistral-medium-3-5':  { label: 'Mistral Medium 3.5', group: 'Mistral',  maxTokens: 8192 }
 };
 
 // Default model used when nothing valid is selected.
-const DEFAULT_MODEL_ID = 'anthropic/claude-sonnet-4.5';
+const DEFAULT_MODEL_ID = 'anthropic/claude-sonnet-4.6';
 
 // Cross-provider fallback chain for OpenRouter's `models` array (used only when
 // the autoFallback setting is on). Cross-provider on purpose: if one provider
 // is down/rate-limited, retrying the SAME provider's model wouldn't help.
-const FALLBACK_CHAIN = ['anthropic/claude-sonnet-4.5', 'openai/gpt-5.2', 'google/gemini-3.1-pro-preview'];
+const FALLBACK_CHAIN = ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'google/gemini-3.1-pro-preview'];
 
 // System prompt for resume assistant
 const SYSTEM_PROMPT = `You are an expert resume consultant and career coach. You help users improve their resumes by:
@@ -223,16 +227,16 @@ export function getDefaultModelId() {
 // Legacy provider:model IDs → OpenRouter slugs. One-time migration of a
 // `defaultModel` saved by the pre-OpenRouter build (see persistence.js too).
 const LEGACY_MODEL_MAP = {
-  'anthropic:claude-opus-4-5': 'anthropic/claude-opus-4.5',
-  'anthropic:claude-sonnet-4-5': 'anthropic/claude-sonnet-4.5',
+  'anthropic:claude-opus-4-5': 'anthropic/claude-opus-4.8',
+  'anthropic:claude-sonnet-4-5': 'anthropic/claude-sonnet-4.6',
   'anthropic:claude-haiku-4-5': 'anthropic/claude-haiku-4.5',
-  'openai:gpt-5.2': 'openai/gpt-5.2',
-  'openai:gpt-5.2-pro': 'openai/gpt-5.2-pro',
-  'openai:gpt-4o': 'openai/gpt-4o',
-  'openai:gpt-4o-mini': 'openai/gpt-4o-mini',
+  'openai:gpt-5.2': 'openai/gpt-5.5',
+  'openai:gpt-5.2-pro': 'openai/gpt-5.5-pro',
+  'openai:gpt-4o': 'openai/gpt-5-mini',
+  'openai:gpt-4o-mini': 'openai/gpt-5-mini',
   'gemini:gemini-3-pro': 'google/gemini-3.1-pro-preview',
-  'gemini:gemini-3-flash': 'google/gemini-3-flash-preview',
-  'gemini:gemini-2.0-flash': 'google/gemini-2.0-flash-001',
+  'gemini:gemini-3-flash': 'google/gemini-3.5-flash',
+  'gemini:gemini-2.0-flash': 'google/gemini-3.5-flash',
   'gemini:gemini-1.5-pro': 'google/gemini-2.5-pro'
 };
 
@@ -266,6 +270,105 @@ export function validateModelId(modelId) {
 // Get list of available (curated) model IDs.
 export function getAvailableModelIds() {
   return Object.keys(MODELS);
+}
+
+// ---- Live model catalog (OpenRouter GET /models) ----------------------------
+// Public endpoint (no auth). Cached in-memory + localStorage (reduced fields
+// only, for quota) with a 24h TTL. Powers per-model reasoning detection and
+// custom-slug awareness. NEVER throws: the picker must keep working offline from
+// the built-in shortlist + the user's cached custom slugs.
+const MODELS_ENDPOINT = 'https://openrouter.ai/api/v1/models';
+const CATALOG_STORAGE_KEY = 'resume-designer-model-catalog';
+const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
+let catalogMemo = null;
+let catalogInflight = null;
+
+function readCatalogCache() {
+  if (catalogMemo) return catalogMemo;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CATALOG_STORAGE_KEY) || 'null');
+    if (parsed && parsed.models && typeof parsed.fetchedAt === 'number') {
+      catalogMemo = parsed;
+      return parsed;
+    }
+  } catch (_) { /* ignore corrupt cache */ }
+  return null;
+}
+
+function catalogIsFresh(c) {
+  return !!c && (Date.now() - c.fetchedAt) < CATALOG_TTL_MS;
+}
+
+// Fetch + cache the catalog. Returns the (possibly stale) cache on failure.
+export async function fetchModelCatalog(force = false) {
+  const cached = readCatalogCache();
+  if (!force && catalogIsFresh(cached)) return cached;
+  if (catalogInflight) return catalogInflight;
+  catalogInflight = (async () => {
+    try {
+      const res = await fetch(MODELS_ENDPOINT, { headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`models ${res.status}`);
+      const data = await res.json();
+      const models = {};
+      for (const m of (data && data.data) || []) {
+        if (!m || typeof m.id !== 'string') continue;
+        const params = Array.isArray(m.supported_parameters) ? m.supported_parameters : [];
+        models[m.id] = { reasoning: params.includes('reasoning') };
+      }
+      const fresh = { fetchedAt: Date.now(), models };
+      catalogMemo = fresh;
+      try { localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(fresh)); } catch (_) { /* quota */ }
+      return fresh;
+    } catch (e) {
+      console.warn('[aiService] model catalog fetch failed:', (e && e.message) || e);
+      return cached || null;
+    } finally {
+      catalogInflight = null;
+    }
+  })();
+  return catalogInflight;
+}
+
+// Does this model support reasoning/thinking? Consults the cached catalog's
+// supported_parameters. Curated models are all reasoning-capable. Unknown or
+// offline → TRUE (optimistic): OpenRouter ignores the `reasoning` field for
+// models that don't support it, so a false-positive is harmless; a false-negative
+// would needlessly disable the control before the catalog has loaded.
+export function modelSupportsReasoning(slug) {
+  if (!slug) return true;
+  const entry = readCatalogCache()?.models?.[slug];
+  if (entry) return !!entry.reasoning;
+  if (MODELS[slug]) return true;
+  return true;
+}
+
+// ---- User-added custom model slugs ------------------------------------------
+// Persisted in settings.customModels (most-recent first) so a working custom
+// slug reappears in the picker without re-typing. Curated dupes + unsafe values
+// are filtered out on read.
+export function getCustomModels() {
+  const list = getSettings().customModels;
+  if (!Array.isArray(list)) return [];
+  return list.filter(s => typeof s === 'string' && isSafeModelSlug(s) && !MODELS[s]);
+}
+
+export function addCustomModel(slug) {
+  if (!isSafeModelSlug(slug) || !slug.includes('/') || MODELS[slug]) return false;
+  const list = getCustomModels();
+  // Already the most-recent entry — no change, so skip the write (and the
+  // SETTINGS_UPDATED_EVENT it would fire). Without this, every message sent with
+  // an already-cached custom model would re-render the chat panel.
+  if (list[0] === slug) return false;
+  const next = [slug, ...list.filter(s => s !== slug)].slice(0, 20);
+  saveSettings({ customModels: next });
+  return true;
+}
+
+export function removeCustomModel(slug) {
+  const list = getCustomModels();
+  if (!list.includes(slug)) return false;
+  saveSettings({ customModels: list.filter(s => s !== slug) });
+  return true;
 }
 
 // Cross-provider fallback models for a primary (used only when autoFallback on).
@@ -808,7 +911,11 @@ async function callOpenRouter(modelId, messages, options = {}) {
   }
 
   // Unified reasoning — replaces Anthropic thinking budgets AND OpenAI reasoning_effort.
-  if (reasoningEffort && reasoningEffort !== 'none') {
+  // Only send reasoning when the model actually supports it (per the cached
+  // catalog). modelSupportsReasoning is optimistic for unknown slugs, so this
+  // never wrongly suppresses; it just avoids sending an effort to a model the
+  // catalog knows can't use it.
+  if (reasoningEffort && reasoningEffort !== 'none' && modelSupportsReasoning(modelId)) {
     requestBody.reasoning = { effort: reasoningEffort };
   }
 
@@ -838,6 +945,10 @@ async function callOpenRouter(modelId, messages, options = {}) {
   const data = await response.json();
   const message = data.choices?.[0]?.message || {};
   const text = message.content || '';
+
+  // A custom slug that just produced a successful response "works", so remember
+  // it — it'll reappear in the picker without re-typing (no-op for curated slugs).
+  addCustomModel(modelId);
 
   // Track usage. Prefer OpenRouter's reported cost; provider is derived from the
   // actual model used (fallback-aware) for the Developer-panel breakdown.

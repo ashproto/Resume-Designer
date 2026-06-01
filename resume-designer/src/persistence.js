@@ -20,7 +20,8 @@ const DEFAULT_STORAGE = {
     customColor: '#c45c3e',
     openrouterKey: '',
     autoFallback: false,
-    defaultModel: 'anthropic/claude-sonnet-4.5',
+    defaultModel: 'anthropic/claude-sonnet-4.6',
+    customModels: [],
     chatPanelWidth: 320
   },
   userProfile: {
@@ -222,7 +223,7 @@ export function getSettings() {
   // migration. Legacy anthropicKey/openaiKey/geminiKey are simply ignored; a
   // legacy colon-form `defaultModel` is migrated to a slug on read by
   // validateModelId() in aiService.js, so it needs no rewrite here.
-  return { openrouterKey: '', autoFallback: false, ...s };
+  return { openrouterKey: '', autoFallback: false, customModels: [], ...s };
 }
 
 // Get user profile

@@ -20,6 +20,7 @@ import {
   importFullBackupMerge,
   generateUniqueVariantName
 } from './persistence.js';
+import { registerPortalMenu, isInPortal, purgePortal } from './menuPortal.js';
 import { store, generateId, EMPTY_RESUME } from './store.js';
 import { flushPendingProfileSave } from './userProfilePanel.js';
 import {
@@ -497,15 +498,10 @@ export function initHeaderBar(onVariantChange) {
   // Get current variant from storage
   currentVariantId = getCurrentVariantId();
   
-  // Expose variant action handlers globally for onclick fallbacks
-  window.handleNewVariant = () => {
-    if (window.showOnboardingWizard) {
-      window.showOnboardingWizard({ skipApiKeyStep: true });
-    }
-  };
-  window.handleDuplicateVariant = () => duplicateVariant();
-  window.handleRenameVariant = () => renameCurrentVariant();
-  window.handleDeleteVariant = () => deleteCurrentVariant();
+  // Variant action buttons (new/duplicate/rename/delete) are wired purely via
+  // event delegation in setupHeaderEventListeners(). Inline onclick is disabled
+  // by Tauri's injected CSP nonce in the packaged app, so there are no window.*
+  // fallbacks (and firing both delegation + inline would double-act in a browser).
   
   // Render header UI
   renderHeaderBar();
@@ -644,6 +640,9 @@ export function exportCurrentVariant(format = 'json') {
 export function renderHeaderBar() {
   const container = document.getElementById('header-bar');
   if (!container) return;
+  // A full header re-render destroys menu triggers; clear any menu still parked
+  // in the glass portal first so an open one can't leak as an orphan.
+  purgePortal();
   
   const variants = getVariants();
   const variantList = Object.values(variants).sort((a, b) => {
@@ -687,24 +686,24 @@ export function renderHeaderBar() {
       
       <!-- Individual variant action buttons (visible on wide screens) -->
       <div class="header-variant-actions-expanded">
-        <button class="header-action-btn" id="btn-new-variant" title="Create new resume" onclick="window.handleNewVariant && window.handleNewVariant()">
+        <button class="header-action-btn" id="btn-new-variant" title="Create new resume">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
-        <button class="header-action-btn" id="btn-duplicate-variant" title="Duplicate" onclick="window.handleDuplicateVariant && window.handleDuplicateVariant()">
+        <button class="header-action-btn" id="btn-duplicate-variant" title="Duplicate">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="9" y="9" width="13" height="13" rx="2"/>
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
           </svg>
         </button>
-        <button class="header-action-btn" id="btn-rename-variant" title="Rename" onclick="window.handleRenameVariant && window.handleRenameVariant()">
+        <button class="header-action-btn" id="btn-rename-variant" title="Rename">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
           </svg>
         </button>
-        <button class="header-action-btn danger" id="btn-delete-variant" title="Delete" onclick="window.handleDeleteVariant && window.handleDeleteVariant()">
+        <button class="header-action-btn danger" id="btn-delete-variant" title="Delete">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -722,27 +721,27 @@ export function renderHeaderBar() {
           </svg>
         </button>
         <div class="header-variant-actions-menu" id="variant-actions-menu">
-          <button class="header-variant-action-option" id="btn-new-variant-menu" onclick="window.handleNewVariant && window.handleNewVariant()">
+          <button class="header-variant-action-option" id="btn-new-variant-menu">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="12" y1="5" x2="12" y2="19"/>
               <line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
             New Resume
           </button>
-          <button class="header-variant-action-option" id="btn-duplicate-variant-menu" onclick="window.handleDuplicateVariant && window.handleDuplicateVariant()">
+          <button class="header-variant-action-option" id="btn-duplicate-variant-menu">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="9" y="9" width="13" height="13" rx="2"/>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
             </svg>
             Duplicate
           </button>
-          <button class="header-variant-action-option" id="btn-rename-variant-menu" onclick="window.handleRenameVariant && window.handleRenameVariant()">
+          <button class="header-variant-action-option" id="btn-rename-variant-menu">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
             </svg>
             Rename
           </button>
-          <button class="header-variant-action-option danger" id="btn-delete-variant-menu" onclick="window.handleDeleteVariant && window.handleDeleteVariant()">
+          <button class="header-variant-action-option danger" id="btn-delete-variant-menu">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -1045,14 +1044,16 @@ export function renderHeaderBar() {
 function setupVariantDropdown() {
   const dropdown = document.getElementById('variant-dropdown');
   const trigger = dropdown?.querySelector('.custom-dropdown-trigger');
-  
+  const menu = dropdown?.querySelector('.custom-dropdown-menu');
+
   trigger?.addEventListener('click', (e) => {
     e.stopPropagation();
     dropdown.classList.toggle('open');
   });
-  
-  // Handle option selection
-  dropdown?.addEventListener('click', (e) => {
+
+  // Handle option selection. Bound to the MENU (not the wrapper) so it keeps
+  // working after the menu is re-parented into the glass portal.
+  menu?.addEventListener('click', (e) => {
     const option = e.target.closest('.custom-dropdown-option');
     if (option) {
       const value = option.dataset.value;
@@ -1060,13 +1061,25 @@ function setupVariantDropdown() {
       dropdown.classList.remove('open');
     }
   });
-  
-  // Close dropdown when clicking outside
+
+  // Close dropdown when clicking outside (isInPortal keeps it open when the menu
+  // has been re-parented into the glass portal).
   document.addEventListener('click', (e) => {
-    if (!dropdown?.contains(e.target)) {
+    if (!dropdown?.contains(e.target) && !isInPortal(e.target)) {
       dropdown?.classList.remove('open');
     }
   });
+
+  // Glass theme: portal the floating menus out of the frosted header so their
+  // backdrop-filter blurs for real (no-op in a plain browser).
+  if (menu && trigger) {
+    registerPortalMenu(menu, trigger, { watch: dropdown, activeClass: 'open', placement: 'down' });
+  }
+  const actionsBtn = document.getElementById('btn-variant-actions');
+  const actionsMenu = document.getElementById('variant-actions-menu');
+  if (actionsBtn && actionsMenu) {
+    registerPortalMenu(actionsMenu, actionsBtn, { activeClass: 'show', placement: 'down' });
+  }
 }
 
 // Update just the variant selector
@@ -1095,26 +1108,25 @@ function setupHeaderEventListeners() {
     const target = e.target.closest('button, select, .header-import-btn, .header-export-option');
     if (!target) return;
     
-    // New variant - launch the new resume wizard (skip API key step since we're already in the app)
-    if (target.id === 'btn-new-variant') {
-      if (window.showOnboardingWizard) {
-        window.showOnboardingWizard({ skipApiKeyStep: true });
+    // Variant actions — serves BOTH the always-visible buttons (btn-new-variant…)
+    // and the collapsed "⋯" dropdown options (btn-new-variant-menu…). Strip a
+    // trailing "-menu" so one branch handles both. Delegation-only: inline onclick
+    // is dead under Tauri's CSP nonce, and doubling it here + inline would double-act.
+    const variantAction = target.id.replace(/-menu$/, '');
+    if (['btn-new-variant', 'btn-duplicate-variant', 'btn-rename-variant', 'btn-delete-variant'].includes(variantAction)) {
+      if (variantAction === 'btn-new-variant') {
+        if (window.showOnboardingWizard) {
+          window.showOnboardingWizard({ skipApiKeyStep: true });
+        }
+      } else if (variantAction === 'btn-duplicate-variant') {
+        duplicateVariant();
+      } else if (variantAction === 'btn-rename-variant') {
+        renameCurrentVariant();
+      } else if (variantAction === 'btn-delete-variant') {
+        deleteCurrentVariant();
       }
-    }
-    
-    // Duplicate
-    if (target.id === 'btn-duplicate-variant') {
-      duplicateVariant();
-    }
-    
-    // Rename
-    if (target.id === 'btn-rename-variant') {
-      renameCurrentVariant();
-    }
-    
-    // Delete
-    if (target.id === 'btn-delete-variant') {
-      deleteCurrentVariant();
+      // Collapse the "⋯" menu if the click came from it (no-op for the expanded buttons).
+      document.getElementById('variant-actions-menu')?.classList.remove('show');
     }
     
     // Tools button
