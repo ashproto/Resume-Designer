@@ -967,6 +967,28 @@ html[data-theme="dark"] .header-variant-select {
   color: var(--color-text);
 }
 
+.settings-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin: var(--space-xs) 0 0;
+  line-height: 1.4;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  font-size: 0.85rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.settings-checkbox input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
 .api-key-input-wrapper {
   display: flex;
   gap: var(--space-xs);

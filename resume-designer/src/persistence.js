@@ -18,10 +18,9 @@ const DEFAULT_STORAGE = {
     colorPalette: 'terracotta',
     layout: 'sidebar',
     customColor: '#c45c3e',
-    anthropicKey: '',
-    openaiKey: '',
-    geminiKey: '',
-    defaultModel: 'anthropic:claude-sonnet-4-5',
+    openrouterKey: '',
+    autoFallback: false,
+    defaultModel: 'anthropic/claude-sonnet-4.5',
     chatPanelWidth: 320
   },
   userProfile: {
@@ -218,7 +217,12 @@ export function saveSettings(settings) {
 // Get settings
 export function getSettings() {
   const storage = loadFromStorage();
-  return storage.settings || DEFAULT_STORAGE.settings;
+  const s = storage.settings || DEFAULT_STORAGE.settings;
+  // Guarantee OpenRouter-era keys exist for installs created before the
+  // migration. Legacy anthropicKey/openaiKey/geminiKey are simply ignored; a
+  // legacy colon-form `defaultModel` is migrated to a slug on read by
+  // validateModelId() in aiService.js, so it needs no rewrite here.
+  return { openrouterKey: '', autoFallback: false, ...s };
 }
 
 // Get user profile

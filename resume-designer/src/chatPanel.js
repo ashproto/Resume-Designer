@@ -3,7 +3,7 @@
  * AI chat interface with message history and actions
  */
 
-import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isProviderConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
+import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { store } from './store.js';
 import { marked } from 'marked';
@@ -62,50 +62,25 @@ const SLASH_COMMANDS = [
 const STORAGE_KEY = 'resume-designer-chat-history';
 const THREADS_KEY = 'resume-designer-chat-threads';
 
-// AI Model options - Model IDs verified from provider documentation
-const AI_MODELS = [
-  { group: 'Anthropic', options: [
-    { value: 'anthropic:claude-opus-4-5', label: 'Claude Opus 4.5' },
-    { value: 'anthropic:claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
-    { value: 'anthropic:claude-haiku-4-5', label: 'Claude Haiku 4.5' }
-  ]},
-  { group: 'OpenAI', options: [
-    { value: 'openai:gpt-5.2', label: 'GPT-5.2' },
-    { value: 'openai:gpt-5.2-pro', label: 'GPT-5.2 Pro' },
-    { value: 'openai:gpt-4o', label: 'GPT-4o' },
-    { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }
-  ]},
-  { group: 'Google', options: [
-    { value: 'gemini:gemini-3-pro', label: 'Gemini 3 Pro' },
-    { value: 'gemini:gemini-3-flash', label: 'Gemini 3 Flash' },
-    { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-    { value: 'gemini:gemini-1.5-pro', label: 'Gemini 1.5 Pro' }
-  ]}
-];
+// AI model catalog, derived from aiService's curated MODELS (single source of
+// truth). Shape: [{ group, options: [{ value: slug, label }] }]. Custom slugs
+// typed into the dropdown aren't listed here but are still selectable.
+const AI_MODELS = Object.entries(getAllModels()).map(([group, models]) => ({
+  group,
+  options: models.map(m => ({ value: m.id, label: m.label }))
+}));
 
 let currentModel = null;
 
 // Get the initial default model based on configured providers
 function getInitialModel() {
-  // First check if there's a saved preference
+  // Saved preference (any legacy colon ID is migrated to a slug here).
   const settings = getSettings();
   if (settings.defaultModel) {
-    // Verify the saved model's provider is still configured
-    const provider = settings.defaultModel.split(':')[0];
-    const configuredProviders = getConfiguredProviders();
-    if (configuredProviders.includes(provider)) {
-      return settings.defaultModel;
-    }
+    return validateModelId(settings.defaultModel);
   }
-  
-  // Otherwise, get default based on configured providers
-  const defaultModel = getDefaultModelId();
-  if (defaultModel) {
-    return defaultModel;
-  }
-  
-  // Fallback to first available in list (won't work without API key anyway)
-  return 'openai:gpt-4o';
+  // Otherwise the default (or a safe fallback if no key is configured yet).
+  return getDefaultModelId() || 'anthropic/claude-sonnet-4.5';
 }
 
 // Initialize chat panel
@@ -219,35 +194,24 @@ function handleResizeEnd(e) {
   }
 }
 
-// Map provider keys to display names
-const PROVIDER_NAMES = {
-  'anthropic': 'Anthropic (Claude)',
-  'openai': 'OpenAI',
-  'gemini': 'Google (Gemini)'
-};
-
 // Initialize custom model dropdown
 function initModelDropdown() {
   const selectorContainer = document.querySelector('.chat-model-selector');
   if (!selectorContainer) return;
   
-  // Get configured providers
-  const configuredProviders = getConfiguredProviders();
-  
-  // Get current model label
+  // One aggregate provider now: either configured or not.
+  const configured = isConfigured();
+
+  // Current model label
   const currentModelLabel = getModelLabel(currentModel);
-  
-  // Build dropdown content based on provider configuration
-  const dropdownContent = AI_MODELS.map(group => {
-    const providerKey = group.options[0]?.value.split(':')[0]; // Get provider from first option
-    const isConfigured = configuredProviders.includes(providerKey);
-    
-    if (isConfigured) {
-      // Show available models for configured providers
-      return `
+
+  // Build dropdown content. When configured, list every curated group; the
+  // custom-slug field below covers any model not in the curated list.
+  const dropdownContent = configured
+    ? AI_MODELS.map(group => `
         <div class="custom-dropdown-group-label">${group.group}</div>
         ${group.options.map(opt => `
-          <button class="custom-dropdown-option ${opt.value === currentModel ? 'selected' : ''}" 
+          <button class="custom-dropdown-option ${opt.value === currentModel ? 'selected' : ''}"
                   data-value="${opt.value}" type="button">
             <svg class="check-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="20 6 9 17 4 12"/>
@@ -255,14 +219,11 @@ function initModelDropdown() {
             ${opt.label}
           </button>
         `).join('')}
-      `;
-    } else {
-      // Show notice for unconfigured providers
-      return `
-        <div class="custom-dropdown-group-label">${group.group}</div>
+      `).join('')
+    : `
         <div class="custom-dropdown-notice">
-          <span class="notice-text">API key not configured</span>
-          <button class="notice-configure-btn" data-provider="${providerKey}" type="button">
+          <span class="notice-text">OpenRouter API key not configured</span>
+          <button class="notice-configure-btn" type="button">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/>
               <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
@@ -271,20 +232,27 @@ function initModelDropdown() {
           </button>
         </div>
       `;
-    }
-  }).join('');
+
+  // Custom-slug field: pick any OpenRouter model (e.g. anthropic/claude-opus-4.8).
+  const customSlugHTML = configured ? `
+        <div class="custom-dropdown-divider"></div>
+        <div class="custom-dropdown-custom">
+          <input type="text" class="custom-model-input" placeholder="Custom slug, e.g. anthropic/claude-opus-4.8" />
+          <button class="custom-model-apply" type="button">Use</button>
+        </div>
+      ` : '';
   
   // Create custom dropdown HTML
   const dropdownHTML = `
     <div class="custom-dropdown" id="model-dropdown">
       <button class="custom-dropdown-trigger" type="button">
-        <span class="dropdown-label">${currentModelLabel}</span>
+        <span class="dropdown-label">${escapeHtml(currentModelLabel)}</span>
         <svg class="dropdown-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
       <div class="custom-dropdown-menu">
-        ${dropdownContent}
+        ${dropdownContent}${customSlugHTML}
       </div>
     </div>
   `;
@@ -294,6 +262,26 @@ function initModelDropdown() {
   // Setup dropdown events
   const dropdown = document.getElementById('model-dropdown');
   const trigger = dropdown?.querySelector('.custom-dropdown-trigger');
+
+  // Custom-slug field: only apply a safe slug (no HTML-dangerous chars) so a
+  // bad or poisoned value is never persisted; invalid input flags the field
+  // instead of silently doing nothing.
+  const customInput = dropdown?.querySelector('.custom-model-input');
+  const applyCustomSlug = () => {
+    const slug = customInput?.value.trim();
+    if (!slug) return;
+    if (!isSafeModelSlug(slug)) {
+      customInput.classList.add('invalid');
+      customInput.title = 'Enter a valid OpenRouter slug, e.g. anthropic/claude-opus-4.8';
+      return;
+    }
+    selectModel(slug);
+    dropdown.classList.remove('open');
+  };
+  customInput?.addEventListener('input', () => {
+    customInput.classList.remove('invalid');
+    customInput.removeAttribute('title');
+  });
   
   trigger?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -308,13 +296,28 @@ function initModelDropdown() {
       selectModel(value);
       dropdown.classList.remove('open');
     }
-    
+
     // Handle configure button click
     const configureBtn = e.target.closest('.notice-configure-btn');
     if (configureBtn) {
       e.stopPropagation();
       openSettingsModal();
       dropdown.classList.remove('open');
+    }
+
+    // Handle custom-slug "Use" button
+    const applyBtn = e.target.closest('.custom-model-apply');
+    if (applyBtn) {
+      e.stopPropagation();
+      applyCustomSlug();
+    }
+  });
+
+  // Apply custom slug on Enter
+  customInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyCustomSlug();
     }
   });
   
@@ -350,21 +353,18 @@ function getModelLabel(value) {
     }
   }
   
-  // If not found, extract a friendly name from the model ID
-  // e.g., "anthropic:claude-sonnet-4-5-20251022" -> "Claude Sonnet 4.5"
-  const parts = value.split(':');
-  if (parts.length === 2) {
-    const modelName = parts[1]
-      .replace(/-/g, ' ')
-      .replace(/\d{8,}/, '') // Remove date suffixes
-      .trim()
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-    return modelName || 'Unknown Model';
-  }
-  
-  return 'Unknown Model';
+  // Custom slug not in the curated list — prettify the model part of the slug.
+  // e.g. "anthropic/claude-opus-4.8" -> "Claude Opus 4.8"
+  const modelPart = String(value).split('/').pop() || String(value);
+  const pretty = modelPart
+    .replace(/[-_]/g, ' ')
+    .replace(/\d{8,}/g, '') // Remove date suffixes
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+  return pretty || 'Custom Model';
 }
 
 // Select a model
@@ -970,19 +970,11 @@ function renderApiKeyPrompt() {
         </svg>
       </div>
       <h3>Setup Required</h3>
-      <p>To use the AI Assistant, you need to configure at least one API key.</p>
+      <p>To use the AI Assistant, add your OpenRouter API key.</p>
       <div class="chat-api-prompt-providers">
         <div class="provider-option">
-          <strong>Anthropic (Claude)</strong>
-          <span>Best for nuanced writing</span>
-        </div>
-        <div class="provider-option">
-          <strong>OpenAI (GPT)</strong>
-          <span>Fast and versatile</span>
-        </div>
-        <div class="provider-option">
-          <strong>Google (Gemini)</strong>
-          <span>Great for analysis</span>
+          <strong>OpenRouter</strong>
+          <span>One key for Claude, GPT, Gemini &amp; 300+ models</span>
         </div>
       </div>
       <button class="btn btn-primary chat-api-prompt-btn" id="open-settings-from-prompt">
@@ -1146,10 +1138,12 @@ async function getAIResponse(userMessage, hasExplicitContext = false) {
     // If explicit context was provided, don't add resume context again
     const includeResumeContext = !hasExplicitContext;
     
-    // Build options for the AI call
+    // Build options for the AI call. structured:true => chat() returns the
+    // { text, thinking, usedWebSearch } object so we can render reasoning/web-search.
     const options = {
       reasoningEffort: currentReasoningEffort,
-      webSearch: webSearchEnabled
+      webSearch: webSearchEnabled,
+      structured: true
     };
     
     // Show web search step if enabled
@@ -1210,7 +1204,7 @@ function getModelDisplayName(modelId) {
       }
     }
   }
-  return modelId.split(':').pop();
+  return String(modelId).split('/').pop();
 }
 
 // Get AI feedback

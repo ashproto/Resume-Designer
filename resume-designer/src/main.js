@@ -1350,43 +1350,35 @@ function renderUsageData() {
   }
 }
 
-// Load API keys to modal inputs
+// Load API key + settings into modal inputs
 function loadApiKeysToModal() {
   const settings = getSettings();
-  const anthropicInput = document.getElementById('anthropic-key');
-  const openaiInput = document.getElementById('openai-key');
-  const geminiInput = document.getElementById('gemini-key');
-  
-  if (anthropicInput) anthropicInput.value = settings.anthropicKey || '';
-  if (openaiInput) openaiInput.value = settings.openaiKey || '';
-  if (geminiInput) geminiInput.value = settings.geminiKey || '';
+  const keyInput = document.getElementById('openrouter-key');
+  const fallbackToggle = document.getElementById('auto-fallback-toggle');
+
+  if (keyInput) keyInput.value = settings.openrouterKey || '';
+  if (fallbackToggle) fallbackToggle.checked = !!settings.autoFallback;
 }
 
-// Save API keys from modal inputs
+// Save API key + settings from modal inputs
 function saveApiKeysFromModal() {
-  const anthropicInput = document.getElementById('anthropic-key');
-  const openaiInput = document.getElementById('openai-key');
-  const geminiInput = document.getElementById('gemini-key');
-  
+  const keyInput = document.getElementById('openrouter-key');
+  const fallbackToggle = document.getElementById('auto-fallback-toggle');
+
   saveSettings({
-    anthropicKey: anthropicInput?.value || '',
-    openaiKey: openaiInput?.value || '',
-    geminiKey: geminiInput?.value || ''
+    openrouterKey: keyInput?.value || '',
+    autoFallback: !!fallbackToggle?.checked
   });
-  
-  // Refresh chat panel UI to reflect new API key configuration
+
+  // Refresh chat panel UI to reflect the new configuration
   refreshChatPanel();
 }
 
-// Clear all API keys
+// Clear the API key
 function clearAllApiKeys() {
-  saveSettings({
-    anthropicKey: '',
-    openaiKey: '',
-    geminiKey: ''
-  });
-  
-  // Refresh chat panel UI to reflect cleared API keys
+  saveSettings({ openrouterKey: '' });
+
+  // Refresh chat panel UI to reflect the cleared key
   refreshChatPanel();
 }
 

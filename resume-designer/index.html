@@ -139,26 +139,9 @@
           <!-- Model selector and options bar at bottom -->
           <div class="chat-input-controls">
             <div class="chat-model-selector">
-              <select id="ai-model-select" class="model-select">
-                <optgroup label="Anthropic">
-                  <option value="anthropic:claude-opus-4-5-20251022">Claude Opus 4.5</option>
-                  <option value="anthropic:claude-sonnet-4-5-20251022">Claude Sonnet 4.5</option>
-                  <option value="anthropic:claude-sonnet-4-20250514">Claude Sonnet 4</option>
-                  <option value="anthropic:claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
-                </optgroup>
-                <optgroup label="OpenAI">
-                  <option value="openai:gpt-5.2">GPT-5.2</option>
-                  <option value="openai:gpt-5.2-pro">GPT-5.2 Pro</option>
-                  <option value="openai:gpt-4o">GPT-4o</option>
-                  <option value="openai:gpt-4o-mini">GPT-4o Mini</option>
-                </optgroup>
-                <optgroup label="Google">
-                  <option value="gemini:gemini-3-pro">Gemini 3 Pro</option>
-                  <option value="gemini:gemini-3-flash">Gemini 3 Flash</option>
-                  <option value="gemini:gemini-2.0-flash">Gemini 2.0 Flash</option>
-                  <option value="gemini:gemini-1.5-pro">Gemini 1.5 Pro</option>
-                </optgroup>
-              </select>
+              <!-- Populated at runtime by chatPanel.js initModelDropdown();
+                   this native <select> is just a placeholder container. -->
+              <select id="ai-model-select" class="model-select"></select>
             </div>
             
             <div class="chat-options-divider"></div>
@@ -375,54 +358,33 @@
               <line x1="12" y1="9" x2="12" y2="13"/>
               <line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
-            API keys are stored locally in your browser. Never share them.
+            Your OpenRouter API key is stored locally and is sent only to OpenRouter. Never share it.
           </p>
           
           <div class="settings-section">
-            <h3 class="settings-section-title">Anthropic (Claude)</h3>
+            <h3 class="settings-section-title">OpenRouter</h3>
             <div class="form-group">
-              <label for="anthropic-key">API Key</label>
+              <label for="openrouter-key">API Key</label>
               <div class="api-key-input-wrapper">
-                <input type="password" id="anthropic-key" class="form-input api-key-input" placeholder="sk-ant-...">
-                <button class="api-key-toggle" data-target="anthropic-key" title="Show/hide">
+                <input type="password" id="openrouter-key" class="form-input api-key-input" placeholder="sk-or-v1-...">
+                <button class="api-key-toggle" data-target="openrouter-key" title="Show/hide">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                     <circle cx="12" cy="12" r="3"/>
                   </svg>
                 </button>
               </div>
+              <p class="settings-hint">One key for Claude, GPT, Gemini and 300+ models. Get a key at openrouter.ai/keys</p>
             </div>
           </div>
-          
+
           <div class="settings-section">
-            <h3 class="settings-section-title">OpenAI</h3>
+            <h3 class="settings-section-title">Model fallback</h3>
             <div class="form-group">
-              <label for="openai-key">API Key</label>
-              <div class="api-key-input-wrapper">
-                <input type="password" id="openai-key" class="form-input api-key-input" placeholder="sk-...">
-                <button class="api-key-toggle" data-target="openai-key" title="Show/hide">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-          
-          <div class="settings-section">
-            <h3 class="settings-section-title">Google (Gemini)</h3>
-            <div class="form-group">
-              <label for="gemini-key">API Key</label>
-              <div class="api-key-input-wrapper">
-                <input type="password" id="gemini-key" class="form-input api-key-input" placeholder="AIza...">
-                <button class="api-key-toggle" data-target="gemini-key" title="Show/hide">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-              </div>
+              <label class="settings-checkbox">
+                <input type="checkbox" id="auto-fallback-toggle">
+                <span>Automatically retry an alternate model if the chosen one is unavailable or rate-limited</span>
+              </label>
             </div>
           </div>
           
