@@ -176,5 +176,10 @@ export function isInPortal(target) {
 export function purgePortal() {
   const p = document.getElementById(PORTAL_ID);
   if (!p) return;
+  // Properly close each parked menu — removes the window scroll/resize listeners
+  // registered in openPortal, clears its inline styles, and resets its record —
+  // instead of just orphaning the DOM nodes (which would leak those listeners).
+  Array.from(p.children).forEach((menuEl) => closePortal(menuEl));
+  // Drop anything left without a record (defensive).
   while (p.firstChild) p.removeChild(p.firstChild);
 }

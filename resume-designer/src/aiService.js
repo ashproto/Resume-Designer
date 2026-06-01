@@ -329,11 +329,6 @@ export async function fetchModelCatalog(force = false) {
   return catalogInflight;
 }
 
-// Fire-and-forget refresh when the cache is missing/stale.
-export function primeModelCatalog() {
-  if (!catalogIsFresh(readCatalogCache())) fetchModelCatalog().catch(() => {});
-}
-
 // Does this model support reasoning/thinking? Consults the cached catalog's
 // supported_parameters. Curated models are all reasoning-capable. Unknown or
 // offline → TRUE (optimistic): OpenRouter ignores the `reasoning` field for
@@ -360,6 +355,10 @@ export function getCustomModels() {
 export function addCustomModel(slug) {
   if (!isSafeModelSlug(slug) || !slug.includes('/') || MODELS[slug]) return false;
   const list = getCustomModels();
+  // Already the most-recent entry — no change, so skip the write (and the
+  // SETTINGS_UPDATED_EVENT it would fire). Without this, every message sent with
+  // an already-cached custom model would re-render the chat panel.
+  if (list[0] === slug) return false;
   const next = [slug, ...list.filter(s => s !== slug)].slice(0, 20);
   saveSettings({ customModels: next });
   return true;

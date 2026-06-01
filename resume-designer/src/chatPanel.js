@@ -321,7 +321,10 @@ function initModelDropdown() {
       e.stopPropagation();
       const slug = removeBtn.dataset.slug;
       removeCustomModel(slug);
-      if (slug === currentModel) selectModel(getInitialModel());
+      // Fall back to the built-in default, NOT getInitialModel(): defaultModel
+      // still points at the just-removed slug (a valid custom slug), so
+      // getInitialModel() would re-select the model we just removed.
+      if (slug === currentModel) selectModel(getDefaultModelId() || 'anthropic/claude-sonnet-4.6');
       initModelDropdown(); // rebuild without the removed entry
       return;
     }
