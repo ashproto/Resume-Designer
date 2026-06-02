@@ -138,14 +138,15 @@ function initPanelResize() {
   resizeHandle = document.getElementById('chat-resize-handle');
   const panel = document.getElementById('chat-panel');
   
-  if (!resizeHandle || !panel) return;
-  
-  // Load saved panel width
+  // Always pin the width var to a clamped, valid value (independent of the resize
+  // handle) so the panel never relies on the CSS fallback and never collapses if
+  // settings.chatPanelWidth is missing/0/NaN. MIN/MAX = 240/500; default 320.
   const settings = getSettings();
-  if (settings.chatPanelWidth) {
-    const savedWidth = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, settings.chatPanelWidth));
-    document.documentElement.style.setProperty('--chat-panel-width', `${savedWidth}px`);
-  }
+  const savedWidth = Number(settings.chatPanelWidth) || 320;
+  const width = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, savedWidth));
+  document.documentElement.style.setProperty('--chat-panel-width', `${width}px`);
+
+  if (!resizeHandle || !panel) return;
   
   // Mouse down - start resizing
   resizeHandle.addEventListener('mousedown', (e) => {
