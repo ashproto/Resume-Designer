@@ -17,7 +17,7 @@
 
 Resume Designer is a desktop app (and browser app) for building résumés. You keep **one master profile** — your full work history, skills, education, and projects — and spin off as many **tailored variants** as you need, each pointed at a specific role. An optional AI assistant (powered by your own [OpenRouter](https://openrouter.ai) key) helps you draft, rewrite, and tailor content to a job description, and every AI edit is shown as an inline diff you approve or reject.
 
-Your data never leaves your machine except for the AI calls you explicitly make — there is no account, no server, and no telemetry.
+Your résumé data never leaves your machine except for the AI calls you explicitly make — there's no account, no backend, and no telemetry.
 
 ## Features
 
@@ -57,7 +57,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/Sirius
 
 The app updates itself: when a new release is published, it prompts you to download and restart.
 
-**System requirements:** macOS 11 (Big Sur) or later · Windows 10 (1809) or later.
+**System requirements:** macOS 12.3 (Monterey) or later · Windows 10 (1809) or later.
 
 > **Windows note:** the installer is not yet code-signed, so Windows SmartScreen may warn on first launch. Choose **More info → Run anyway** to proceed.
 
@@ -76,7 +76,7 @@ Your key is stored locally on your device and is sent only to OpenRouter to make
 ## Privacy & data
 
 - **Local-first:** résumés, profile, and settings live in your browser/app local storage on your device.
-- **No account, no backend, no analytics.** The only network calls are the AI requests you make to OpenRouter and the desktop app's update check against GitHub Releases.
+- **No account, no backend, no analytics.** Network use is limited to: the AI requests you make to OpenRouter, the desktop app's update check (GitHub Releases), and **web fonts** — the default typography preset loads fonts from Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`). Pick a system-font pairing in Settings to keep the app fully offline.
 - Export a full **JSON backup** any time, and import it on another machine.
 
 ## Run from source
