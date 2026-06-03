@@ -12,6 +12,7 @@ import DOMPurify from 'dompurify';
 import { createChangeSet, diffResumeData } from './diffEngine.js';
 import { showDiffView, initDiffView } from './diffView.js';
 import { showInlineChanges, hideInlineChanges, initInlineChanges } from './inlineChanges.js';
+import { escapeHtml, escapeAttr } from './htmlEscape.js';
 
 let messagesContainer;
 let inputEl;
@@ -2242,22 +2243,4 @@ function renderThreadSelector() {
   }
 }
 
-// Escape HTML
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-// Escape for attributes
-function escapeAttr(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// escapeHtml / escapeAttr now live in ./htmlEscape.js (imported at top).
