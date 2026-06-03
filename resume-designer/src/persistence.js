@@ -306,7 +306,7 @@ const BACKUP_FIXED_KEYS = [
 // Undo/redo history lives at this prefix, one key per variant.
 const BACKUP_HISTORY_PREFIX = 'resume-designer-history-';
 
-function isOwnedKey(key) {
+export function isOwnedKey(key) {
   return BACKUP_FIXED_KEYS.includes(key) || key.startsWith(BACKUP_HISTORY_PREFIX);
 }
 
