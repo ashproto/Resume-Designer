@@ -8,6 +8,7 @@ import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } fro
 import { store } from './store.js';
 import { registerPortalMenu, isInPortal, purgePortal } from './menuPortal.js';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { createChangeSet, diffResumeData } from './diffEngine.js';
 import { showDiffView, initDiffView } from './diffView.js';
 import { showInlineChanges, hideInlineChanges, initInlineChanges } from './inlineChanges.js';
@@ -1879,7 +1880,9 @@ function renderMessages() {
   });
 }
 
-// Configure marked for safe rendering
+// Configure marked for markdown rendering. marked does NOT sanitize HTML on its
+// own — formatMessage() pipes the result through DOMPurify (below) because chat
+// content is untrusted (AI model output, or text pasted from an external source).
 marked.setOptions({
   breaks: true,      // Convert line breaks to <br>
   gfm: true,         // Enable GitHub Flavored Markdown
@@ -1887,14 +1890,16 @@ marked.setOptions({
   mangle: false      // Don't mangle email addresses
 });
 
-// Format message content using marked for markdown rendering
+// Format message content as sanitized markdown (see the DOMPurify note above).
 function formatMessage(content) {
   if (!content) return '';
-  
+
   try {
-    // Use marked to parse markdown
-    const html = marked.parse(content);
-    return html;
+    // Render markdown, then strip unsafe HTML before it reaches the DOM. A
+    // prompt-injected/malicious model (or pasted external text) could emit
+    // `<img onerror=...>` / `<script>`; DOMPurify removes scripts, event-handler
+    // attributes, and javascript: URLs while keeping safe markdown formatting.
+    return DOMPurify.sanitize(marked.parse(content));
   } catch (e) {
     console.error('Markdown parsing error:', e);
     // Fallback to basic escaping

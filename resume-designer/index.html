@@ -11,7 +11,12 @@
        document-start, so this classic (non-module) script can detect the shell
        synchronously here. `?translucent` forces it on in a plain browser for
        CSS previewing; the hidden `?print=1` PDF-capture window is excluded so
-       the captured resume keeps a solid background. -->
+       the captured resume keeps a solid background.
+
+       SECURITY: the desktop CSP allowlists this inline script by its SHA-256 hash
+       (not 'unsafe-inline'); if you change the script below, recompute the hash and
+       update script-src in src-tauri/tauri.conf.json — see TAURI.md "Content Security
+       Policy". -->
   <script>
     (function () {
       try {

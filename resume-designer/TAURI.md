@@ -184,6 +184,25 @@ Currently **not** signed. Users will see a Microsoft Defender SmartScreen warnin
 - **macOS 11.0 (Big Sur) or later.** The PDF export uses `WKWebView.createPDF(configuration:completionHandler:)`, which Apple shipped in macOS 11. Older versions (10.15 Catalina and below) cannot install the app — `bundle.macOS.minimumSystemVersion` enforces this.
 - **Windows 10 1809 or later** (WebView2 runtime required; Windows 11 ships it preinstalled).
 
+## Content Security Policy
+
+The desktop CSP lives in [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json) under
+`app.security.csp`. `script-src` is locked to `'self'` plus the **SHA-256 hash** of the single
+inline `<script>` in `index.html` (the liquid-glass bootstrap) — it deliberately does **not** use
+`'unsafe-inline'`, so an injected inline `<script>` or event-handler attribute cannot execute.
+
+⚠️ If you edit that inline bootstrap script in `index.html`, recompute its hash and replace the
+`'sha256-…'` token in `script-src`, otherwise the desktop build will refuse to run the script (the
+window loses its translucent background). Regenerate the hash with:
+
+```bash
+node -e "const fs=require('fs'),c=require('crypto');const s=fs.readFileSync('index.html','utf8').match(/<script>([\s\S]*?)<\/script>/)[1];console.log('sha256-'+c.createHash('sha256').update(s).digest('base64'))"
+```
+
+`style-src` intentionally keeps `'unsafe-inline'` (dynamic theming + Google Fonts); inline styles
+are far lower risk than inline scripts. Note this CSP applies only to the **desktop** webview —
+Tauri injects it; the plain browser build (`npm run dev` / `npm run build`) is not covered.
+
 ## Troubleshooting
 
 **"App is damaged" on macOS** — the app wasn't signed/notarized. Check that all six macOS secrets are set in the GitHub repo, and inspect the `build-macos` job logs for `codesign`/`notarytool` errors.

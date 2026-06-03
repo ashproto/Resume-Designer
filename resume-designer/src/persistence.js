@@ -445,7 +445,17 @@ export function importFullBackupFromEnvelope(parsed) {
   // order (which is what the Rust side produces) would write history
   // BEFORE job-descriptions — so a history blow-out would take the
   // critical JD key down with it.
-  const entries = Object.entries(parsed.keys);
+  // Only write keys this app actually owns. A legitimate backup (produced by
+  // exportFullBackup) contains owned keys only; any other key in an imported
+  // file is corrupt or hostile, so we skip it rather than writing arbitrary
+  // localStorage entries for this origin.
+  const allEntries = Object.entries(parsed.keys);
+  const entries = allEntries.filter(([k]) => isOwnedKey(k));
+  if (entries.length !== allEntries.length) {
+    console.warn(
+      `[backup] Ignored ${allEntries.length - entries.length} unrecognized key(s) in imported backup.`
+    );
+  }
   const nonHistory = entries.filter(([k]) => !k.startsWith(BACKUP_HISTORY_PREFIX));
   const history = entries.filter(([k]) => k.startsWith(BACKUP_HISTORY_PREFIX));
 
