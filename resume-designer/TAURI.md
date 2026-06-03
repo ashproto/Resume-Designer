@@ -181,7 +181,7 @@ Currently **not** signed. Users will see a Microsoft Defender SmartScreen warnin
 
 ## System requirements
 
-- **macOS 11.0 (Big Sur) or later.** The PDF export uses `WKWebView.createPDF(configuration:completionHandler:)`, which Apple shipped in macOS 11. Older versions (10.15 Catalina and below) cannot install the app — `bundle.macOS.minimumSystemVersion` enforces this.
+- **macOS 12.3 (Monterey) or later.** `bundle.macOS.minimumSystemVersion` is set to `12.3` in `tauri.conf.json`, so older versions cannot install the app. (PDF export uses `WKWebView.createPDF(configuration:completionHandler:)`, which Apple shipped in macOS 11; the bundle floor is set higher.)
 - **Windows 10 1809 or later** (WebView2 runtime required; Windows 11 ships it preinstalled).
 
 ## Content Security Policy
