@@ -7,12 +7,11 @@ import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConf
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { store } from './store.js';
 import { registerPortalMenu, isInPortal, purgePortal } from './menuPortal.js';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import { createChangeSet, diffResumeData } from './diffEngine.js';
 import { showDiffView, initDiffView } from './diffView.js';
 import { showInlineChanges, hideInlineChanges, initInlineChanges } from './inlineChanges.js';
 import { escapeHtml, escapeAttr } from './htmlEscape.js';
+import { formatMessage } from './markdownMessage.js';
 
 let messagesContainer;
 let inputEl;
@@ -1881,32 +1880,7 @@ function renderMessages() {
   });
 }
 
-// Configure marked for markdown rendering. marked does NOT sanitize HTML on its
-// own — formatMessage() pipes the result through DOMPurify (below) because chat
-// content is untrusted (AI model output, or text pasted from an external source).
-marked.setOptions({
-  breaks: true,      // Convert line breaks to <br>
-  gfm: true,         // Enable GitHub Flavored Markdown
-  headerIds: false,  // Don't add IDs to headers
-  mangle: false      // Don't mangle email addresses
-});
-
-// Format message content as sanitized markdown (see the DOMPurify note above).
-function formatMessage(content) {
-  if (!content) return '';
-
-  try {
-    // Render markdown, then strip unsafe HTML before it reaches the DOM. A
-    // prompt-injected/malicious model (or pasted external text) could emit
-    // `<img onerror=...>` / `<script>`; DOMPurify removes scripts, event-handler
-    // attributes, and javascript: URLs while keeping safe markdown formatting.
-    return DOMPurify.sanitize(marked.parse(content));
-  } catch (e) {
-    console.error('Markdown parsing error:', e);
-    // Fallback to basic escaping
-    return escapeHtml(content).replace(/\n/g, '<br>');
-  }
-}
+// marked config + formatMessage() now live in ./markdownMessage.js (imported at top).
 
 // Handle apply action
 function handleApply(action, value) {
