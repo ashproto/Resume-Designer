@@ -5,8 +5,7 @@
 
 import { store } from './store.js';
 import { openChatWithContext, addContextChip } from './chatPanel.js';
-import { getPendingChange, applyInlineChange, rejectInlineChange, isInlineChangesActive, getCurrentChangeSet, getOriginalContent } from './inlineChanges.js';
-import { getPathLabel, DIFF_TYPES } from './diffEngine.js';
+import { getPendingChange, applyInlineChange, rejectInlineChange, getCurrentChangeSet, getOriginalContent } from './inlineChanges.js';
 import { showDiffView } from './diffView.js';
 
 let isInitialized = false;
@@ -304,7 +303,7 @@ function hideAIMenu() {
 }
 
 // Get context options based on the element
-function getContextOptions(element, path, text) {
+function getContextOptions(element, path, _text) {
   const options = [];
   const data = store.getData();
   
@@ -448,7 +447,7 @@ function handleContextAction(action, type, path, element) {
       if (match) {
         const exp = data?.experience?.[parseInt(match[1])];
         if (exp?.bullets) {
-          content = exp.bullets.map((b, i) => `• ${b}`).join('\n');
+          content = exp.bullets.map((b, _i) => `• ${b}`).join('\n');
           label = `Bullets: ${exp.title}`;
         }
       }

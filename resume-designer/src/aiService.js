@@ -10,7 +10,6 @@ import { trackUsage } from './tokenTrackingService.js';
 
 // OpenRouter — a single OpenAI-compatible endpoint fronting every provider.
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_KEY_ENDPOINT = 'https://openrouter.ai/api/v1/key';
 // Optional attribution headers (OpenRouter app leaderboard); harmless if unused.
 const OPENROUTER_REFERER = 'https://github.com/SiriusA7/Resume-Designer';
 const OPENROUTER_TITLE = 'Resume Designer';
@@ -582,7 +581,7 @@ Return ONLY a valid JSON object (no markdown, no explanation) in this exact form
       "company": "Company Name",
       "location": "City, State",
       "startDate": "YYYY-MM (machine-readable; YYYY ok if month unknown)",
-      "endDate": "YYYY-MM or \"Present\" (machine-readable)",
+      "endDate": "YYYY-MM or "Present" (machine-readable)",
       "dates": "Human-readable range shown on the resume, e.g. Jan 2022 - Jun 2024",
       "bullets": [
         "Achievement bullet with quantifiable results relevant to target job",
@@ -633,7 +632,7 @@ IMPORTANT:
     const resume = JSON.parse(jsonStr);
     console.log('[AI Service] Generated resume from profile:', resume);
     return resume;
-  } catch (e) {
+  } catch {
     console.error('Failed to parse AI response as JSON:', response);
     throw new Error('AI response was not valid JSON. Please try again.');
   }
@@ -1127,7 +1126,7 @@ export async function generateResumeChanges(modelId, instruction, targetPath = n
       changes: result.changes || {},
       explanation: result.explanation || 'Changes generated successfully'
     };
-  } catch (e) {
+  } catch {
     console.error('Failed to parse AI response as JSON:', response);
     throw new Error('AI response was not valid JSON. Please try again.');
   }
@@ -1186,7 +1185,7 @@ export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {})
       jsonStr = jsonMatch[1].trim();
     }
     return JSON.parse(jsonStr);
-  } catch (e) {
+  } catch {
     console.error('Failed to parse analysis response:', response);
     throw new Error('Failed to parse AI analysis. Please try again.');
   }

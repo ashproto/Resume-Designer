@@ -129,7 +129,7 @@ export function parseResumeText(text) {
       // Check for experience entry pattern
       if (currentSection === 'experience') {
         // Pattern: Title at Company | Date pattern
-        const expMatch = line.match(/^(.+?)\s*(?:at|@|-|–|,)\s*(.+?)(?:\s*[\|•]\s*|\s{2,})(.+)?$/i);
+        const expMatch = line.match(/^(.+?)\s*(?:at|@|-|–|,)\s*(.+?)(?:\s*[|•]\s*|\s{2,})(.+)?$/i);
         const dateMatch = line.match(/(\d{4}\s*[-–]\s*(?:\d{4}|present|current))|(\w+\s+\d{4}\s*[-–]\s*(?:\w+\s+\d{4}|present|current))/i);
         
         if (expMatch || (line.length < 100 && /[A-Z]/.test(line[0]) && !line.startsWith('•') && !line.startsWith('-'))) {
@@ -155,7 +155,7 @@ export function parseResumeText(text) {
           }
         } else if (currentExperience) {
           // Bullet point
-          const bulletText = line.replace(/^[•\-\*]\s*/, '').trim();
+          const bulletText = line.replace(/^[•\-*]\s*/, '').trim();
           if (bulletText.length > 0) {
             // Check if this line is company/date info
             if (!currentExperience.company && line.length < 80 && !line.startsWith('•') && !line.startsWith('-')) {
@@ -169,7 +169,7 @@ export function parseResumeText(text) {
         }
       } else {
         // Regular content
-        const bulletText = line.replace(/^[•\-\*]\s*/, '').trim();
+        const bulletText = line.replace(/^[•\-*]\s*/, '').trim();
         if (bulletText.length > 0) {
           currentContent.push(bulletText);
         }

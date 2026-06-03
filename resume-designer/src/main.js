@@ -20,7 +20,7 @@ import {
 import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
 import { initStructurePanel, setDesignSettings } from './structurePanel.js';
-import { initHeaderBar, getCurrentId, loadVariant } from './headerBar.js';
+import { initHeaderBar } from './headerBar.js';
 import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initZoomControls } from './zoomControls.js';
 import { initWindowDrag } from './tauriDrag.js';
@@ -49,8 +49,8 @@ import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
 import { initHeaderStyleService, applyHeaderStyle, getHeaderStyleSettings } from './headerStyleService.js';
 import { initSpacingService, applySpacingSettings, getSpacingSettings, saveSpacingSettings } from './spacingService.js';
-import { initAccentService, applyAccentSettings } from './accentService.js';
-import { initPhotoService, applyPhotoSettings } from './photoService.js';
+import { initAccentService } from './accentService.js';
+import { initPhotoService } from './photoService.js';
 import { 
   getUsageSummary, 
   getUsageByDate, 
@@ -456,7 +456,7 @@ async function init() {
   });
   
   // Subscribe to store changes for re-rendering
-  store.subscribe((event, payload) => {
+  store.subscribe((event, _payload) => {
     if (event === 'change' || event === 'fieldUpdated' || event === 'dataLoaded') {
       renderCurrentResume();
     }
@@ -612,7 +612,7 @@ async function initPrintMode() {
 }
 
 // Handle variant change from header bar
-function handleVariantChange(variant) {
+function handleVariantChange(_variant) {
   renderCurrentResume();
   // Update job description panel analysis for new variant
   onJobPanelVariantChange();
@@ -1296,7 +1296,7 @@ function renderUsageData() {
     } else {
       modelTbody.innerHTML = modelEntries
         .sort((a, b) => b[1].cost - a[1].cost)
-        .map(([key, data]) => `
+        .map(([_key, data]) => `
           <tr>
             <td class="usage-model-name">${data.model}</td>
             <td>${data.calls}</td>

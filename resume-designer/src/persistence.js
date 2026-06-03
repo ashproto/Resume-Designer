@@ -486,7 +486,7 @@ export async function importFullBackup(file) {
   let parsed;
   try {
     parsed = JSON.parse(text);
-  } catch (e) {
+  } catch {
     throw new Error('Selected file is not valid JSON.');
   }
   return importFullBackupFromEnvelope(parsed);

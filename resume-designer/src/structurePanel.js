@@ -4,17 +4,15 @@
  */
 
 import { store, generateId, experienceSortValue } from './store.js';
-import { 
-  FONT_PAIRINGS, 
-  POPULAR_GOOGLE_FONTS, 
+import {
+  FONT_PAIRINGS,
   SYSTEM_FONT_STACKS,
   loadFontPairing,
   loadGoogleFont,
   applyFontSettings,
   getCurrentFontSettings,
   saveFontSettings,
-  searchGoogleFonts,
-  getSystemFonts
+  searchGoogleFonts
 } from './fontService.js';
 import {
   GRADIENT_STYLES,
@@ -22,15 +20,13 @@ import {
   TEXTURE_STYLES,
   getHeaderStyleSettings,
   saveHeaderStyleSettings,
-  applyHeaderStyle,
-  getStylePreview
+  applyHeaderStyle
 } from './headerStyleService.js';
 import {
   getSpacingSettings,
   saveSpacingSettings,
   applySpacingSettings,
-  resetSpacingSettings,
-  DEFAULT_SPACING
+  resetSpacingSettings
 } from './spacingService.js';
 import {
   UNDERLINE_STYLES,
@@ -39,8 +35,7 @@ import {
   getAccentSettings,
   saveAccentSettings,
   applyAccentSettings,
-  resetAccentSettings,
-  DEFAULT_ACCENT
+  resetAccentSettings
 } from './accentService.js';
 import {
   PHOTO_PLACEMENTS,
@@ -68,7 +63,6 @@ let currentFontSettings = getCurrentFontSettings();
 let fontSubTab = 'presets'; // 'presets', 'google', 'system'
 let googleFontSearch = '';
 let googleFontCategory = null;
-let systemFontsList = null;
 
 // Header style settings
 let currentHeaderStyle = getHeaderStyleSettings();
@@ -2096,7 +2090,7 @@ function setupDragAndDrop(panel) {
     e.dataTransfer.setData('text/plain', '');
   });
   
-  panel.addEventListener('dragend', (e) => {
+  panel.addEventListener('dragend', (_e) => {
     if (draggedItem) {
       draggedItem.classList.remove('dragging');
       draggedItem = null;

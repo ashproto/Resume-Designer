@@ -3,20 +3,19 @@
  * AI chat interface with message history and actions
  */
 
-import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, modelSupportsReasoning, getCustomModels, removeCustomModel, fetchModelCatalog, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
+import { chat, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, modelSupportsReasoning, getCustomModels, removeCustomModel, fetchModelCatalog, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { store } from './store.js';
 import { registerPortalMenu, isInPortal, purgePortal } from './menuPortal.js';
-import { createChangeSet, diffResumeData } from './diffEngine.js';
+import { createChangeSet } from './diffEngine.js';
 import { showDiffView, initDiffView } from './diffView.js';
-import { showInlineChanges, hideInlineChanges, initInlineChanges } from './inlineChanges.js';
+import { showInlineChanges, initInlineChanges } from './inlineChanges.js';
 import { escapeHtml, escapeAttr } from './htmlEscape.js';
 import { formatMessage } from './markdownMessage.js';
 
 let messagesContainer;
 let inputEl;
 let sendBtn;
-let modelSelect;
 let contextChipsContainer;
 let messages = [];
 let isLoading = false;
@@ -90,7 +89,6 @@ export function initChatPanel(onApply) {
   messagesContainer = document.getElementById('chat-messages');
   inputEl = document.getElementById('chat-input');
   sendBtn = document.getElementById('chat-send-btn');
-  modelSelect = document.getElementById('ai-model-select');
   contextChipsContainer = document.getElementById('context-chips');
   onApplyCallback = onApply;
   
@@ -174,7 +172,7 @@ function handleResizeMove(e) {
 }
 
 // Handle resize mouse up
-function handleResizeEnd(e) {
+function handleResizeEnd(_e) {
   if (!isResizing) return;
   
   isResizing = false;
@@ -458,8 +456,7 @@ function setupPanelToggle() {
 // Toggle panel open/closed
 function togglePanel(open) {
   const panel = document.getElementById('chat-panel');
-  const toggleBtn = document.getElementById('toggle-chat-panel');
-  
+
   if (!panel) return;
   
   isPanelOpen = open ?? !isPanelOpen;
@@ -532,13 +529,14 @@ function getContextLabel(content, type, path) {
       return 'Bullet Point';
       
     case 'text':
-    default:
+    default: {
       // Truncate long text for label
       const text = content.trim();
       if (text.length > 40) {
         return text.substring(0, 40) + '...';
       }
       return text;
+    }
   }
 }
 
@@ -1519,15 +1517,6 @@ function isChangeRequest(message) {
   return changeKeywords.some(keyword => lowerMessage.includes(keyword));
 }
 
-// Get the target path from context chips if available
-function getTargetPathFromContext() {
-  if (contextChips.length === 0) return null;
-  
-  // If there's a specific context selected, return its path
-  const firstChip = contextChips[0];
-  return firstChip.path || null;
-}
-
 // Request AI to generate changes and show diff view
 async function requestAIChanges(instruction, targetPath = null) {
   const modelId = currentModel;
@@ -1679,7 +1668,7 @@ function addThinkingStep(step, isComplete = false) {
 }
 
 // Update the last thinking step
-function updateThinkingStep(text, isComplete = false) {
+function _updateThinkingStep(text, isComplete = false) {
   if (thinkingSteps.length === 0) {
     addThinkingStep(text, isComplete);
     return;
@@ -2078,16 +2067,6 @@ function deleteThread(threadId) {
   
   saveThreads();
   renderThreadSelector();
-}
-
-// Rename a thread
-function renameThread(threadId, newName) {
-  const thread = threads.find(t => t.id === threadId);
-  if (thread) {
-    thread.name = newName;
-    saveThreads();
-    renderThreadSelector();
-  }
 }
 
 // Get thread name from first message or default

@@ -17,7 +17,7 @@ import {
   importJobDescriptions
 } from './jobDescriptions.js';
 
-import { analyzeAgainstJobs, tailorForJob, generateResumeChanges } from './aiService.js';
+import { analyzeAgainstJobs, generateResumeChanges } from './aiService.js';
 import { getConfiguredProviders, getAllModels, isConfigured, validateModelId } from './aiService.js';
 import { getSettings, saveVariantAnalysis, getVariantAnalysis } from './persistence.js';
 import { createChangeSet } from './diffEngine.js';
