@@ -76,7 +76,7 @@ Your key is stored locally on your device and is sent only to OpenRouter to make
 ## Privacy & data
 
 - **Local-first:** résumés, profile, and settings live in your browser/app local storage on your device.
-- **No account, no backend, no analytics.** Network use is limited to: the AI requests you make to OpenRouter, the desktop app's update check (GitHub Releases), and **web fonts** — the default typography preset loads fonts from Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`). Pick a system-font pairing in Settings to keep the app fully offline.
+- **No account, no backend, no analytics.** Network use is limited to three things: the AI requests you make to OpenRouter; the desktop app's automatic update check on launch (GitHub Releases); and **web fonts** — the default typography preset pulls fonts from Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`), which you can avoid by choosing a system-font pairing in Settings. (The desktop update check runs regardless; the browser build makes neither call.)
 - Export a full **JSON backup** any time, and import it on another machine.
 
 ## Run from source
