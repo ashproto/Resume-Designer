@@ -12,7 +12,10 @@
     "tauri:build": "tauri build",
     "tauri:build:mac:arm64": "tauri build --target aarch64-apple-darwin",
     "tauri:build:mac:x64": "tauri build --target x86_64-apple-darwin",
-    "tauri:build:win": "tauri build --target x86_64-pc-windows-msvc"
+    "tauri:build:win": "tauri build --target x86_64-pc-windows-msvc",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -32,6 +35,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "vite": "^5.0.0"
+    "jsdom": "^29.1.1",
+    "vite": "^5.0.0",
+    "vitest": "^4.1.8"
   }
 }
