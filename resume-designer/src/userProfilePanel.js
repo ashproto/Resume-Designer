@@ -538,11 +538,19 @@ function parseProjects(content) {
       const line = lines[i].trim();
       if (line.startsWith('**URL:**')) {
         url = line.replace('**URL:**', '').trim();
-        // Remove example placeholder URLs (compare host, not substring)
+        // The generated template uses "https://example.com (optional)", so take
+        // the first token (drops any trailing annotation) and discard example.com
+        // placeholders by host, not substring. Protocol-less URLs (e.g.
+        // "johnsmith.com") are preserved by retrying with an https:// prefix
+        // purely to read the host.
+        const candidate = url.split(/\s+/)[0] || '';
+        let urlHost = '';
         try {
-          const host = new URL(url).hostname.toLowerCase();
-          if (host === 'example.com' || host.endsWith('.example.com')) url = '';
-        } catch { /* not a parseable URL — leave as-is */ }
+          urlHost = new URL(candidate).hostname.toLowerCase();
+        } catch {
+          try { urlHost = new URL(`https://${candidate}`).hostname.toLowerCase(); } catch { urlHost = ''; }
+        }
+        url = (urlHost === 'example.com' || urlHost.endsWith('.example.com')) ? '' : candidate;
         descStart = i + 1;
         break;
       }
