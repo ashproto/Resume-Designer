@@ -16,6 +16,7 @@ import {
   exportJobDescriptions,
   importJobDescriptions
 } from './jobDescriptions.js';
+import { escapeHtml, escapeAttr } from './htmlEscape.js';
 
 import { analyzeAgainstJobs, generateResumeChanges } from './aiService.js';
 import { getConfiguredProviders, getAllModels, isConfigured, validateModelId } from './aiService.js';
@@ -412,7 +413,7 @@ function renderRecommendationCard(rec, originalIndex) {
     <div class="jd-recommendation ${isApplied ? 'applied' : ''}" data-impact="${impact}">
       <div class="jd-rec-header">
         <div class="jd-rec-header-left">
-          <span class="jd-impact-badge ${impact}" title="${escapeHtml(impactReason)}">
+          <span class="jd-impact-badge ${impact}" title="${escapeAttr(impactReason)}">
             ${getImpactIcon(impact)}
             ${getImpactLabel(impact)}
           </span>
@@ -1719,26 +1720,4 @@ function formatDate(dateString) {
   }
 }
 
-/**
- * Escape HTML
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/**
- * Escape for attributes
- */
-function escapeAttr(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// escapeHtml / escapeAttr are imported from ./htmlEscape.js

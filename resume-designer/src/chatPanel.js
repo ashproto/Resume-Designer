@@ -245,12 +245,12 @@ function initModelDropdown() {
         <div class="custom-dropdown-group-label">Custom</div>
         ${customModels.map(slug => `
           <button class="custom-dropdown-option custom-model-option ${slug === currentModel ? 'selected' : ''}"
-                  data-value="${escapeHtml(slug)}" type="button">
+                  data-value="${escapeAttr(slug)}" type="button">
             <svg class="check-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="20 6 9 17 4 12"/>
             </svg>
             <span class="custom-model-label">${escapeHtml(getModelLabel(slug))}</span>
-            <span class="custom-model-remove" data-slug="${escapeHtml(slug)}" title="Remove from list" role="button" aria-label="Remove">&times;</span>
+            <span class="custom-model-remove" data-slug="${escapeAttr(slug)}" title="Remove from list" role="button" aria-label="Remove">&times;</span>
           </button>
         `).join('')}
       ` : '';
