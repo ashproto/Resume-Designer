@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Creative resume designer and generator.",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
