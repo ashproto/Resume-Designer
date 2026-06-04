@@ -75,7 +75,7 @@ jobs:
         env:
           VERSION: ${{ needs.release-please.outputs.version }}
         run: |
-          npm version "$VERSION" --no-git-tag-version
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
           node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
           node -e "const fs=require('fs');const p='src-tauri/Cargo.toml';let s=fs.readFileSync(p,'utf8');s=s.replace(/^version = \".*\"/m, 'version = \"'+process.env.VERSION+'\"');fs.writeFileSync(p, s);"
 
@@ -191,7 +191,7 @@ jobs:
         env:
           VERSION: ${{ needs.release-please.outputs.version }}
         run: |
-          npm version "$VERSION" --no-git-tag-version
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
           node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
           node -e "const fs=require('fs');const p='src-tauri/Cargo.toml';let s=fs.readFileSync(p,'utf8');s=s.replace(/^version = \".*\"/m, 'version = \"'+process.env.VERSION+'\"');fs.writeFileSync(p, s);"
 
