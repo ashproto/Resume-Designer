@@ -4,7 +4,6 @@
  */
 
 import {
-  loadFromStorage,
   getVariants,
   getCurrentVariantId,
   setCurrentVariantId,

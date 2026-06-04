@@ -5,8 +5,6 @@
 
 import { store, generateId, EMPTY_RESUME } from './store.js';
 import {
-  loadFromStorage,
-  saveToStorage,
   getVariants,
   getCurrentVariantId,
   setCurrentVariantId,

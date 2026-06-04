@@ -3,14 +3,13 @@
  * Guides new users through creating their first resume
  */
 
-import { store, generateId, experienceSortValue } from './store.js';
-import { getSettings, saveSettings, getVariants, saveVariant, setCurrentVariantId, initPersistence, generateUniqueVariantName, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
-import { getConfiguredProviders, isConfigured, getDefaultModelId, generateResumeChanges, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels, getCustomModels, modelSupportsReasoning, fetchModelCatalog } from './aiService.js';
-import { loadVariant } from './headerBar.js';
+import { generateId, experienceSortValue } from './store.js';
+import { getSettings, saveSettings, getVariants, saveVariant, generateUniqueVariantName, SETTINGS_UPDATED_EVENT } from './persistence.js';
+import { getConfiguredProviders, isConfigured, getDefaultModelId, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels, getCustomModels, modelSupportsReasoning, fetchModelCatalog } from './aiService.js';
 import { refreshChatPanel } from './chatPanel.js';
 import { parseResumeText } from './resumeParser.js';
 import { addJobDescription } from './jobDescriptions.js';
-import { renderHeaderBar } from './headerBar.js';
+import { loadVariant, renderHeaderBar } from './headerBar.js';
 
 const ONBOARDING_KEY = 'resume-designer-onboarding-complete';
 
@@ -23,7 +22,7 @@ async function validateOpenRouterKey(key) {
       headers: { 'Authorization': `Bearer ${key}` }
     });
     return response.status === 200;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
@@ -305,7 +304,6 @@ function renderStep() {
   const displayStep = isNewResumeMode ? currentStep : currentStep + 1;
   
   // Keep close button if present (for new resume mode)
-  const closeBtn = progress.querySelector('.wizard-close-btn');
   const closeBtnHtml = isNewResumeMode ? `
     <button class="wizard-close-btn" id="wizard-close-btn" title="Cancel">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -818,8 +816,7 @@ async function parseResumeWithAI(text) {
   }
   
   console.log('[Onboarding] Using AI to parse resume...');
-  
-  const settings = getSettings();
+
   const modelId = getDefaultModelId();
   
   try {
@@ -873,7 +870,7 @@ ${text}`
       
       const parsed = JSON.parse(jsonStr);
       return parsed;
-    } catch (parseError) {
+    } catch {
       console.warn('AI response was not valid JSON, falling back to basic parsing');
       return parseResumeText(text);
     }
@@ -1879,24 +1876,6 @@ function renderFinalStep(content, footer) {
     // Ensure the resume is rendered by triggering a custom event
     window.dispatchEvent(new CustomEvent('resume-ready'));
   });
-}
-
-/**
- * Set value at path
- */
-function setByPath(obj, path, value) {
-  const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.');
-  let current = obj;
-  
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i];
-    if (current[part] === undefined) {
-      current[part] = /^\d+$/.test(parts[i + 1]) ? [] : {};
-    }
-    current = current[part];
-  }
-  
-  current[parts[parts.length - 1]] = value;
 }
 
 /**

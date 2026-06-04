@@ -12,7 +12,10 @@
     "tauri:build": "tauri build",
     "tauri:build:mac:arm64": "tauri build --target aarch64-apple-darwin",
     "tauri:build:mac:x64": "tauri build --target x86_64-apple-darwin",
-    "tauri:build:win": "tauri build --target x86_64-pc-windows-msvc"
+    "tauri:build:win": "tauri build --target x86_64-pc-windows-msvc",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -31,7 +34,14 @@
     "pdfjs-dist": "^5.4.530"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2",
-    "vite": "^5.0.0"
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "jsdom": "^29.1.1",
+    "vite": "^5.0.0",
+    "vitest": "^4.1.8"
   }
 }

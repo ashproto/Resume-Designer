@@ -188,8 +188,7 @@ fn extract_keys(source_leveldb: &Path) -> Result<BTreeMap<String, String>, Strin
         let _ = fs::remove_file(&lock);
     }
 
-    let mut opts = Options::default();
-    opts.create_if_missing = false;
+    let opts = Options { create_if_missing: false, ..Default::default() };
 
     let mut db = DB::open(&staged, opts).map_err(|e| format!("leveldb open failed: {e}"))?;
     let mut iter = db

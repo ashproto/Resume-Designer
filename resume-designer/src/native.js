@@ -137,7 +137,6 @@ export async function getAppInfo() {
 const updateStatusListeners = [];
 const updateProgressListeners = [];
 let isCheckingForUpdates = false;
-let lastSource = 'auto';
 
 function emitStatus(payload) {
   const enriched = { timestamp: Date.now(), ...payload };
@@ -185,7 +184,6 @@ export async function checkForUpdates(source = 'manual') {
   }
 
   isCheckingForUpdates = true;
-  lastSource = source;
   emitStatus({ status: 'checking', source, message: 'Checking for updates...' });
 
   try {

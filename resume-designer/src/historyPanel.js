@@ -6,7 +6,6 @@
 import { store, CHANGE_TYPES } from './store.js';
 import { diffResumeData } from './diffEngine.js';
 import { showDiffView } from './diffView.js';
-import { createChangeSet } from './diffEngine.js';
 
 let panelContainer = null;
 let isOpen = false;

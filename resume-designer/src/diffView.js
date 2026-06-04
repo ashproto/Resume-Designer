@@ -451,8 +451,7 @@ function updateSummary() {
   if (!summary || !currentChangeSet) return;
   
   const stats = currentChangeSet.getSummary();
-  const remaining = stats.total - appliedChanges.size;
-  
+
   summary.innerHTML = `
     <span class="diff-stat diff-stat-add">+${stats.added}</span>
     <span class="diff-stat diff-stat-remove">-${stats.removed}</span>

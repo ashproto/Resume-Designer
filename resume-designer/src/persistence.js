@@ -306,7 +306,7 @@ const BACKUP_FIXED_KEYS = [
 // Undo/redo history lives at this prefix, one key per variant.
 const BACKUP_HISTORY_PREFIX = 'resume-designer-history-';
 
-function isOwnedKey(key) {
+export function isOwnedKey(key) {
   return BACKUP_FIXED_KEYS.includes(key) || key.startsWith(BACKUP_HISTORY_PREFIX);
 }
 
@@ -486,7 +486,7 @@ export async function importFullBackup(file) {
   let parsed;
   try {
     parsed = JSON.parse(text);
-  } catch (e) {
+  } catch {
     throw new Error('Selected file is not valid JSON.');
   }
   return importFullBackupFromEnvelope(parsed);

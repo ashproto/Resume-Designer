@@ -14,8 +14,7 @@ export function initZoomControls() {
   const zoomOut = document.getElementById('zoom-out');
   const zoomFit = document.getElementById('zoom-fit');
   const zoomReset = document.getElementById('zoom-reset');
-  const zoomLevel = document.getElementById('zoom-level');
-  
+
   if (!zoomIn || !zoomOut || !zoomFit || !zoomReset) return;
   
   // Load saved zoom level
@@ -102,7 +101,6 @@ function fitToView() {
   if (!scroller || !container) return;
   
   // Temporarily reset zoom to get true dimensions
-  const previousZoom = currentZoom;
   container.style.transform = 'scale(1)';
   
   // Force reflow to get accurate measurements

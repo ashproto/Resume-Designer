@@ -16,7 +16,7 @@ function splitByBulletSeparators(line) {
 }
 
 function stripLeadingBulletMarker(text) {
-  return text.replace(/^[\-*•]\s*/, '').trim();
+  return text.replace(/^[-*•]\s*/, '').trim();
 }
 
 function normalizeLineItems(line, mode) {

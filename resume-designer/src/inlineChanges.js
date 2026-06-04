@@ -4,7 +4,7 @@
  */
 
 import { store } from './store.js';
-import { DIFF_TYPES, getPathLabel } from './diffEngine.js';
+import { DIFF_TYPES } from './diffEngine.js';
 
 let currentChangeSet = null;
 let appliedChanges = new Set();
@@ -528,22 +528,3 @@ function addInlineStyles() {
   document.head.appendChild(style);
 }
 
-/**
- * Truncate text
- */
-function truncate(str, maxLength) {
-  if (!str || str.length <= maxLength) return str;
-  return str.substring(0, maxLength) + '...';
-}
-
-/**
- * Escape HTML
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}

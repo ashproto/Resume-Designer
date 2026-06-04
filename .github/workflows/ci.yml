@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so commitlint can read base..head
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: resume-designer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: resume-designer
+
+      - name: Lint (ESLint)
+        run: npm run lint
+        working-directory: resume-designer
+
+      - name: Lint commit messages (commitlint)
+        run: npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+        working-directory: resume-designer
+
+      - name: Unit tests (Vitest)
+        run: npm test
+        working-directory: resume-designer
+
+      - name: Build (Vite)
+        run: npm run build
+        working-directory: resume-designer
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: resume-designer
+
+  rust-check:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: resume-designer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: resume-designer
+
+      - name: Build frontend (so tauri-build finds ../dist)
+        run: npm run build
+        working-directory: resume-designer
+
+      - name: Install Rust toolchain (+ clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: resume-designer/src-tauri
+
+      - name: cargo check
+        run: cargo check --manifest-path resume-designer/src-tauri/Cargo.toml
+
+      - name: clippy
+        run: cargo clippy --manifest-path resume-designer/src-tauri/Cargo.toml -- -D warnings

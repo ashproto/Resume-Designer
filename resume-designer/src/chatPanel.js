@@ -3,20 +3,19 @@
  * AI chat interface with message history and actions
  */
 
-import { chat, rewriteText, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, modelSupportsReasoning, getCustomModels, removeCustomModel, fetchModelCatalog, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
+import { chat, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders, generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels, modelSupportsReasoning, getCustomModels, removeCustomModel, fetchModelCatalog, profileInterviewChat, extractProfileFromInterview, saveExtractedProfile } from './aiService.js';
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { store } from './store.js';
 import { registerPortalMenu, isInPortal, purgePortal } from './menuPortal.js';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
-import { createChangeSet, diffResumeData } from './diffEngine.js';
+import { createChangeSet } from './diffEngine.js';
 import { showDiffView, initDiffView } from './diffView.js';
-import { showInlineChanges, hideInlineChanges, initInlineChanges } from './inlineChanges.js';
+import { showInlineChanges, initInlineChanges } from './inlineChanges.js';
+import { escapeHtml, escapeAttr } from './htmlEscape.js';
+import { formatMessage } from './markdownMessage.js';
 
 let messagesContainer;
 let inputEl;
 let sendBtn;
-let modelSelect;
 let contextChipsContainer;
 let messages = [];
 let isLoading = false;
@@ -90,7 +89,6 @@ export function initChatPanel(onApply) {
   messagesContainer = document.getElementById('chat-messages');
   inputEl = document.getElementById('chat-input');
   sendBtn = document.getElementById('chat-send-btn');
-  modelSelect = document.getElementById('ai-model-select');
   contextChipsContainer = document.getElementById('context-chips');
   onApplyCallback = onApply;
   
@@ -174,7 +172,7 @@ function handleResizeMove(e) {
 }
 
 // Handle resize mouse up
-function handleResizeEnd(e) {
+function handleResizeEnd(_e) {
   if (!isResizing) return;
   
   isResizing = false;
@@ -458,8 +456,7 @@ function setupPanelToggle() {
 // Toggle panel open/closed
 function togglePanel(open) {
   const panel = document.getElementById('chat-panel');
-  const toggleBtn = document.getElementById('toggle-chat-panel');
-  
+
   if (!panel) return;
   
   isPanelOpen = open ?? !isPanelOpen;
@@ -532,13 +529,14 @@ function getContextLabel(content, type, path) {
       return 'Bullet Point';
       
     case 'text':
-    default:
+    default: {
       // Truncate long text for label
       const text = content.trim();
       if (text.length > 40) {
         return text.substring(0, 40) + '...';
       }
       return text;
+    }
   }
 }
 
@@ -1519,15 +1517,6 @@ function isChangeRequest(message) {
   return changeKeywords.some(keyword => lowerMessage.includes(keyword));
 }
 
-// Get the target path from context chips if available
-function getTargetPathFromContext() {
-  if (contextChips.length === 0) return null;
-  
-  // If there's a specific context selected, return its path
-  const firstChip = contextChips[0];
-  return firstChip.path || null;
-}
-
 // Request AI to generate changes and show diff view
 async function requestAIChanges(instruction, targetPath = null) {
   const modelId = currentModel;
@@ -1679,7 +1668,7 @@ function addThinkingStep(step, isComplete = false) {
 }
 
 // Update the last thinking step
-function updateThinkingStep(text, isComplete = false) {
+function _updateThinkingStep(text, isComplete = false) {
   if (thinkingSteps.length === 0) {
     addThinkingStep(text, isComplete);
     return;
@@ -1880,32 +1869,7 @@ function renderMessages() {
   });
 }
 
-// Configure marked for markdown rendering. marked does NOT sanitize HTML on its
-// own — formatMessage() pipes the result through DOMPurify (below) because chat
-// content is untrusted (AI model output, or text pasted from an external source).
-marked.setOptions({
-  breaks: true,      // Convert line breaks to <br>
-  gfm: true,         // Enable GitHub Flavored Markdown
-  headerIds: false,  // Don't add IDs to headers
-  mangle: false      // Don't mangle email addresses
-});
-
-// Format message content as sanitized markdown (see the DOMPurify note above).
-function formatMessage(content) {
-  if (!content) return '';
-
-  try {
-    // Render markdown, then strip unsafe HTML before it reaches the DOM. A
-    // prompt-injected/malicious model (or pasted external text) could emit
-    // `<img onerror=...>` / `<script>`; DOMPurify removes scripts, event-handler
-    // attributes, and javascript: URLs while keeping safe markdown formatting.
-    return DOMPurify.sanitize(marked.parse(content));
-  } catch (e) {
-    console.error('Markdown parsing error:', e);
-    // Fallback to basic escaping
-    return escapeHtml(content).replace(/\n/g, '<br>');
-  }
-}
+// marked config + formatMessage() now live in ./markdownMessage.js (imported at top).
 
 // Handle apply action
 function handleApply(action, value) {
@@ -2105,16 +2069,6 @@ function deleteThread(threadId) {
   renderThreadSelector();
 }
 
-// Rename a thread
-function renameThread(threadId, newName) {
-  const thread = threads.find(t => t.id === threadId);
-  if (thread) {
-    thread.name = newName;
-    saveThreads();
-    renderThreadSelector();
-  }
-}
-
 // Get thread name from first message or default
 function getThreadDisplayName(thread) {
   if (thread.name !== 'New Chat') return thread.name;
@@ -2242,22 +2196,4 @@ function renderThreadSelector() {
   }
 }
 
-// Escape HTML
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-// Escape for attributes
-function escapeAttr(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// escapeHtml / escapeAttr now live in ./htmlEscape.js (imported at top).
