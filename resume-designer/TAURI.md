@@ -29,6 +29,8 @@ First Tauri build takes 3-5 minutes (Rust compilation). Subsequent builds are ca
 3. **macOS dev**: Xcode Command Line Tools (`xcode-select --install`).
 4. **Windows dev**: Visual Studio C++ Build Tools and the Windows SDK.
 
+> **Lockfile note:** regenerate `resume-designer/package-lock.json` with **npm 10** (the npm that ships with Node 20), **not npm 11**. npm 11 records esbuild's optional platform packages without the `optional` flag, which makes CI's `npm ci` fail with `EBADPLATFORM`. If your local Node is newer, run `npx npm@10 install` from `resume-designer/`. CI pins Node 20 / npm 10.
+
 ## App Icons
 
 The repo currently ships without custom icons (default Tauri placeholders are used). To add custom icons:
