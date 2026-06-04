@@ -152,18 +152,23 @@ The `latest.json` manifest is assembled by CI from the per-platform `.sig` files
 
 ## Release Workflow
 
-[.github/workflows/release.yml](../.github/workflows/release.yml) runs on every push to `master`/`main` (and `workflow_dispatch`). It has four jobs:
+[.github/workflows/release.yml](../.github/workflows/release.yml) runs on every push to `main` (and `workflow_dispatch`), but **releases are gated by [release-please](https://github.com/googleapis/release-please)** — a merge to `main` does not publish a release on its own.
 
-1. **`prepare`** — computes the next semantic version from git history ([scripts/ci/compute-version.mjs](scripts/ci/compute-version.mjs)), generates baseline release notes via GitHub's API, and (best-effort) rewrites them with GitHub Models GPT-5-mini.
-2. **`build-macos`** — matrix-builds `aarch64-apple-darwin` and `x86_64-apple-darwin`. Each job validates that all six macOS secrets are set, then invokes `tauri-apps/tauri-action@v0` which signs, notarizes, and bundles. Artifacts (`.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`) are uploaded.
-3. **`build-windows`** — runs on `windows-latest`, produces an unsigned NSIS installer plus the updater bundle. (Code signing for Windows is currently disabled; see "Windows code signing" below.)
-4. **`release`** — downloads all artifacts, assembles `latest.json` from the `.sig` files, validates that every URL it references has a matching file, and publishes everything to a GitHub Release tagged with the computed version.
+1. **`release-please`** — on each push to `main`, maintains a **Release PR** that accumulates the version bump and `CHANGELOG.md` from Conventional Commit messages since the last release. Merging a feature PR just updates this Release PR; it does **not** cut a release.
+2. **Cut a release** by merging the Release PR. release-please then publishes a `vX.Y.Z` GitHub Release (changelog as the body), and the build jobs run (gated on release-please's `release_created` output):
+   - **`build-macos`** — matrix-builds `aarch64`/`x86_64`, signs + notarizes via `tauri-apps/tauri-action`.
+   - **`build-windows`** — unsigned NSIS installer + updater bundle.
+   - **`release`** — assembles `latest.json`, AI-polishes the changelog into user-facing notes (GitHub Models GPT-5-mini, best-effort), and attaches the installers + `latest.json` to the release.
 
-Version computation rules (from `compute-version.mjs`):
+Version bump (release-please, from Conventional Commits):
 
-- `major` when commit message contains `BREAKING CHANGE` or a `!:` marker.
-- `minor` when a commit subject starts with `feat:`.
-- `patch` otherwise.
+- `major` for a `!` marker or `BREAKING CHANGE`.
+- `minor` for a `feat:` commit.
+- `patch` for `fix:` / `deps:` (and other releasable types).
+
+To force a specific version, edit `.release-please-manifest.json` (the `Release-As:` commit footer does **not** work with plain merge commits, which this repo uses).
+
+> A freshly published release is briefly asset-less — the signed installers and `latest.json` attach ~10-15 minutes later once the build jobs finish — so an in-app update check during that window degrades gracefully.
 
 ### Windows code signing
 
