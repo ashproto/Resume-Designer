@@ -415,7 +415,7 @@ function renderRecommendationCard(rec, originalIndex) {
         <div class="jd-rec-header-left">
           <span class="jd-impact-badge ${escapeAttr(impact)}" title="${escapeAttr(impactReason)}">
             ${getImpactIcon(impact)}
-            ${getImpactLabel(impact)}
+            ${escapeHtml(getImpactLabel(impact))}
           </span>
           <span class="jd-rec-section">${escapeHtml(rec.section)}</span>
         </div>
@@ -427,7 +427,7 @@ function renderRecommendationCard(rec, originalIndex) {
             Applied
           </span>
         ` : `
-          <button class="btn btn-sm jd-apply-rec" data-index="${originalIndex}">Apply</button>
+          <button class="btn btn-sm jd-apply-rec" data-index="${escapeAttr(String(originalIndex))}">Apply</button>
         `}
       </div>
       <div class="jd-rec-content">
