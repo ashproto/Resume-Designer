@@ -3,6 +3,8 @@
  * CRUD operations for job descriptions with localStorage persistence
  */
 
+import { randomSuffix } from './store.js';
+
 const STORAGE_KEY = 'resume-designer-job-descriptions';
 
 // In-memory cache of job descriptions
@@ -59,7 +61,7 @@ export function getJobDescription(id) {
  */
 export function addJobDescription(data) {
   const jobDescription = {
-    id: `jd-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    id: `jd-${Date.now()}-${randomSuffix()}`,
     title: data.title || 'Untitled Position',
     company: data.company || 'Unknown Company',
     description: data.description || '',

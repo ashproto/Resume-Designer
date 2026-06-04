@@ -4,6 +4,7 @@
  */
 
 import { store, generateId, experienceSortValue } from './store.js';
+import { escapeHtml, escapeAttr } from './htmlEscape.js';
 import {
   FONT_PAIRINGS,
   SYSTEM_FONT_STACKS,
@@ -2927,25 +2928,7 @@ function updateSpacingDisplayValues() {
   if (sidebarValue) sidebarValue.textContent = `${currentSpacing.sidebarWidth.toFixed(1)} in`;
 }
 
-// Escape HTML for display
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-// Escape for attribute values
-function escapeAttr(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// escapeHtml / escapeAttr are imported from ./htmlEscape.js
 
 // Export for external use
 export function openPanel() {

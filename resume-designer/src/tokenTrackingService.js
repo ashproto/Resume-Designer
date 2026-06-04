@@ -3,6 +3,8 @@
  * Tracks AI API usage across all providers for cost analysis and debugging
  */
 
+import { randomSuffix } from './store.js';
+
 const STORAGE_KEY = 'resume-designer-token-usage';
 
 // Cost is taken from OpenRouter's reported `usage.cost` (see trackUsage), which
@@ -25,7 +27,7 @@ const DEFAULT_STORAGE = {
  * Generate a unique ID for events
  */
 function generateEventId() {
-  return `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `evt_${Date.now()}_${randomSuffix()}`;
 }
 
 /**

@@ -3,9 +3,18 @@
  * Handles state updates, change events, and coordinates with persistence
  */
 
+// Cryptographically-secure random suffix (replaces Math.random; getRandomValues
+// has no secure-context requirement, so it works in the Tauri custom-scheme
+// webview and the browser build alike).
+export function randomSuffix() {
+  const a = new Uint32Array(2);
+  crypto.getRandomValues(a);
+  return a[0].toString(36) + a[1].toString(36);
+}
+
 // Generate unique IDs for new items
 export function generateId(prefix = 'item') {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  return `${prefix}-${Date.now()}-${randomSuffix()}`;
 }
 
 // Comparable sort key for an experience entry: higher = more recent. Drives the

@@ -4,6 +4,7 @@
  */
 
 import { getUserProfile, saveUserProfile } from './persistence.js';
+import { escapeHtml, escapeAttr } from './htmlEscape.js';
 
 let panelContainer = null;
 let currentTab = 'contact';
@@ -537,8 +538,19 @@ function parseProjects(content) {
       const line = lines[i].trim();
       if (line.startsWith('**URL:**')) {
         url = line.replace('**URL:**', '').trim();
-        // Remove example URLs
-        if (url.includes('example.com')) url = '';
+        // The generated template uses "https://example.com (optional)", so take
+        // the first token (drops any trailing annotation) and discard example.com
+        // placeholders by host, not substring. Protocol-less URLs (e.g.
+        // "johnsmith.com") are preserved by retrying with an https:// prefix
+        // purely to read the host.
+        const candidate = url.split(/\s+/)[0] || '';
+        let urlHost = '';
+        try {
+          urlHost = new URL(candidate).hostname.toLowerCase();
+        } catch {
+          try { urlHost = new URL(`https://${candidate}`).hostname.toLowerCase(); } catch { urlHost = ''; }
+        }
+        url = (urlHost === 'example.com' || urlHost.endsWith('.example.com')) ? '' : candidate;
         descStart = i + 1;
         break;
       }
@@ -837,7 +849,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-fullname"
             placeholder="e.g. John Smith"
-            value="${escapeHtml(contact.fullName || '')}"
+            value="${escapeAttr(contact.fullName || '')}"
           >
         </div>
         
@@ -848,7 +860,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-email"
             placeholder="e.g. john@example.com"
-            value="${escapeHtml(contact.email || '')}"
+            value="${escapeAttr(contact.email || '')}"
           >
         </div>
         
@@ -859,7 +871,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-phone"
             placeholder="e.g. (555) 123-4567"
-            value="${escapeHtml(contact.phone || '')}"
+            value="${escapeAttr(contact.phone || '')}"
           >
         </div>
         
@@ -870,7 +882,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-location"
             placeholder="e.g. San Francisco, CA"
-            value="${escapeHtml(contact.location || '')}"
+            value="${escapeAttr(contact.location || '')}"
           >
         </div>
       </div>
@@ -893,7 +905,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-linkedin"
             placeholder="e.g. linkedin.com/in/johnsmith"
-            value="${escapeHtml(contact.linkedin || '')}"
+            value="${escapeAttr(contact.linkedin || '')}"
           >
         </div>
         
@@ -907,7 +919,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-portfolio"
             placeholder="e.g. johnsmith.com"
-            value="${escapeHtml(contact.portfolio || '')}"
+            value="${escapeAttr(contact.portfolio || '')}"
           >
         </div>
         
@@ -921,7 +933,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-github"
             placeholder="e.g. github.com/johnsmith"
-            value="${escapeHtml(contact.github || '')}"
+            value="${escapeAttr(contact.github || '')}"
           >
         </div>
         
@@ -935,7 +947,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-twitter"
             placeholder="e.g. twitter.com/johnsmith"
-            value="${escapeHtml(contact.twitter || '')}"
+            value="${escapeAttr(contact.twitter || '')}"
           >
         </div>
         
@@ -949,7 +961,7 @@ function renderContactTab(container) {
             class="profile-input" 
             id="profile-instagram"
             placeholder="e.g. instagram.com/johnsmith"
-            value="${escapeHtml(contact.instagram || '')}"
+            value="${escapeAttr(contact.instagram || '')}"
           >
         </div>
       </div>
@@ -1777,26 +1789,4 @@ function setupTextareaListeners(container, fieldMap) {
   }
 }
 
-/**
- * Escape HTML
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/**
- * Escape for attributes
- */
-function escapeAttr(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// escapeHtml / escapeAttr are imported from ./htmlEscape.js

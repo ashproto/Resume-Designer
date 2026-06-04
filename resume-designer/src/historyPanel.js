@@ -4,6 +4,7 @@
  */
 
 import { store, CHANGE_TYPES } from './store.js';
+import { escapeHtml } from './htmlEscape.js';
 import { diffResumeData } from './diffEngine.js';
 import { showDiffView } from './diffView.js';
 
@@ -345,13 +346,4 @@ function formatTime(timestamp) {
   });
 }
 
-/**
- * Escape HTML
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// escapeHtml is imported from ./htmlEscape.js
