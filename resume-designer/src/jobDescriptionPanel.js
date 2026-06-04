@@ -315,9 +315,9 @@ function renderJobDescriptionCard(jd) {
   const isCollapsed = collapsedCards.has(jd.id);
     
   return `
-    <div class="jd-card ${jd.isActive ? 'active' : ''} ${isCollapsed ? 'collapsed' : ''}" data-id="${jd.id}">
+    <div class="jd-card ${jd.isActive ? 'active' : ''} ${isCollapsed ? 'collapsed' : ''}" data-id="${escapeAttr(jd.id)}">
       <div class="jd-card-header">
-        <button class="jd-card-expand ${isCollapsed ? '' : 'expanded'}" data-id="${jd.id}" title="${isCollapsed ? 'Expand' : 'Collapse'}">
+        <button class="jd-card-expand ${isCollapsed ? '' : 'expanded'}" data-id="${escapeAttr(jd.id)}" title="${isCollapsed ? 'Expand' : 'Collapse'}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9"/>
           </svg>
@@ -327,20 +327,20 @@ function renderJobDescriptionCard(jd) {
           <span class="jd-card-company">${escapeHtml(jd.company)}</span>
         </div>
         <div class="jd-card-actions">
-          <button class="jd-card-toggle ${jd.isActive ? 'active' : ''}" data-id="${jd.id}" title="${jd.isActive ? 'Deactivate' : 'Activate'}">
+          <button class="jd-card-toggle ${jd.isActive ? 'active' : ''}" data-id="${escapeAttr(jd.id)}" title="${jd.isActive ? 'Deactivate' : 'Activate'}">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               ${jd.isActive 
                 ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
                 : '<circle cx="12" cy="12" r="10"/>'}
             </svg>
           </button>
-          <button class="jd-card-edit" data-id="${jd.id}" title="Edit">
+          <button class="jd-card-edit" data-id="${escapeAttr(jd.id)}" title="Edit">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           </button>
-          <button class="jd-card-delete" data-id="${jd.id}" title="Delete">
+          <button class="jd-card-delete" data-id="${escapeAttr(jd.id)}" title="Delete">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -350,7 +350,7 @@ function renderJobDescriptionCard(jd) {
       </div>
       <p class="jd-card-preview">${escapeHtml(preview)}</p>
       <div class="jd-card-footer">
-        <span class="jd-card-date">Added ${formatDate(jd.dateAdded)}</span>
+        <span class="jd-card-date">Added ${escapeHtml(formatDate(jd.dateAdded))}</span>
       </div>
     </div>
   `;
@@ -1491,7 +1491,7 @@ function renderJobSelectionModalContent(jobDescriptions) {
             <label for="jd-model-select">Model</label>
             <select id="jd-model-select" class="jd-model-select">
               ${availableModels.map(m => `
-                <option value="${m.id}" ${m.id === defaultModel ? 'selected' : ''}>
+                <option value="${escapeAttr(m.id)}" ${m.id === defaultModel ? 'selected' : ''}>
                   ${escapeHtml(m.label)}
                 </option>
               `).join('')}
@@ -1545,8 +1545,8 @@ function renderJobSelectionItem(jd) {
     : jd.description;
     
   return `
-    <label class="jd-select-item ${isSelected ? 'selected' : ''}" data-id="${jd.id}">
-      <input type="checkbox" class="jd-select-checkbox" data-id="${jd.id}" ${isSelected ? 'checked' : ''}>
+    <label class="jd-select-item ${isSelected ? 'selected' : ''}" data-id="${escapeAttr(jd.id)}">
+      <input type="checkbox" class="jd-select-checkbox" data-id="${escapeAttr(jd.id)}" ${isSelected ? 'checked' : ''}>
       <div class="jd-select-item-content">
         <div class="jd-select-item-header">
           <span class="jd-select-item-title">${escapeHtml(jd.title)}</span>

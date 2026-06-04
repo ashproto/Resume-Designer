@@ -499,8 +499,8 @@ function renderDesignTab() {
       <div class="design-custom-header">
         <span class="design-custom-label">Custom Color</span>
         <label class="design-color-picker">
-          <input type="color" id="design-custom-color" value="${customColor}" data-action="custom-color-input">
-          <span class="design-color-swatch" style="background-color: ${customColor};"></span>
+          <input type="color" id="design-custom-color" value="${escapeAttr(customColor)}" data-action="custom-color-input">
+          <span class="design-color-swatch" style="background-color: ${escapeAttr(customColor)};"></span>
         </label>
       </div>
       <button class="design-palette-btn custom ${currentPalette === 'custom' ? 'active' : ''}" 
@@ -1001,7 +1001,7 @@ function renderImageUpload() {
     <div class="header-image-upload">
       ${hasImage ? `
         <div class="header-image-preview">
-          <img src="${currentHeaderStyle.customImage}" alt="Header background">
+          <img src="${escapeAttr(currentHeaderStyle.customImage)}" alt="Header background">
           <button class="header-image-remove" data-action="remove-header-image" title="Remove image">×</button>
         </div>
         

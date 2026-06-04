@@ -1162,7 +1162,7 @@ function renderJobInputStep(content, footer) {
             <label for="job-model-select">Model</label>
             <select id="job-model-select" class="job-model-select">
               ${availableModels.map(m => `
-                <option value="${m.id}" ${m.id === defaultModel ? 'selected' : ''}>
+                <option value="${escapeAttr(m.id)}" ${m.id === defaultModel ? 'selected' : ''}>
                   ${escapeHtml(m.label)}
                 </option>
               `).join('')}
