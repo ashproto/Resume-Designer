@@ -507,7 +507,7 @@ function renderDesignTab() {
               data-action="set-palette" 
               data-palette="custom" 
               title="Custom color">
-        <span class="design-palette-preview" id="design-custom-preview" style="--p1: ${customColor}; --p2: ${generateDarkColor(customColor)}; --p3: ${generateLightColor(customColor)};"></span>
+        <span class="design-palette-preview" id="design-custom-preview" style="--p1: ${escapeAttr(customColor)}; --p2: ${escapeAttr(generateDarkColor(customColor))}; --p3: ${escapeAttr(generateLightColor(customColor))};"></span>
       </button>
     </div>
   `;
