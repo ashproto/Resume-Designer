@@ -410,10 +410,10 @@ function renderRecommendationCard(rec, originalIndex) {
   const impactReason = rec.impactReason || '';
   
   return `
-    <div class="jd-recommendation ${isApplied ? 'applied' : ''}" data-impact="${impact}">
+    <div class="jd-recommendation ${isApplied ? 'applied' : ''}" data-impact="${escapeAttr(impact)}">
       <div class="jd-rec-header">
         <div class="jd-rec-header-left">
-          <span class="jd-impact-badge ${impact}" title="${escapeAttr(impactReason)}">
+          <span class="jd-impact-badge ${escapeAttr(impact)}" title="${escapeAttr(impactReason)}">
             ${getImpactIcon(impact)}
             ${getImpactLabel(impact)}
           </span>

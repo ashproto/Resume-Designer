@@ -740,7 +740,7 @@ function renderGoogleFonts() {
         <input type="text" 
                class="form-input" 
                placeholder="Search fonts..." 
-               value="${googleFontSearch}"
+               value="${escapeAttr(googleFontSearch)}"
                data-action="font-search-input">
       </div>
       
@@ -760,11 +760,11 @@ function renderGoogleFonts() {
       <div class="font-current-selection">
         <div class="font-selection-row">
           <label>Display Font:</label>
-          <span class="font-selection-value">${currentDisplay || 'Not set'}</span>
+          <span class="font-selection-value">${escapeHtml(currentDisplay || 'Not set')}</span>
         </div>
         <div class="font-selection-row">
           <label>Body Font:</label>
-          <span class="font-selection-value">${currentBody || 'Not set'}</span>
+          <span class="font-selection-value">${escapeHtml(currentBody || 'Not set')}</span>
         </div>
       </div>
       
@@ -772,19 +772,19 @@ function renderGoogleFonts() {
       <div class="font-list">
         ${fonts.map(font => `
           <div class="font-list-item">
-            <span class="font-list-name" style="font-family: '${font.family}', ${font.category};">${font.family}</span>
-            <span class="font-list-category">${font.category}</span>
+            <span class="font-list-name" style="font-family: '${escapeAttr(font.family)}', ${escapeAttr(font.category)};">${escapeHtml(font.family)}</span>
+            <span class="font-list-category">${escapeHtml(font.category)}</span>
             <div class="font-list-actions">
               <button class="font-select-btn ${currentDisplay === font.family ? 'active' : ''}" 
                       data-action="select-google-font" 
-                      data-font-family="${font.family}"
-                      data-font-category="${font.category}"
+                      data-font-family="${escapeAttr(font.family)}"
+                      data-font-category="${escapeAttr(font.category)}"
                       data-font-type="display"
                       title="Use as display font">H</button>
               <button class="font-select-btn ${currentBody === font.family ? 'active' : ''}" 
                       data-action="select-google-font" 
-                      data-font-family="${font.family}"
-                      data-font-category="${font.category}"
+                      data-font-family="${escapeAttr(font.family)}"
+                      data-font-category="${escapeAttr(font.category)}"
                       data-font-type="body"
                       title="Use as body font">B</button>
             </div>
@@ -807,11 +807,11 @@ function renderSystemFonts() {
       <div class="font-current-selection">
         <div class="font-selection-row">
           <label>Display Font:</label>
-          <span class="font-selection-value">${currentDisplay ? SYSTEM_FONT_STACKS[currentDisplay]?.name || currentDisplay : 'Not set'}</span>
+          <span class="font-selection-value">${escapeHtml(currentDisplay ? SYSTEM_FONT_STACKS[currentDisplay]?.name || currentDisplay : 'Not set')}</span>
         </div>
         <div class="font-selection-row">
           <label>Body Font:</label>
-          <span class="font-selection-value">${currentBody ? SYSTEM_FONT_STACKS[currentBody]?.name || currentBody : 'Not set'}</span>
+          <span class="font-selection-value">${escapeHtml(currentBody ? SYSTEM_FONT_STACKS[currentBody]?.name || currentBody : 'Not set')}</span>
         </div>
       </div>
       
@@ -820,7 +820,7 @@ function renderSystemFonts() {
         ${systemFonts.map(([id, font]) => `
           <div class="font-list-item">
             <span class="font-list-name" style="font-family: ${font.family};">${font.name}</span>
-            <span class="font-list-category">${font.category}</span>
+            <span class="font-list-category">${escapeHtml(font.category)}</span>
             <div class="font-list-actions">
               <button class="font-select-btn ${currentDisplay === id ? 'active' : ''}" 
                       data-action="select-system-font" 
