@@ -4,6 +4,7 @@
  */
 
 import { generateId, experienceSortValue } from './store.js';
+import { escapeHtml, escapeAttr } from './htmlEscape.js';
 import { getSettings, saveSettings, getVariants, saveVariant, generateUniqueVariantName, SETTINGS_UPDATED_EVENT } from './persistence.js';
 import { getConfiguredProviders, isConfigured, getDefaultModelId, chat, generateResumeFromProfileForJob, checkProfileHasData, getAllModels, getCustomModels, modelSupportsReasoning, fetchModelCatalog } from './aiService.js';
 import { refreshChatPanel } from './chatPanel.js';
@@ -382,7 +383,7 @@ function renderApiKeyStep(content, footer) {
             <span class="provider-hint">One key for Claude, GPT, Gemini &amp; 300+ models</span>
           </label>
           <div class="api-input-wrapper">
-            <input type="password" id="api-openrouter" placeholder="sk-or-v1-..." value="${settings.openrouterKey || ''}">
+            <input type="password" id="api-openrouter" placeholder="sk-or-v1-..." value="${escapeAttr(settings.openrouterKey || '')}">
             <span class="api-input-status" id="openrouter-status"></span>
           </div>
           <span class="provider-hint">Get a key at openrouter.ai/keys</span>
@@ -603,7 +604,7 @@ function renderImportStep(content, footer) {
           class="import-textarea" 
           placeholder="Paste your resume text here..."
           rows="15"
-        >${wizardData.importText}</textarea>
+        >${escapeHtml(wizardData.importText)}</textarea>
       </div>
       
       <div class="import-area hidden" id="import-file-area">
@@ -907,14 +908,14 @@ function renderInterviewStep(content, footer) {
           class="interview-textarea" 
           placeholder="Type your answer..."
           rows="6"
-        >${interviewAnswers[question.id] || ''}</textarea>
+        >${escapeHtml(interviewAnswers[question.id] || '')}</textarea>
       ` : `
         <input 
           type="text" 
           id="interview-input" 
           class="interview-input" 
           placeholder="Type your answer..."
-          value="${interviewAnswers[question.id] || ''}"
+          value="${escapeAttr(interviewAnswers[question.id] || '')}"
         >
       `}
       
@@ -1123,7 +1124,7 @@ function renderJobInputStep(content, footer) {
               id="job-title-input" 
               class="job-input" 
               placeholder="e.g. Senior Software Engineer"
-              value="${escapeHtml(existingJob.title || '')}"
+              value="${escapeAttr(existingJob.title || '')}"
             >
           </div>
           <div class="input-group">
@@ -1133,7 +1134,7 @@ function renderJobInputStep(content, footer) {
               id="job-company-input" 
               class="job-input" 
               placeholder="e.g. Google"
-              value="${escapeHtml(existingJob.company || '')}"
+              value="${escapeAttr(existingJob.company || '')}"
             >
           </div>
         </div>
@@ -1878,13 +1879,4 @@ function renderFinalStep(content, footer) {
   });
 }
 
-/**
- * Escape HTML
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// escapeHtml / escapeAttr are imported from ./htmlEscape.js
