@@ -3,172 +3,40 @@ name: Release Desktop App
 on:
   push:
     branches:
-      - master
       - main
   workflow_dispatch:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: release-main
   cancel-in-progress: false
 
 jobs:
-  prepare:
+  release-please:
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-      models: read
-    runs-on: ubuntu-latest
+      pull-requests: write
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
-      previous_tag: ${{ steps.version.outputs.previous_tag }}
-      notes_provider: ${{ steps.final_notes.outputs.provider }}
+      release_created: ${{ steps.rp.outputs.releases_created }}
+      tag_name: ${{ steps.rp.outputs['resume-designer--tag_name'] }}
+      version: ${{ steps.rp.outputs['resume-designer--version'] }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Run release-please
+        id: rp
+        uses: googleapis/release-please-action@v4
         with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Compute release version
-        id: version
-        run: node resume-designer/scripts/ci/compute-version.mjs >> "$GITHUB_OUTPUT"
-
-      - name: Generate baseline GitHub release notes
-        uses: actions/github-script@v7
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
-        with:
-          script: |
-            const fs = require('node:fs');
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const tag = process.env.RELEASE_TAG;
-            const previousTag = process.env.PREVIOUS_TAG;
-            const params = {
-              owner,
-              repo,
-              tag_name: tag,
-              target_commitish: context.sha
-            };
-
-            if (previousTag) {
-              params.previous_tag_name = previousTag;
-            }
-
-            const { data } = await github.rest.repos.generateReleaseNotes(params);
-            const header = `# Resume Designer ${process.env.RELEASE_VERSION}\n\n`;
-            fs.writeFileSync('release-notes-baseline.md', `${header}${(data.body || '').trim()}\n`);
-
-      - name: Build AI prompt
-        run: |
-          {
-            echo "Rewrite the following GitHub-generated release notes for end users of the Resume Designer desktop app."
-            echo
-            echo "Requirements:"
-            echo "- Keep Markdown formatting."
-            echo "- Be concise and user-facing."
-            echo "- Keep sections in this order when relevant: Highlights, Improvements, Fixes."
-            echo "- Do not include internal engineering details, branch names, or token/CI references."
-            echo "- Preserve technical accuracy. If baseline notes are already clear, keep close wording."
-            echo
-            echo "Release version: ${{ steps.version.outputs.version }}"
-            echo "Release tag: ${{ steps.version.outputs.tag }}"
-            echo
-            echo "Baseline notes start below:"
-            echo
-            cat release-notes-baseline.md
-          } > release-notes-ai-prompt.txt
-
-      - name: Rewrite notes with GitHub Models (optional)
-        id: ai_notes
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          node - <<'EOF'
-          const fs = require('node:fs');
-
-          async function main() {
-            const prompt = fs.readFileSync('release-notes-ai-prompt.txt', 'utf8');
-            const token = process.env.GITHUB_TOKEN;
-            if (!token) {
-              throw new Error('Missing GITHUB_TOKEN for GitHub Models request');
-            }
-
-            const response = await fetch('https://models.github.ai/inference/chat/completions', {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                model: 'openai/gpt-5-mini',
-                messages: [
-                  {
-                    role: 'system',
-                    content: 'Rewrite release notes to be concise, user-facing, and accurate.'
-                  },
-                  { role: 'user', content: prompt }
-                ]
-              })
-            });
-
-            const data = await response.json();
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status} ${JSON.stringify(data)}`);
-            }
-
-            const content = data?.choices?.[0]?.message?.content;
-            const text = typeof content === 'string' ? content.trim() : '';
-            if (!text) {
-              throw new Error('No release-note content returned by GitHub Models');
-            }
-
-            fs.writeFileSync('release-notes-ai.md', `${text}\n`, 'utf8');
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'response_file=release-notes-ai.md\n');
-          }
-
-          main().catch((error) => {
-            console.error(error.message);
-            process.exit(1);
-          });
-          EOF
-
-      - name: Select final release notes
-        id: final_notes
-        env:
-          AI_RESPONSE_FILE: ${{ steps.ai_notes.outputs.response_file }}
-        run: |
-          if [ -n "$AI_RESPONSE_FILE" ] && [ -s "$AI_RESPONSE_FILE" ]; then
-            cp "$AI_RESPONSE_FILE" release-notes.md
-            echo "provider=github-models" >> "$GITHUB_OUTPUT"
-          else
-            cp release-notes-baseline.md release-notes.md
-            echo "provider=github" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload release notes artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-notes
-          path: |
-            release-notes.md
-            release-notes-baseline.md
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   build-macos:
     permissions:
       contents: read
     runs-on: macos-latest
-    needs: prepare
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -205,7 +73,7 @@ jobs:
       - name: Apply CI release version
         working-directory: resume-designer
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.release-please.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version
           node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
@@ -292,7 +160,8 @@ jobs:
     permissions:
       contents: read
     runs-on: windows-latest
-    needs: prepare
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -320,7 +189,7 @@ jobs:
         working-directory: resume-designer
         shell: bash
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.release-please.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version
           node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
@@ -367,16 +236,11 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     needs:
-      - prepare
+      - release-please
       - build-macos
       - build-windows
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     steps:
-      - name: Download release notes
-        uses: actions/download-artifact@v4
-        with:
-          name: release-notes
-          path: .
-
       - name: Download macOS arm64 artifacts
         uses: actions/download-artifact@v4
         with:
@@ -397,8 +261,8 @@ jobs:
 
       - name: Flatten assets and assemble latest.json
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
           REPO_FULL: ${{ github.repository }}
         run: |
           node - <<'EOF'
@@ -481,10 +345,40 @@ jobs:
           console.log('Assembled latest.json with platforms:', Object.keys(manifest.platforms).join(', '));
           EOF
 
+      - name: Compose release notes (AI-polished, best-effort)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          gh release view "$TAG" --json body -q .body > release-notes.md || : > release-notes.md
+          node - <<'EOF'
+          const fs = require('node:fs');
+          async function main() {
+            const baseline = fs.readFileSync('release-notes.md', 'utf8');
+            if (!baseline.trim()) return;
+            const token = process.env.GH_TOKEN;
+            const prompt = `Rewrite the following GitHub release notes for end users of the Resume Designer desktop app.\n\nRequirements:\n- Keep Markdown formatting.\n- Be concise and user-facing.\n- Keep sections in this order when relevant: Highlights, Improvements, Fixes.\n- Do not include internal engineering details, branch names, or CI references.\n- Preserve technical accuracy.\n\nNotes start below:\n\n${baseline}`;
+            const response = await fetch('https://models.github.ai/inference/chat/completions', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: 'openai/gpt-5-mini', messages: [
+                { role: 'system', content: 'Rewrite release notes to be concise, user-facing, and accurate.' },
+                { role: 'user', content: prompt }
+              ] })
+            });
+            if (!response.ok) { console.error(`models error ${response.status}`); return; }
+            const data = await response.json();
+            const text = data?.choices?.[0]?.message?.content;
+            if (typeof text === 'string' && text.trim()) fs.writeFileSync('release-notes.md', `${text.trim()}\n`);
+          }
+          main().catch((e) => console.error(e.message));
+          EOF
+        continue-on-error: true
+
       - name: Remove existing release assets for tag
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         with:
           script: |
             const owner = context.repo.owner;
@@ -517,9 +411,9 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
           target_commitish: ${{ github.sha }}
-          name: Resume Designer ${{ needs.prepare.outputs.version }}
+          name: Resume Designer ${{ needs.release-please.outputs.version }}
           body_path: release-notes.md
           files: |
             release-flat/*.dmg
