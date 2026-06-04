@@ -468,7 +468,7 @@ function renderAnalysisResults() {
     <div class="jd-results">
       <div class="jd-score">
         <div class="jd-score-circle">
-          <span class="jd-score-value">${escapeHtml(analysisResults.matchScore)}</span>
+          <span class="jd-score-value">${escapeHtml(String(analysisResults.matchScore))}</span>
           <span class="jd-score-label">Match</span>
         </div>
       </div>
