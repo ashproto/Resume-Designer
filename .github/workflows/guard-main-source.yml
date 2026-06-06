@@ -1,0 +1,37 @@
+name: guard-main-source
+
+# Enforces that `main` only advances via promotions from `next` (so every stable
+# release is a promotion of tested beta code). Infra/bootstrap PRs labeled
+# `skip-build` are exempt — they don't cut a release, so they may target main
+# directly. Make this a required status check on `main` AFTER it has run once.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  only-next-into-main:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject non-next, non-skip-build PRs into main
+        env:
+          # GITHUB_HEAD_REF is the runner's built-in PR head-branch var (safe);
+          # LABELS is the comma-joined label set, matched literally below.
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          echo "Head branch: ${GITHUB_HEAD_REF}"
+          if [ "${GITHUB_HEAD_REF}" = "next" ]; then
+            echo "OK: promotion from next."
+            exit 0
+          fi
+          case ",${LABELS}," in
+            *",skip-build,"*)
+              echo "OK: skip-build infra PR may target main directly."
+              exit 0
+              ;;
+          esac
+          echo "::error::PRs into main may only come from 'next' (or be labeled 'skip-build'). Got '${GITHUB_HEAD_REF}'."
+          exit 1
