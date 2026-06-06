@@ -27,11 +27,10 @@ import {
   isTauri,
   checkForUpdates,
   onUpdateStatus,
-  getUpdateChannel,
-  setUpdateChannel,
   probeLegacyElectronData,
   importLegacyElectronData,
 } from './native.js';
+import { openSettings } from './settingsModal.js';
 
 let currentVariantId = null;
 let onVariantChangeCallback = null;
@@ -801,52 +800,6 @@ export function renderHeaderBar() {
               </svg>
               Version History
             </button>
-            <button class="header-tools-option" id="btn-export-full-backup" title="Save all resumes, settings, job descriptions, and history to a single JSON file">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              Export Full Backup
-            </button>
-            <label class="header-tools-option" id="btn-import-full-backup" title="Restore from a backup JSON (replaces current data)">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-              Import Backup…
-              <input type="file" id="header-import-backup-file" accept="application/json,.json" hidden>
-            </label>
-            ${isTauri ? `
-            <button class="header-tools-option" id="btn-import-legacy-electron" title="Bring in resumes and settings from the old Electron version of the app">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 12a9 9 0 1 0 9-9"/>
-                <polyline points="3 4 3 12 11 12"/>
-              </svg>
-              Import from previous Electron version…
-            </button>
-            ` : ''}
-            ${isElectron ? `
-            <button class="header-tools-option" id="btn-update-channel" title="Choose which release channel this app updates from. Beta installs pre-release builds from the next branch.">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="6" y1="3" x2="6" y2="15"/>
-                <circle cx="18" cy="6" r="3"/>
-                <circle cx="6" cy="18" r="3"/>
-                <path d="M18 9a9 9 0 0 1-9 9"/>
-              </svg>
-              Update channel: <span id="update-channel-label">${getUpdateChannel() === 'beta' ? 'Beta' : 'Stable'}</span>
-            </button>
-            <button class="header-tools-option" id="btn-check-updates">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 2v6h-6"/>
-                <path d="M3 12a9 9 0 0 1 15-6l3 2"/>
-                <path d="M3 22v-6h6"/>
-                <path d="M21 12a9 9 0 0 1-15 6l-3-2"/>
-              </svg>
-              Check for Updates
-            </button>
-            ` : ''}
           </div>
         </div>
         
@@ -879,6 +832,13 @@ export function renderHeaderBar() {
         </div>
       </div>
       
+      <button class="header-action-btn" id="btn-open-settings" title="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+
       <div class="theme-toggle-dropdown" id="theme-toggle-dropdown">
         <button class="header-action-btn theme-toggle-btn" id="theme-toggle-btn" title="Toggle theme">
           <svg class="theme-icon theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1002,17 +962,6 @@ export function renderHeaderBar() {
           </svg>
           Version History
         </button>
-        ${isElectron ? `
-        <button class="mobile-menu-option" id="mobile-check-updates">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 2v6h-6"/>
-            <path d="M3 12a9 9 0 0 1 15-6l3 2"/>
-            <path d="M3 22v-6h6"/>
-            <path d="M21 12a9 9 0 0 1-15 6l-3-2"/>
-          </svg>
-          Check for Updates
-        </button>
-        ` : ''}
       </div>
       <div class="mobile-menu-section">
         <div class="mobile-menu-section-title">File</div>
@@ -1183,39 +1132,29 @@ function setupHeaderEventListeners() {
       }
     }
 
-    // Import from previous Electron version — opt-in path for users
-    // whose auto-migration didn't run (or didn't merge the way they
-    // wanted). Opens a probe+confirm flow with Merge/Replace choice.
-    if (target.id === 'btn-import-legacy-electron') {
-      document.getElementById('header-tools-menu')?.classList.remove('show');
+    // Open the Settings panel (header gear). The panel itself is owned by
+    // settingsModal.js; these data/update action handlers stay here because
+    // the document-level delegation catches clicks inside the modal too, and
+    // the intricate update/backup/reload flows already live in this module.
+    if (target.id === 'btn-open-settings') {
+      openSettings();
+    }
+
+    // Import from previous Electron version (Settings → Data) — opt-in path
+    // for users whose auto-migration didn't run. Opens a probe+confirm flow
+    // with Merge/Replace choice.
+    if (target.id === 'settings-import-legacy-electron') {
       handleImportLegacyElectron();
     }
 
-    // Check for updates
-    if (target.id === 'btn-check-updates') {
-      document.getElementById('header-tools-menu')?.classList.remove('show');
+    // Check for updates (Settings → Updates)
+    if (target.id === 'settings-check-updates') {
       triggerManualUpdateCheck();
     }
 
-    // Toggle the update channel (stable <-> beta). Keep the menu open so the
-    // label flip is visible; the choice takes effect on the next update check.
-    if (target.id === 'btn-update-channel') {
-      const next = getUpdateChannel() === 'beta' ? 'stable' : 'beta';
-      setUpdateChannel(next);
-      const label = document.getElementById('update-channel-label');
-      if (label) label.textContent = next === 'beta' ? 'Beta' : 'Stable';
-      showUpdateToast(
-        next === 'beta'
-          ? 'Beta channel on. The next update check will offer pre-release builds.'
-          : 'Stable channel on. The next update check will use released versions.',
-        'info'
-      );
-    }
-
-    // Export Full Backup — writes every owned localStorage key into a
-    // single JSON file. Pairs with Import Backup… for portable backups.
-    if (target.id === 'btn-export-full-backup') {
-      document.getElementById('header-tools-menu')?.classList.remove('show');
+    // Export Full Backup (Settings → Data) — writes every owned localStorage
+    // key into a single JSON file.
+    if (target.id === 'settings-export-backup') {
       try {
         const { keysExported, filename } = exportFullBackup();
         // No alert on success — the browser download bar / native save
@@ -1226,9 +1165,9 @@ function setupHeaderEventListeners() {
         alert(`Export failed: ${err.message ?? String(err)}`);
       }
     }
-    // The Import Backup label wraps a hidden file input; clicking the
-    // label triggers the input, whose change handler does the work
-    // (registered below). No click handler needed here.
+    // The Import Backup label (Settings → Data) wraps a hidden file input;
+    // clicking the label triggers the input, whose change handler does the
+    // work (registered below). No click handler needed here.
 
     // Export button
     if (target.id === 'btn-header-export') {
@@ -1263,11 +1202,10 @@ function setupHeaderEventListeners() {
     // Import Full Backup — restores every owned localStorage key from
     // a JSON envelope produced by either Export Full Backup or
     // `scripts/migrate-from-electron.mjs`.
-    if (e.target.id === 'header-import-backup-file') {
+    if (e.target.id === 'settings-import-backup-file') {
       const file = e.target.files[0];
       e.target.value = ''; // Reset early so re-selecting same file works
       if (!file) return;
-      document.getElementById('header-tools-menu')?.classList.remove('show');
       (async () => {
         try {
           // Parse FIRST so we can show key count BEFORE confirming
@@ -1407,9 +1345,6 @@ function setupHeaderEventListeners() {
         if (window.openHistoryPanel) {
           window.openHistoryPanel();
         }
-      } else if (mobileOption.id === 'mobile-check-updates') {
-        closeMobileMenu();
-        triggerManualUpdateCheck();
       } else if (mobileOption.id === 'mobile-export-json') {
         closeMobileMenu();
         exportCurrentVariant('json');
@@ -1570,11 +1505,9 @@ function handleUpdateStatus(payload) {
 function setUpdateButtonsDisabled(disabled) {
   if (!isElectron) return;
 
-  const desktopBtn = document.getElementById('btn-check-updates');
-  const mobileBtn = document.getElementById('mobile-check-updates');
-
-  if (desktopBtn) desktopBtn.disabled = disabled;
-  if (mobileBtn) mobileBtn.disabled = disabled;
+  // The only manual "Check for Updates" trigger now lives in Settings → Updates.
+  const checkBtn = document.getElementById('settings-check-updates');
+  if (checkBtn) checkBtn.disabled = disabled;
 }
 
 function showUpdateToast(message, tone = 'info', persistent = false) {

@@ -339,11 +339,35 @@
       
       <!-- Settings Tabs -->
       <div class="settings-tabs">
-        <button class="settings-tab active" data-tab="api-keys">
+        <button class="settings-tab active" data-tab="general">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          General
+        </button>
+        <button class="settings-tab" data-tab="api-keys">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
           </svg>
-          API Keys
+          AI
+        </button>
+        <button class="settings-tab" data-tab="updates" id="settings-tab-updates">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 2v6h-6"/>
+            <path d="M3 12a9 9 0 0 1 15-6l3 2"/>
+            <path d="M3 22v-6h6"/>
+            <path d="M21 12a9 9 0 0 1-15 6l-3-2"/>
+          </svg>
+          Updates
+        </button>
+        <button class="settings-tab" data-tab="data">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <ellipse cx="12" cy="5" rx="9" ry="3"/>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+          </svg>
+          Data
         </button>
         <button class="settings-tab" data-tab="developer">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -355,8 +379,59 @@
       </div>
       
       <div class="modal-content">
-        <!-- API Keys Tab -->
-        <div class="settings-tab-content active" id="tab-api-keys">
+        <!-- General Tab -->
+        <div class="settings-tab-content active" id="tab-general">
+          <div class="settings-section">
+            <h3 class="settings-section-title">Appearance</h3>
+            <div class="form-group">
+              <label>Theme</label>
+              <div class="settings-theme-options" id="settings-theme-options">
+                <button class="theme-option" data-theme="light">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/>
+                    <line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                    <line x1="1" y1="12" x2="3" y2="12"/>
+                    <line x1="21" y1="12" x2="23" y2="12"/>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                  </svg>
+                  Light
+                </button>
+                <button class="theme-option" data-theme="dark">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                  </svg>
+                  Dark
+                </button>
+                <button class="theme-option" data-theme="system">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                  </svg>
+                  System
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h3 class="settings-section-title">Onboarding</h3>
+            <div class="form-group">
+              <button class="btn btn-secondary" id="settings-replay-welcome">Replay welcome guide</button>
+              <p class="settings-hint">Re-run the first-time setup wizard. Your resumes and settings are kept.</p>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h3 class="settings-section-title">About</h3>
+            <p class="settings-hint">Resume Designer <span id="settings-app-version">—</span></p>
+          </div>
+        </div>
+
+        <!-- AI Tab -->
+        <div class="settings-tab-content" id="tab-api-keys">
           <p class="settings-warning">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -399,6 +474,55 @@
           </div>
         </div>
         
+        <!-- Updates Tab (desktop only) -->
+        <div class="settings-tab-content" id="tab-updates">
+          <div class="settings-section">
+            <h3 class="settings-section-title">Update channel</h3>
+            <div class="form-group">
+              <div class="settings-segmented" id="settings-channel-options">
+                <button class="settings-segment" data-channel="stable">Stable</button>
+                <button class="settings-segment" data-channel="beta">Beta</button>
+              </div>
+              <p class="settings-hint">Beta installs pre-release builds from the <code>next</code> branch. Stable installs only versioned releases.</p>
+            </div>
+            <div class="form-group">
+              <label class="settings-checkbox">
+                <input type="checkbox" id="auto-update-check-toggle">
+                <span>Check for updates automatically on launch</span>
+              </label>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h3 class="settings-section-title">Check now</h3>
+            <div class="settings-actions settings-actions-left">
+              <button class="btn btn-secondary" id="settings-check-updates">Check for Updates</button>
+            </div>
+            <p class="settings-hint">Current version: <span id="settings-updates-version">—</span></p>
+          </div>
+        </div>
+
+        <!-- Data Tab -->
+        <div class="settings-tab-content" id="tab-data">
+          <div class="settings-section">
+            <h3 class="settings-section-title">Backup &amp; restore</h3>
+            <p class="settings-hint">Save or restore all resumes, settings, job descriptions, and history as a single JSON file.</p>
+            <div class="settings-actions settings-actions-left">
+              <button class="btn btn-secondary" id="settings-export-backup">Export Full Backup</button>
+              <label class="btn btn-secondary" id="settings-import-backup">
+                Import Backup…
+                <input type="file" id="settings-import-backup-file" accept="application/json,.json" hidden>
+              </label>
+            </div>
+          </div>
+          <div class="settings-section" id="settings-electron-import-section">
+            <h3 class="settings-section-title">Migrate from Electron</h3>
+            <p class="settings-hint">Bring in resumes and settings from the old Electron version of the app.</p>
+            <div class="settings-actions settings-actions-left">
+              <button class="btn btn-secondary" id="settings-import-legacy-electron">Import from previous Electron version…</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Developer Tab -->
         <div class="settings-tab-content" id="tab-developer">
           <div class="developer-section">
