@@ -1,6 +1,6 @@
 name: guard-main-source
 
-# Enforces that `main` only advances via promotions from `next` (so every stable
+# Enforces that `main` only advances via promotions from this repo's `next` (so every stable
 # release is a promotion of tested beta code). Infra/bootstrap PRs labeled
 # `skip-build` are exempt — they don't cut a release, so they may target main
 # directly. Make this a required status check on `main` AFTER it has run once.
@@ -16,22 +16,26 @@ jobs:
   only-next-into-main:
     runs-on: ubuntu-latest
     steps:
-      - name: Reject non-next, non-skip-build PRs into main
+      - name: Reject PRs into main that are not this repo's next (unless skip-build)
         env:
-          # GITHUB_HEAD_REF is the runner's built-in PR head-branch var (safe);
-          # LABELS is the comma-joined label set, matched literally below.
+          # GITHUB_HEAD_REF is the runner's built-in PR head-branch var (safe).
+          # HEAD_REPO must equal BASE_REPO so a fork whose branch is also named
+          # "next" cannot satisfy the gate — a promotion must come from THIS
+          # repository's next branch, not just any branch called next.
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          echo "Head branch: ${GITHUB_HEAD_REF}"
-          if [ "${GITHUB_HEAD_REF}" = "next" ]; then
-            echo "OK: promotion from next."
-            exit 0
-          fi
+          echo "Head: ${HEAD_REPO}:${GITHUB_HEAD_REF}  Base: ${BASE_REPO}  Labels: ${LABELS:-<none>}"
           case ",${LABELS}," in
             *",skip-build,"*)
               echo "OK: skip-build infra PR may target main directly."
               exit 0
               ;;
           esac
-          echo "::error::PRs into main may only come from 'next' (or be labeled 'skip-build'). Got '${GITHUB_HEAD_REF}'."
+          if [ "${HEAD_REPO}" = "${BASE_REPO}" ] && [ "${GITHUB_HEAD_REF}" = "next" ]; then
+            echo "OK: promotion from ${BASE_REPO}'s next branch."
+            exit 0
+          fi
+          echo "::error::PRs into main may only come from this repository's 'next' branch (or be labeled 'skip-build'). Got '${HEAD_REPO}:${GITHUB_HEAD_REF}'."
           exit 1
