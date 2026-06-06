@@ -179,6 +179,27 @@ export function setUpdateChannel(channel) {
   return normalized;
 }
 
+// Whether to auto-check for updates on launch. Persisted (owned key) so it
+// rides along in backup/restore. Defaults to true (the prior always-on
+// behavior); only an explicit 'false' disables it. Consumed by
+// startupUpdateCheck() and toggled from Settings → Updates.
+const AUTO_UPDATE_CHECK_KEY = 'resume-designer-auto-update-check';
+export function getAutoUpdateCheck() {
+  try {
+    return localStorage.getItem(AUTO_UPDATE_CHECK_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+export function setAutoUpdateCheck(enabled) {
+  try {
+    localStorage.setItem(AUTO_UPDATE_CHECK_KEY, enabled ? 'true' : 'false');
+  } catch {
+    /* ignore storage errors — falls back to the default on next read */
+  }
+  return !!enabled;
+}
+
 export async function checkForUpdates(source = 'manual') {
   if (!isTauri) {
     return {
@@ -347,6 +368,7 @@ export async function checkForUpdates(source = 'manual') {
  */
 export async function startupUpdateCheck() {
   if (!isTauri || import.meta.env.DEV) return;
+  if (!getAutoUpdateCheck()) return;
   await checkForUpdates('startup');
 }
 
