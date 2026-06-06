@@ -2,41 +2,70 @@ name: Release Desktop App
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, next]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Override the computed version (optional, e.g. 1.10.0)"
+        required: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
-  group: release-main
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release-please:
+  decide:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      pull-requests: read
     outputs:
-      release_created: ${{ steps.rp.outputs.releases_created }}
-      tag_name: ${{ steps.rp.outputs['resume-designer--tag_name'] }}
-      version: ${{ steps.rp.outputs['resume-designer--version'] }}
+      skip: ${{ steps.gate.outputs.skip }}
+      channel: ${{ steps.ver.outputs.channel }}
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      previous_tag: ${{ steps.ver.outputs.previous_tag }}
     steps:
-      - name: Run release-please
-        id: rp
-        uses: googleapis/release-please-action@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # full history + tags so compute-version sees v* tags
+
+      - name: Skip build when the merged PR is labeled skip-build
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          skip=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            labels=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+              --jq '[.[].labels[].name] | unique | join(",")' 2>/dev/null || echo "")
+            echo "Associated PR labels: ${labels:-<none>}"
+            case ",$labels," in
+              *",skip-build,"*) skip=true ;;
+            esac
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "Decision: skip=$skip"
+
+      - name: Compute version and channel
+        id: ver
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          # push to next -> beta channel; anything else -> stable
+          RELEASE_CHANNEL: ${{ github.ref_name == 'next' && 'next' || 'stable' }}
+          RELEASE_VERSION_OVERRIDE: ${{ github.event.inputs.version }}
+        run: node resume-designer/scripts/ci/compute-version.mjs >> "$GITHUB_OUTPUT"
 
   build-macos:
     permissions:
       contents: read
     runs-on: macos-latest
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: decide
+    if: ${{ needs.decide.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -73,11 +102,19 @@ jobs:
       - name: Apply CI release version
         working-directory: resume-designer
         env:
-          VERSION: ${{ needs.release-please.outputs.version }}
+          VERSION: ${{ needs.decide.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version --allow-same-version
           node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
           node -e "const fs=require('fs');const p='src-tauri/Cargo.toml';let s=fs.readFileSync(p,'utf8');s=s.replace(/^version = \".*\"/m, 'version = \"'+process.env.VERSION+'\"');fs.writeFileSync(p, s);"
+
+      - name: Point updater at the beta endpoint (next channel only)
+        if: ${{ needs.decide.outputs.channel == 'next' }}
+        working-directory: resume-designer
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.plugins.updater.endpoints=['https://github.com/'+process.env.REPO+'/releases/download/next/latest.json'];fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
 
       - name: Validate macOS signing and notarization secrets
         env:
@@ -160,8 +197,8 @@ jobs:
     permissions:
       contents: read
     runs-on: windows-latest
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: decide
+    if: ${{ needs.decide.outputs.skip != 'true' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -189,11 +226,20 @@ jobs:
         working-directory: resume-designer
         shell: bash
         env:
-          VERSION: ${{ needs.release-please.outputs.version }}
+          VERSION: ${{ needs.decide.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version --allow-same-version
           node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
           node -e "const fs=require('fs');const p='src-tauri/Cargo.toml';let s=fs.readFileSync(p,'utf8');s=s.replace(/^version = \".*\"/m, 'version = \"'+process.env.VERSION+'\"');fs.writeFileSync(p, s);"
+
+      - name: Point updater at the beta endpoint (next channel only)
+        if: ${{ needs.decide.outputs.channel == 'next' }}
+        working-directory: resume-designer
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.plugins.updater.endpoints=['https://github.com/'+process.env.REPO+'/releases/download/next/latest.json'];fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
 
       - name: Build Windows artifacts (updater bundle, unsigned exe)
         uses: tauri-apps/tauri-action@v0
@@ -236,11 +282,16 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     needs:
-      - release-please
+      - decide
       - build-macos
       - build-windows
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ needs.decide.outputs.skip != 'true' }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # history + tags so release notes can diff from previous_tag
+
       - name: Download macOS arm64 artifacts
         uses: actions/download-artifact@v4
         with:
@@ -259,40 +310,28 @@ jobs:
           name: release-windows
           path: release-assets/windows
 
-      - name: Compose release notes (AI-polished, best-effort)
+      - name: Generate release notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          PREV_TAG: ${{ needs.decide.outputs.previous_tag }}
+          VERSION: ${{ needs.decide.outputs.version }}
         run: |
-          gh release view "$TAG" --json body -q .body > release-notes.md || : > release-notes.md
-          node - <<'EOF'
-          const fs = require('node:fs');
-          async function main() {
-            const baseline = fs.readFileSync('release-notes.md', 'utf8');
-            if (!baseline.trim()) return;
-            const token = process.env.GH_TOKEN;
-            const prompt = `Rewrite the following GitHub release notes for end users of the Resume Designer desktop app.\n\nRequirements:\n- Keep Markdown formatting.\n- Be concise and user-facing.\n- Keep sections in this order when relevant: Highlights, Improvements, Fixes.\n- Do not include internal engineering details, branch names, or CI references.\n- Preserve technical accuracy.\n\nNotes start below:\n\n${baseline}`;
-            const response = await fetch('https://models.github.ai/inference/chat/completions', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model: 'openai/gpt-5-mini', messages: [
-                { role: 'system', content: 'Rewrite release notes to be concise, user-facing, and accurate.' },
-                { role: 'user', content: prompt }
-              ] })
-            });
-            if (!response.ok) { console.error(`models error ${response.status}`); return; }
-            const data = await response.json();
-            const text = data?.choices?.[0]?.message?.content;
-            if (typeof text === 'string' && text.trim()) fs.writeFileSync('release-notes.md', `${text.trim()}\n`);
-          }
-          main().catch((e) => console.error(e.message));
-          EOF
-        continue-on-error: true
+          range="HEAD"
+          [ -n "$PREV_TAG" ] && range="${PREV_TAG}..HEAD"
+          {
+            echo "## Resume Designer $VERSION"
+            echo ""
+            git log "$range" --no-merges --pretty=format:'- %s' \
+              | grep -E '^- (feat|fix|perf)(\(|:|!)' \
+              || echo "- Maintenance and internal improvements."
+            echo ""
+          } > release-notes.md
+          echo "----- release-notes.md -----"
+          cat release-notes.md
 
       - name: Flatten assets and assemble latest.json
         env:
-          VERSION: ${{ needs.release-please.outputs.version }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          VERSION: ${{ needs.decide.outputs.version }}
+          TAG: ${{ needs.decide.outputs.tag }}
           REPO_FULL: ${{ github.repository }}
         run: |
           node - <<'EOF'
@@ -378,7 +417,7 @@ jobs:
       - name: Remove existing release assets for tag
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.decide.outputs.tag }}
         with:
           script: |
             const owner = context.repo.owner;
@@ -411,10 +450,13 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          tag_name: ${{ needs.decide.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: Resume Designer ${{ needs.release-please.outputs.version }}
+          name: ${{ needs.decide.outputs.channel == 'next' && 'Resume Designer (beta)' || format('Resume Designer {0}', needs.decide.outputs.version) }}
           body_path: release-notes.md
+          prerelease: ${{ needs.decide.outputs.channel == 'next' }}
+          make_latest: ${{ needs.decide.outputs.channel != 'next' }}
+          generate_release_notes: ${{ needs.decide.outputs.channel != 'next' }}
           files: |
             release-flat/*.dmg
             release-flat/*.app.tar.gz
@@ -424,6 +466,5 @@ jobs:
             release-flat/latest.json
           fail_on_unmatched_files: true
           overwrite_files: true
-          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

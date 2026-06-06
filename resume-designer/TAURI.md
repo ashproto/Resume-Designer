@@ -154,21 +154,24 @@ The `latest.json` manifest is assembled by CI from the per-platform `.sig` files
 
 ## Release Workflow
 
-[.github/workflows/release.yml](../.github/workflows/release.yml) runs on every push to `main` (and `workflow_dispatch`), but **releases are gated by [release-please](https://github.com/googleapis/release-please)** — a merge to `main` does not publish a release on its own.
+[.github/workflows/release.yml](../.github/workflows/release.yml) builds and publishes on every push to **`next`** (beta channel) and **`main`** (stable channel). There is no release-please / Release-PR step — the version is computed directly from git tags + Conventional Commits.
 
-1. **`release-please`** — on each push to `main`, maintains a **Release PR** that accumulates the version bump and `CHANGELOG.md` from Conventional Commit messages since the last release. Merging a feature PR just updates this Release PR; it does **not** cut a release.
-2. **Cut a release** by merging the Release PR. release-please then publishes a `vX.Y.Z` GitHub Release (changelog as the body), and the build jobs run (gated on release-please's `release_created` output):
-   - **`build-macos`** — matrix-builds `aarch64`/`x86_64`, signs + notarizes via `tauri-apps/tauri-action`.
-   - **`build-windows`** — unsigned NSIS installer + updater bundle.
-   - **`release`** — assembles `latest.json`, AI-polishes the changelog into user-facing notes (GitHub Models GPT-5-mini, best-effort), and attaches the installers + `latest.json` to the release.
+**Branch model**
 
-Version bump (release-please, from Conventional Commits):
+- Feature PRs target **`next`**. Merging one builds a **beta** and publishes it to the rolling `next` pre-release (a GitHub Release tagged `next`, marked *prerelease*). Beta builds point their updater at `…/releases/download/next/latest.json`.
+- Cut a **stable** release by promoting `next → main` (a PR; the `guard-main-source` check enforces that only `next` — or a `skip-build`-labeled infra PR — merges into `main`). Merging it builds a versioned `vX.Y.Z` release (`make_latest`, GitHub-generated notes), served by `…/releases/latest/download/latest.json`. GitHub excludes prereleases from `/releases/latest`, so stable users never see betas.
 
-- `major` for a `!` marker or `BREAKING CHANGE`.
-- `minor` for a `feat:` commit.
-- `patch` for `fix:` / `deps:` (and other releasable types).
+**The `decide` job** runs first and sets the channel + version, then gates `build-macos` (matrix `aarch64`/`x86_64`, signed + notarized), `build-windows` (unsigned NSIS + updater bundle), and `release` (assembles `latest.json`, attaches installers).
 
-To force a specific version, edit `.release-please-manifest.json` (the `Release-As:` commit footer does **not** work with plain merge commits, which this repo uses).
+**Version** is computed by [`scripts/ci/compute-version.mjs`](scripts/ci/compute-version.mjs) from the latest `v*` tag + Conventional Commits since it:
+
+- `major` for a `!` marker or `BREAKING CHANGE`; `minor` for `feat:`; otherwise `patch`.
+- Beta builds append `-next.<run-number>` (e.g. `1.10.0-next.4`) — valid semver, always lower than the matching stable.
+
+**Controls**
+
+- **Skip a build on merge:** add the **`skip-build`** label to the PR before merging — the `decide` job sees it and publishes nothing (the run still goes green).
+- **Force a version / manual build:** run the workflow via **`workflow_dispatch`** from the desired branch, optionally passing a `version` input override.
 
 > A freshly published release is briefly asset-less — the signed installers and `latest.json` attach ~10-15 minutes later once the build jobs finish — so an in-app update check during that window degrades gracefully.
 
@@ -179,7 +182,7 @@ Currently **not** signed. Users will see a Microsoft Defender SmartScreen warnin
 ### Testing updates end-to-end
 
 1. Install a signed Tauri build from a previous GitHub Release (or trigger one via `workflow_dispatch`).
-2. Push a commit that bumps the computed version (any commit increments at least patch).
+2. Merge a PR into `next` (beta) or promote `next → main` (stable) — or run `workflow_dispatch` — to publish a newer build.
 3. After the workflow finishes, reopen the older app. On startup it should:
    - Toast "Version X.Y.Z is available".
    - Prompt "Download?" → after click, show download progress in the toast.
