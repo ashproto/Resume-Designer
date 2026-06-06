@@ -157,6 +157,28 @@ export function onUpdateProgress(callback) {
   if (typeof callback === 'function') updateProgressListeners.push(callback);
 }
 
+// Update channel: 'stable' (default) or 'beta'. Persisted in localStorage so
+// the choice survives restarts; it's an owned key (see persistence.js) so it
+// rides along in backup/restore. The actual endpoint switch happens in the
+// Rust `check_update_on_channel` command — the JS just supplies the channel.
+const UPDATE_CHANNEL_KEY = 'resume-designer-update-channel';
+export function getUpdateChannel() {
+  try {
+    return localStorage.getItem(UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable';
+  } catch {
+    return 'stable';
+  }
+}
+export function setUpdateChannel(channel) {
+  const normalized = channel === 'beta' ? 'beta' : 'stable';
+  try {
+    localStorage.setItem(UPDATE_CHANNEL_KEY, normalized);
+  } catch {
+    /* ignore storage errors — falls back to the default on next read */
+  }
+  return normalized;
+}
+
 export async function checkForUpdates(source = 'manual') {
   if (!isTauri) {
     return {
@@ -189,8 +211,13 @@ export async function checkForUpdates(source = 'manual') {
   try {
     // Inside try so a dynamic-import failure (chunk load, transient network)
     // is caught by the handler below and resets isCheckingForUpdates.
-    const { updater, process: tauriProcess, dialog } = await tauri();
-    const update = await updater.check();
+    const { core, process: tauriProcess, dialog } = await tauri();
+    // Channel selection (stable/beta) can only happen Rust-side — the JS
+    // plugin-updater check() cannot override the endpoint — so route through
+    // our command, which builds the updater for the chosen channel's endpoint.
+    const update = await core.invoke('check_update_on_channel', {
+      channel: getUpdateChannel(),
+    });
     if (!update) {
       emitStatus({ status: 'up-to-date', source, message: 'You are on the latest version.' });
       isCheckingForUpdates = false;
@@ -230,7 +257,8 @@ export async function checkForUpdates(source = 'manual') {
 
     let downloaded = 0;
     let total = 0;
-    await update.downloadAndInstall((event) => {
+    const onEvent = new core.Channel();
+    onEvent.onmessage = (event) => {
       switch (event.event) {
         case 'Started':
           total = event.data?.contentLength ?? 0;
@@ -261,7 +289,8 @@ export async function checkForUpdates(source = 'manual') {
         default:
           break;
       }
-    });
+    };
+    await core.invoke('install_pending_update', { onEvent });
 
     const wantsRestart = await dialog.ask(
       `Version ${update.version} has been downloaded. Restart the app to apply the update.`,
