@@ -1,8 +1,9 @@
 mod commands;
 
-// `Manager` is only used by the macOS-only Reopen handler below to resolve
-// the main window. Gating the import keeps the Windows build warning-free.
-#[cfg(target_os = "macos")]
+// `Manager` is used by the desktop `app.manage(...)` call in `setup` and by the
+// macOS-only Reopen handler below. Gating to `desktop` keeps it out of mobile
+// builds (where neither exists) without tripping an unused-import warning.
+#[cfg(desktop)]
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,6 +20,7 @@ pub fn run() {
             {
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.manage(commands::updater::PendingUpdate::default());
             }
             Ok(())
         })
@@ -26,7 +28,11 @@ pub fn run() {
             commands::pick_pdf_save_path,
             commands::capture_pdf_from_window,
             commands::migration::probe_legacy_electron_data,
-            commands::migration::import_legacy_electron_data
+            commands::migration::import_legacy_electron_data,
+            #[cfg(desktop)]
+            commands::updater::check_update_on_channel,
+            #[cfg(desktop)]
+            commands::updater::install_pending_update
         ]);
 
     builder

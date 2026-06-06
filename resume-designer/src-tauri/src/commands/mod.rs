@@ -27,6 +27,11 @@ mod pdf_windows;
 // command function, so a plain `pub use` re-export wouldn't be enough.
 pub mod migration;
 
+// Desktop-only: runtime update-channel selection (stable/beta) for the updater.
+// `tauri-plugin-updater` is itself a cfg(desktop) dependency.
+#[cfg(desktop)]
+pub mod updater;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
