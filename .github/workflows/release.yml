@@ -30,7 +30,7 @@ jobs:
       previous_tag: ${{ steps.ver.outputs.previous_tag }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # full history + tags so compute-version sees v* tags
 
@@ -92,12 +92,12 @@ jobs:
             target: x86_64-apple-darwin
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: resume-designer/package-lock.json
 
@@ -162,7 +162,7 @@ jobs:
           echo "macOS signing/notarization secrets are configured."
 
       - name: Build macOS artifacts (signed + notarized + updater bundle)
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           APPLE_CERTIFICATE: ${{ secrets.CSC_LINK }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -200,7 +200,7 @@ jobs:
           done
 
       - name: Upload macOS ${{ matrix.arch }} artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-macos-${{ matrix.arch }}
           path: |
@@ -217,12 +217,12 @@ jobs:
     if: ${{ needs.decide.outputs.skip != 'true' }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: resume-designer/package-lock.json
 
@@ -258,7 +258,7 @@ jobs:
           node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.plugins.updater.endpoints=['https://github.com/'+process.env.REPO+'/releases/download/next/latest.json'];fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');"
 
       - name: Build Windows artifacts (updater bundle, unsigned exe)
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -285,7 +285,7 @@ jobs:
           done
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: |
@@ -304,24 +304,24 @@ jobs:
     if: ${{ needs.decide.outputs.skip != 'true' }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # history + tags so release notes can diff from previous_tag
 
       - name: Download macOS arm64 artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-macos-aarch64
           path: release-assets/macos-aarch64
 
       - name: Download macOS x86_64 artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-macos-x86_64
           path: release-assets/macos-x86_64
 
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-windows
           path: release-assets/windows
@@ -431,7 +431,7 @@ jobs:
           EOF
 
       - name: Remove existing release assets for tag
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           RELEASE_TAG: ${{ needs.decide.outputs.tag }}
         with:
@@ -464,7 +464,7 @@ jobs:
             }
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.decide.outputs.tag }}
           target_commitish: ${{ github.sha }}
