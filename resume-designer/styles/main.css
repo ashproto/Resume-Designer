@@ -1029,6 +1029,73 @@ html[data-theme="dark"] .header-variant-select {
   margin-top: var(--space-lg);
 }
 
+/* Action rows inside a section (Data / Updates) — left-aligned, no footer rule. */
+.settings-actions-left {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  border-top: none;
+  padding-top: 0;
+  margin-top: var(--space-sm);
+}
+
+/* General tab: horizontal theme picker. Reuses .theme-option (built for the
+   header dropdown) but lays the three out as side-by-side cards. */
+.settings-theme-options {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.settings-theme-options .theme-option {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 90px;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+/* Override the dropdown's between-item divider in this horizontal context. */
+.settings-theme-options .theme-option + .theme-option {
+  border-top: 1px solid var(--color-border);
+}
+
+/* Updates tab: segmented Stable/Beta channel control. */
+.settings-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.settings-segment {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: var(--space-xs) var(--space-lg);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.settings-segment:hover {
+  color: var(--color-text);
+}
+.settings-segment.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+/* Inline code in settings hints (e.g. the `next` branch name). */
+.settings-hint code {
+  font-family: monospace;
+  font-size: 0.78rem;
+  background: var(--color-bg-dark);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
 /* ==========================================================================
    PDF Dialog
    ========================================================================== */
