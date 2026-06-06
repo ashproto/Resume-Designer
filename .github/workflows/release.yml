@@ -38,15 +38,31 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           skip=false
-          if [ "${{ github.event_name }}" = "push" ]; then
-            labels=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
-              --jq '[.[].labels[].name] | unique | join(",")' 2>/dev/null || echo "")
-            echo "Associated PR labels: ${labels:-<none>}"
-            case ",$labels," in
-              *",skip-build,"*) skip=true ;;
-            esac
+          if [ "$EVENT_NAME" = "push" ]; then
+            # Parse the PR number straight from the merge commit subject. This is
+            # deterministic and immediate, unlike commits/{sha}/pulls, whose
+            # association lags a few seconds after merge — that race once let a
+            # skip-build PR build a release anyway.
+            subject=$(git log -1 --format=%s)
+            echo "Merge commit subject: $subject"
+            pr=$(printf '%s' "$subject" | sed -n 's/^Merge pull request #\([0-9]\{1,\}\) .*/\1/p')
+            if [ -z "$pr" ]; then
+              # Fallback for non-merge pushes (best-effort; association may lag).
+              pr=$(gh api "repos/$REPO/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || echo "")
+            fi
+            if [ -n "$pr" ]; then
+              labels=$(gh api "repos/$REPO/issues/$pr/labels" --jq '[.[].name] | join(",")' 2>/dev/null || echo "")
+              echo "PR #$pr labels: ${labels:-<none>}"
+              case ",$labels," in
+                *",skip-build,"*) skip=true ;;
+              esac
+            else
+              echo "No associated PR resolved; not skipping."
+            fi
           fi
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
           echo "Decision: skip=$skip"
