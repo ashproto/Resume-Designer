@@ -27,6 +27,8 @@ import {
   isTauri,
   checkForUpdates,
   onUpdateStatus,
+  getUpdateChannel,
+  setUpdateChannel,
   probeLegacyElectronData,
   importLegacyElectronData,
 } from './native.js';
@@ -826,6 +828,15 @@ export function renderHeaderBar() {
             </button>
             ` : ''}
             ${isElectron ? `
+            <button class="header-tools-option" id="btn-update-channel" title="Choose which release channel this app updates from. Beta installs pre-release builds from the next branch.">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="6" y1="3" x2="6" y2="15"/>
+                <circle cx="18" cy="6" r="3"/>
+                <circle cx="6" cy="18" r="3"/>
+                <path d="M18 9a9 9 0 0 1-9 9"/>
+              </svg>
+              Update channel: <span id="update-channel-label">${getUpdateChannel() === 'beta' ? 'Beta' : 'Stable'}</span>
+            </button>
             <button class="header-tools-option" id="btn-check-updates">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 2v6h-6"/>
@@ -1184,6 +1195,21 @@ function setupHeaderEventListeners() {
     if (target.id === 'btn-check-updates') {
       document.getElementById('header-tools-menu')?.classList.remove('show');
       triggerManualUpdateCheck();
+    }
+
+    // Toggle the update channel (stable <-> beta). Keep the menu open so the
+    // label flip is visible; the choice takes effect on the next update check.
+    if (target.id === 'btn-update-channel') {
+      const next = getUpdateChannel() === 'beta' ? 'stable' : 'beta';
+      setUpdateChannel(next);
+      const label = document.getElementById('update-channel-label');
+      if (label) label.textContent = next === 'beta' ? 'Beta' : 'Stable';
+      showUpdateToast(
+        next === 'beta'
+          ? 'Beta channel on. The next update check will offer pre-release builds.'
+          : 'Stable channel on. The next update check will use released versions.',
+        'info'
+      );
     }
 
     // Export Full Backup — writes every owned localStorage key into a

@@ -145,12 +145,19 @@ The Tauri CLI reads these env vars during `tauri build` to produce signed update
 ### How auto-update works
 
 - App startup runs `startupUpdateCheck()` (see [src/native.js](src/native.js)).
-- The updater fetches `https://github.com/SiriusA7/Resume-Designer/releases/latest/download/latest.json`.
+- The check goes through the Rust `check_update_on_channel` command, which builds the updater for the user's chosen channel and fetches that channel's `latest.json` (stable → `…/releases/latest/download/latest.json`; beta → `…/releases/download/next/latest.json`).
 - If `version` exceeds the installed version, the user is prompted to download.
-- After the download (with minisign verification), the user is prompted to restart.
+- The download runs through `install_pending_update`, which streams progress to the renderer over an IPC `Channel` and verifies the minisign signature; then the user is prompted to restart.
 - A 10-second watchdog timer surfaces a clear error if the restart-into-installer step fails (e.g. malformed signature).
 
 The `latest.json` manifest is assembled by CI from the per-platform `.sig` files and uploaded to the release.
+
+### Switching update channels (in-app)
+
+The desktop **Tools** menu has an **Update channel: Stable / Beta** toggle next to *Check for Updates*. It persists to the `resume-designer-update-channel` localStorage key (an owned key, so it rides along in backup/restore) and defaults to **Stable**.
+
+- The JS `plugin-updater` `check()` cannot override the endpoint, so channel selection happens Rust-side in `check_update_on_channel(channel)`. Both channels are signed with the same key, so they verify against the same `pubkey`.
+- Flipping to **Beta** makes the *next* update check pull the rolling `next` pre-release; flipping back to **Stable** returns to released versions — no reinstall needed.
 
 ## Release Workflow
 
