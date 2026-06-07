@@ -3,8 +3,6 @@
  * Handles light/dark mode switching with system preference support
  */
 
-import { registerPortalMenu, isInPortal } from './menuPortal.js';
-
 const STORAGE_KEY = 'resume-designer-theme';
 const THEMES = ['light', 'dark', 'system'];
 
@@ -30,9 +28,6 @@ export function initTheme() {
       applyTheme('system');
     }
   });
-  
-  // Set up theme toggle dropdown
-  setupThemeToggle();
   
   // Update UI
   updateThemeUI();
@@ -98,84 +93,8 @@ function applyTheme(theme) {
  * Update theme UI elements
  */
 function updateThemeUI() {
-  const resolved = getResolvedTheme();
-  
-  // Update icon visibility
-  document.querySelectorAll('.theme-icon').forEach(icon => {
-    icon.style.display = 'none';
-  });
-  
-  const iconClass = currentTheme === 'system' 
-    ? '.theme-icon-system' 
-    : resolved === 'dark' 
-      ? '.theme-icon-dark' 
-      : '.theme-icon-light';
-  
-  document.querySelectorAll(iconClass).forEach(icon => {
-    icon.style.display = 'block';
-  });
-  
   // Update selected state in dropdown
   document.querySelectorAll('.theme-option').forEach(opt => {
     opt.classList.toggle('selected', opt.dataset.theme === currentTheme);
   });
-  
-  // Update toggle button tooltip
-  const btn = document.getElementById('theme-toggle-btn');
-  if (btn) {
-    const labels = { light: 'Light mode', dark: 'Dark mode', system: 'System theme' };
-    btn.title = labels[currentTheme] || 'Toggle theme';
-  }
-}
-
-/**
- * Set up theme toggle dropdown
- */
-function setupThemeToggle() {
-  const dropdown = document.getElementById('theme-toggle-dropdown');
-  const btn = document.getElementById('theme-toggle-btn');
-  const menu = document.getElementById('theme-toggle-menu');
-  
-  if (!dropdown || !btn || !menu) return;
-  
-  // Toggle menu on button click
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    dropdown.classList.toggle('open');
-  });
-  
-  // Handle theme selection
-  menu.addEventListener('click', (e) => {
-    const option = e.target.closest('.theme-option');
-    if (option) {
-      const theme = option.dataset.theme;
-      setTheme(theme);
-      dropdown.classList.remove('open');
-    }
-  });
-  
-  // Close menu when clicking outside (isInPortal keeps it open when the menu is
-  // re-parented into the glass portal).
-  document.addEventListener('click', (e) => {
-    if (!dropdown.contains(e.target) && !isInPortal(e.target)) {
-      dropdown.classList.remove('open');
-    }
-  });
-
-  // Glass theme: portal the menu out of the frosted header so its backdrop-filter
-  // blurs for real (no-op in a plain browser). The theme button is far right.
-  registerPortalMenu(menu, btn, { watch: dropdown, activeClass: 'open', placement: 'down', align: 'right' });
-  
-  // Close menu on escape
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      dropdown.classList.remove('open');
-    }
-  });
-}
-
-// Re-setup when header is re-rendered
-export function setupThemeToggleAfterRender() {
-  setupThemeToggle();
-  updateThemeUI();
 }

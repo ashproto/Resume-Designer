@@ -179,6 +179,25 @@ export function setUpdateChannel(channel) {
   return normalized;
 }
 
+/**
+ * First-run channel seed: a beta build (pre-release version, e.g.
+ * `1.11.0-next.53`) tracks the beta channel by default so a fresh install gets
+ * the superset (beta + stable) instead of silently defaulting to stable and
+ * missing pre-releases. Only acts when the user hasn't chosen a channel yet;
+ * stable builds keep the unset → stable default (no key written).
+ */
+async function seedUpdateChannelFromBuild() {
+  try {
+    if (localStorage.getItem(UPDATE_CHANNEL_KEY) !== null) return;
+    const { version } = await getAppInfo();
+    if (typeof version === 'string' && version.includes('-')) {
+      setUpdateChannel('beta');
+    }
+  } catch {
+    /* non-fatal — falls back to the stable default on next read */
+  }
+}
+
 // Whether to auto-check for updates on launch. Persisted (owned key) so it
 // rides along in backup/restore. Defaults to true (the prior always-on
 // behavior); only an explicit 'false' disables it. Consumed by
@@ -368,6 +387,10 @@ export async function checkForUpdates(source = 'manual') {
  */
 export async function startupUpdateCheck() {
   if (!isTauri || import.meta.env.DEV) return;
+  // Seed the channel from the build type on first run — before the auto-check
+  // gate, so a fresh beta install lands on the beta (superset) channel even if
+  // auto-check is later turned off.
+  await seedUpdateChannelFromBuild();
   if (!getAutoUpdateCheck()) return;
   await checkForUpdates('startup');
 }

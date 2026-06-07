@@ -2828,6 +2828,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-web-kit",
  "rusty-leveldb",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

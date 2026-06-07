@@ -42,7 +42,7 @@ import {
   probeLegacyElectronData,
   importLegacyElectronData,
 } from './native.js';
-import { initTheme, setupThemeToggleAfterRender } from './theme.js';
+import { initTheme } from './theme.js';
 import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
 import { initHistoryPanel, openHistoryPanel } from './historyPanel.js';
 import { initUserProfilePanel, openUserProfilePanel } from './userProfilePanel.js';
@@ -355,10 +355,7 @@ async function init() {
   
   // Initialize header bar (includes variant management)
   initHeaderBar(handleVariantChange);
-  
-  // Setup theme toggle after header render
-  setupThemeToggleAfterRender();
-  
+
   // Initialize inline editor
   initInlineEditor();
   

@@ -139,7 +139,6 @@
 :root[data-tauri="true"] :is(
   .header-variant-actions-menu,
   .custom-dropdown-menu,
-  .theme-toggle-menu,
   .thread-selector-menu,
   .chat-reasoning-menu,
   .slash-commands-popup,
