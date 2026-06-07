@@ -303,6 +303,7 @@ const BACKUP_FIXED_KEYS = [
   'resume-photo-settings',
   'resume-zoom',
   'resume-designer-update-channel',
+  'resume-designer-auto-update-check',
 ];
 // Undo/redo history lives at this prefix, one key per variant.
 const BACKUP_HISTORY_PREFIX = 'resume-designer-history-';
