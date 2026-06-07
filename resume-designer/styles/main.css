@@ -1052,6 +1052,14 @@ html[data-theme="dark"] .header-variant-select {
   justify-content: center;
   border: 1px solid var(--color-border);
   border-radius: 6px;
+  /* The base .theme-option palette was built for the old dark header menu;
+     use theme-aware vars so the label + icon stay legible on the panel in
+     every mode — notably System on a light OS, where no data-theme rule
+     applied and the text/icon rendered near-white on a light background. */
+  color: var(--color-text);
+}
+.settings-theme-options .theme-option svg {
+  color: var(--color-text-muted);
 }
 /* Override the dropdown's between-item divider in this horizontal context. */
 .settings-theme-options .theme-option + .theme-option {
@@ -1350,71 +1358,15 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 /* ==========================================================================
-   Theme Toggle Dropdown
+   Settings Theme Picker (.theme-option)
    ========================================================================== */
-
-.theme-toggle-dropdown {
-  position: relative;
-}
-
-.theme-toggle-btn {
-  position: relative;
-  width: 36px;
-  height: 36px;
-  color: var(--color-text);
-}
-
-.theme-icon {
-  display: none;
-}
-
-/* Make sure icons are visible in light mode */
-html[data-theme="light"] .theme-toggle-btn {
-  color: var(--color-text);
-}
 
 html[data-theme="light"] .theme-option svg {
   color: var(--color-text-muted);
 }
 
-.theme-toggle-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: var(--space-xs);
-  min-width: 140px;
-  background: var(--color-panel-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  overflow: hidden;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-8px);
-  transition: all var(--transition-fast);
-  z-index: 200;
-  box-shadow: var(--shadow-md);
-}
-
-/* Ensure theme menu has correct colors in light mode */
-html[data-theme="light"] .theme-toggle-menu,
-html:not([data-theme="dark"]) .theme-toggle-menu {
-  background: #ffffff;
-  border-color: #d4cfc8;
-}
-
-/* Ensure theme menu has correct colors in dark mode */
-html[data-theme="dark"] .theme-toggle-menu {
-  background: #1a1918;
-  border-color: #3d3a36;
-}
-
 /* System preference dark mode fallback */
 @media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .theme-toggle-menu {
-    background: #1a1918;
-    border-color: #3d3a36;
-  }
-  
   html:not([data-theme="light"]) .theme-option {
     color: #e8e4df;
   }
@@ -1422,12 +1374,6 @@ html[data-theme="dark"] .theme-toggle-menu {
   html:not([data-theme="light"]) .theme-option svg {
     color: #9a9590;
   }
-}
-
-.theme-toggle-dropdown.open .theme-toggle-menu {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
 }
 
 .theme-option {
@@ -1598,10 +1544,10 @@ html[data-theme="dark"] .theme-option + .theme-option {
 }
 
 /* ==========================================================================
-   Developer Panel / Token Usage Stats
+   Usage Panel / Token Usage Stats
    ========================================================================== */
 
-.developer-section {
+.usage-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);

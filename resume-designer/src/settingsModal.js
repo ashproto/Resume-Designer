@@ -30,7 +30,7 @@ import {
 
 // ===== Tab routing =====
 
-/** Activate a settings tab by id (e.g. 'api-keys', 'developer'). */
+/** Activate a settings tab by id (e.g. 'api-keys', 'usage'). */
 function activateTab(tabId) {
   if (!tabId) return;
   document.querySelectorAll('.settings-tab').forEach((tab) => {
@@ -39,8 +39,8 @@ function activateTab(tabId) {
   document.querySelectorAll('.settings-tab-content').forEach((content) => {
     content.classList.toggle('active', content.id === `tab-${tabId}`);
   });
-  // The developer tab's numbers can change between opens, so refresh on show.
-  if (tabId === 'developer') renderUsageData();
+  // The usage tab's numbers can change between opens, so refresh on show.
+  if (tabId === 'usage') renderUsageData();
 }
 
 // ===== Open / init =====
@@ -113,7 +113,7 @@ export function initSettingsModal() {
   });
 
   initSettingsTabs();
-  initDeveloperPanel();
+  initUsagePanel();
   wireGeneralSection();
   wireUpdatesSection();
   applyTauriGating();
@@ -184,7 +184,6 @@ function applyTauriGating() {
   if (isTauri) return;
   document.getElementById('settings-tab-updates')?.style.setProperty('display', 'none');
   document.getElementById('tab-updates')?.classList.remove('active');
-  document.getElementById('settings-electron-import-section')?.style.setProperty('display', 'none');
 }
 
 // Populate app-version labels (desktop only; getAppInfo is a Tauri call).
@@ -201,9 +200,9 @@ function loadVersionInfo() {
     .catch(() => {});
 }
 
-// ===== Developer tab (token usage) =====
+// ===== Usage tab (token usage) =====
 
-function initDeveloperPanel() {
+function initUsagePanel() {
   document.getElementById('refresh-usage-data')?.addEventListener('click', renderUsageData);
 
   document.getElementById('export-usage-data')?.addEventListener('click', () => {
@@ -256,7 +255,7 @@ function fillUsageTable(tbody, rows) {
   rows.forEach((row) => tbody.appendChild(row));
 }
 
-// Render token-usage stats into the developer tab. Values are set via
+// Render token-usage stats into the usage tab. Values are set via
 // textContent (not innerHTML) so usage labels can never inject markup.
 function renderUsageData() {
   const summary = getUsageSummary();

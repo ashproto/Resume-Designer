@@ -950,7 +950,7 @@ async function callOpenRouter(modelId, messages, options = {}) {
   addCustomModel(modelId);
 
   // Track usage. Prefer OpenRouter's reported cost; provider is derived from the
-  // actual model used (fallback-aware) for the Developer-panel breakdown.
+  // actual model used (fallback-aware) for the usage-panel breakdown.
   if (data.usage) {
     const usedModel = data.model || modelId;
     trackUsage({
