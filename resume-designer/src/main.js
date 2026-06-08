@@ -21,7 +21,9 @@ import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
 import { initVariants } from './variantManager.js';
 import { initUpdateFlow } from './updateFlow.js';
-import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
+import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
+import { initDiffView } from './diffView.js';
+import { initInlineChanges } from './inlineChanges.js';
 import { initSettingsModal, loadApiKeysToModal } from './settingsModal.js';
 import { initZoomControls } from './zoomControls.js';
 import { initWindowDrag } from './tauriDrag.js';
@@ -365,8 +367,11 @@ export async function init() {
   // Initialize PDF export
   initPdfExport();
   
-  // Initialize chat panel
-  initChatPanel(handleChatApply);
+  // Chat panel is now React (components/chat/ChatPanel.jsx). main.js still owns
+  // the diff/inline-change hosts it drives and wires them with the resume
+  // re-render callback (both apply through the store, which re-renders anyway).
+  initDiffView(handleChatApply);
+  initInlineChanges();
   
   // Initialize zoom controls
   initZoomControls();

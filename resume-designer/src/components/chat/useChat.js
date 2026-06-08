@@ -1,0 +1,669 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  chat, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders,
+  generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels,
+  modelSupportsReasoning, getCustomModels, removeCustomModel, fetchModelCatalog,
+  profileInterviewChat, extractProfileFromInterview, saveExtractedProfile,
+} from '../../aiService.js';
+import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from '../../persistence.js';
+import { store } from '../../store.js';
+import { createChangeSet } from '../../diffEngine.js';
+import { showDiffView } from '../../diffView.js';
+import { showInlineChanges } from '../../inlineChanges.js';
+import {
+  loadThreads, persistThreads, makeThread, trimMessages, clearLegacyHistory,
+} from '../../chatThreads.js';
+
+// AI model catalog, derived from aiService's curated MODELS (single source of
+// truth). Shape: [{ group, options: [{ value: slug, label }] }]. Custom slugs
+// typed into the dropdown aren't listed here but are still selectable.
+export const AI_MODELS = Object.entries(getAllModels()).map(([group, models]) => ({
+  group,
+  options: models.map((m) => ({ value: m.id, label: m.label })),
+}));
+
+const FALLBACK_MODEL = 'anthropic/claude-sonnet-4.6';
+
+// Keywords that mark a message as a change request (→ diff flow) vs. a question.
+const CHANGE_KEYWORDS = [
+  'change', 'update', 'modify', 'edit', 'rewrite', 'improve', 'replace',
+  'make it', 'make my', 'fix', 'adjust', 'enhance', 'revise', 'rework',
+  'redo', 'transform', 'convert', 'add to', 'remove from', 'delete',
+  'can you change', 'can you update', 'can you modify', 'can you edit',
+  'please change', 'please update', 'please modify', 'please edit',
+  'tailor', 'customize', 'personalize', 'optimize',
+];
+
+// ── Pure helpers (module scope; read settings/store at call time) ───────────
+
+export function getModelLabel(value) {
+  if (!value) return 'Select Model';
+  for (const group of AI_MODELS) {
+    for (const opt of group.options) {
+      if (opt.value === value) return opt.label;
+    }
+  }
+  // Custom slug not in the curated list — prettify the model part of the slug.
+  // e.g. "anthropic/claude-opus-4.8" -> "Claude Opus 4.8"
+  const modelPart = String(value).split('/').pop() || String(value);
+  const pretty = modelPart
+    .replace(/[-_]/g, ' ')
+    .replace(/\d{8,}/g, '')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  return pretty || 'Custom Model';
+}
+
+function getModelDisplayName(modelId) {
+  for (const group of AI_MODELS) {
+    for (const opt of group.options) {
+      if (opt.value === modelId) return opt.label;
+    }
+  }
+  return String(modelId).split('/').pop();
+}
+
+function getInitialModel() {
+  const settings = getSettings();
+  if (settings.defaultModel) return validateModelId(settings.defaultModel);
+  return getDefaultModelId() || FALLBACK_MODEL;
+}
+
+function isChangeRequest(message) {
+  const lower = message.toLowerCase();
+  return CHANGE_KEYWORDS.some((k) => lower.includes(k));
+}
+
+// Label for a context chip derived from the captured resume content/path.
+function getContextLabel(content, type, path) {
+  switch (type) {
+    case 'section': {
+      const match = path?.match(/sections\[(\d+)\]/);
+      if (match) {
+        const section = store.getData()?.sections?.[parseInt(match[1], 10)];
+        return section?.title || 'Section';
+      }
+      return 'Section';
+    }
+    case 'experience': {
+      const match = path?.match(/experience\[(\d+)\]/);
+      if (match) {
+        const exp = store.getData()?.experience?.[parseInt(match[1], 10)];
+        if (exp) return `${exp.title} @ ${exp.company}`;
+      }
+      return 'Experience Entry';
+    }
+    case 'bullet':
+      return 'Bullet Point';
+    case 'text':
+    default: {
+      const text = content.trim();
+      return text.length > 40 ? `${text.substring(0, 40)}...` : text;
+    }
+  }
+}
+
+// State paired with a synchronously-updated ref. The async send flow reads the
+// refs to dodge stale closures (the React translation of the old module-level
+// mutable variables). On a value update the ref is set immediately; on a
+// functional update it's set inside the reducer (only ever read during render).
+function useStateRef(initial) {
+  const [state, setState] = useState(initial);
+  const ref = useRef(state);
+  const set = useCallback((updater) => {
+    if (typeof updater === 'function') {
+      setState((prev) => {
+        const next = updater(prev);
+        ref.current = next;
+        return next;
+      });
+    } else {
+      ref.current = updater;
+      setState(updater);
+    }
+  }, []);
+  return [state, set, ref];
+}
+
+/**
+ * The chat session engine. Owns the full conversation state machine (messages,
+ * threads, loading, animated "thinking" steps, context chips, model/options,
+ * profile-interview mode) and the send-flow routing + AI calls. Returns plain
+ * state + imperative handlers for the view components to render and drive.
+ */
+export function useChat() {
+  const [messages, setMessages, messagesRef] = useStateRef([]);
+  const [threads, setThreads, threadsRef] = useStateRef([]);
+  const [currentThreadId, setCurrentThreadId, currentThreadIdRef] = useStateRef(null);
+  const [loading, setLoading, loadingRef] = useStateRef(false);
+  const [thinking, setThinking] = useStateRef(null);
+  const [contextChips, setContextChips, chipsRef] = useStateRef([]);
+  const [currentModel, setCurrentModelState, modelRef] = useStateRef(getInitialModel());
+  const [reasoningEffort, setReasoningEffortState, reasoningRef] = useStateRef('medium');
+  const [webSearchEnabled, setWebSearchState, webSearchRef] = useStateRef(false);
+
+  const interviewModeRef = useRef(false);
+  const interviewMsgsRef = useRef([]);
+  const idCounterRef = useRef(0);
+
+  // Settings/catalog-derived values, held as state and refreshed explicitly at
+  // the moments they can change (API keys saved, a model picked, the live model
+  // catalog loading) — see refresh() and selectModel(). They read external
+  // mutable state, so they can't be plain useMemo derivations.
+  const [configured, setConfigured] = useState(() => isConfigured());
+  const [configuredProviders, setConfiguredProviders] = useState(() => getConfiguredProviders());
+  const [customModels, setCustomModels] = useState(() => (isConfigured() ? getCustomModels() : []));
+  const [reasoningSupported, setReasoningSupported] = useState(() => modelSupportsReasoning(getInitialModel()));
+
+  const refreshCustomModels = () => setCustomModels(isConfigured() ? getCustomModels() : []);
+
+  const uid = () => `${Date.now()}-${idCounterRef.current++}`;
+
+  // ── persistence + message appends ──────────────────────────────────────
+  const persistCurrentThread = (msgs) => {
+    const tid = currentThreadIdRef.current;
+    if (!tid) return;
+    const next = threadsRef.current.map((t) =>
+      t.id === tid ? { ...t, messages: trimMessages(msgs), updatedAt: new Date().toISOString() } : t
+    );
+    setThreads(next);
+    persistThreads(next);
+  };
+
+  const appendMessage = (msg) => {
+    const next = [...messagesRef.current, msg];
+    setMessages(next);
+    persistCurrentThread(next);
+  };
+
+  const addMessage = (role, content, applyData = null) =>
+    appendMessage({ id: uid(), role, content, applyData, timestamp: new Date().toISOString() });
+
+  // ── animated "thinking" process ────────────────────────────────────────
+  const beginThinking = () => {
+    setLoading(true);
+    setThinking({ steps: [], phase: 'active' });
+  };
+  const endThinking = () => {
+    setLoading(false);
+    setThinking(null);
+  };
+  const addThinkingStep = (text) =>
+    setThinking((t) => {
+      const base = t || { steps: [], phase: 'active' };
+      return { ...base, steps: [...base.steps, { text, complete: false }] };
+    });
+  const completeThinkingStep = (newStep = null) =>
+    setThinking((t) => {
+      if (!t) return t;
+      const steps = t.steps.map((s, i) => (i === t.steps.length - 1 ? { ...s, complete: true } : s));
+      if (newStep) steps.push({ text: newStep, complete: false });
+      return { ...t, steps };
+    });
+
+  // ── AI flows ───────────────────────────────────────────────────────────
+  const getAIResponse = async (userMessage, hasExplicitContext = false) => {
+    const modelId = modelRef.current;
+    beginThinking();
+    try {
+      addThinkingStep(`Sending to ${getModelDisplayName(modelId)}...`);
+      // Last 10 user/assistant turns; replace the final turn with the
+      // context-augmented version we actually want to send.
+      const history = messagesRef.current
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content }));
+      if (history.length > 0) history[history.length - 1].content = userMessage;
+
+      const options = {
+        reasoningEffort: reasoningRef.current,
+        webSearch: webSearchRef.current,
+        structured: true,
+      };
+      if (webSearchRef.current) completeThinkingStep('Searching the web...');
+
+      const response = await chat(modelId, history, !hasExplicitContext, options);
+
+      if (response && typeof response === 'object' && response.text) {
+        if (response.usedWebSearch) completeThinkingStep('Processed web search results');
+        if (response.thinking) completeThinkingStep('Applied reasoning');
+        completeThinkingStep('Response ready');
+        endThinking();
+        appendMessage({
+          id: uid(), role: 'assistant', content: response.text,
+          reasoning: response.thinking, timestamp: new Date().toISOString(),
+        });
+      } else {
+        completeThinkingStep('Response received');
+        endThinking();
+        addMessage('assistant', response);
+      }
+      refreshCustomModels(); // chat() records any newly-used custom slug
+    } catch (error) {
+      endThinking();
+      addMessage('error', error.message);
+    }
+  };
+
+  const getAIFeedback = async () => {
+    beginThinking();
+    try {
+      addThinkingStep('Analyzing your resume...');
+      const response = await getFeedback(modelRef.current);
+      completeThinkingStep('Feedback ready');
+      endThinking();
+      addMessage('assistant', response);
+    } catch (error) {
+      endThinking();
+      addMessage('error', error.message);
+    }
+  };
+
+  const getAIImproveSummary = async () => {
+    beginThinking();
+    try {
+      addThinkingStep('Reading current summary...');
+      await new Promise((r) => setTimeout(r, 200));
+      completeThinkingStep('Writing improved summary...');
+      const response = await improveSummary(modelRef.current);
+      completeThinkingStep('Summary improved');
+      endThinking();
+      addMessage('assistant', response, { action: 'apply-summary', value: response });
+    } catch (error) {
+      endThinking();
+      addMessage('error', error.message);
+    }
+  };
+
+  const getAIGenerateBullets = async (context) => {
+    beginThinking();
+    try {
+      addThinkingStep('Generating bullet points...');
+      const response = await generateBullets(modelRef.current, context, 3);
+      completeThinkingStep('Bullets generated');
+      endThinking();
+      addMessage('assistant', response);
+    } catch (error) {
+      endThinking();
+      addMessage('error', error.message);
+    }
+  };
+
+  const requestAIChanges = async (instruction, targetPath = null) => {
+    beginThinking();
+    try {
+      addThinkingStep('Analyzing your request...');
+      await new Promise((r) => setTimeout(r, 300));
+      completeThinkingStep('Generating resume changes...');
+      const result = await generateResumeChanges(modelRef.current, instruction, targetPath);
+
+      if (!result.changes || Object.keys(result.changes).length === 0) {
+        completeThinkingStep('No changes needed');
+        endThinking();
+        addMessage('assistant', result.explanation
+          || 'No changes were generated. The AI may need more specific instructions.');
+        return;
+      }
+
+      completeThinkingStep('Preparing diff view...');
+      const changeSet = createChangeSet(store.getData(), result.changes);
+      showInlineChanges(changeSet);
+
+      const count = Object.keys(result.changes).length;
+      completeThinkingStep(`Generated ${count} change${count > 1 ? 's' : ''}`);
+      endThinking();
+      appendMessage({
+        id: uid(), role: 'assistant',
+        content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''} to your resume.`}\n\nChanges are highlighted on your resume. Use the buttons to apply or reject individual changes, or click "Review Changes" below for a detailed diff view.`,
+        timestamp: new Date().toISOString(),
+        pendingChanges: changeSet,
+      });
+    } catch (error) {
+      endThinking();
+      addMessage('error', error.message);
+    }
+  };
+
+  // ── profile interview ──────────────────────────────────────────────────
+  const startInterview = async () => {
+    if (getConfiguredProviders().length === 0) {
+      addMessage('error', 'Please configure an API key in settings before starting a profile interview.');
+      return;
+    }
+    interviewModeRef.current = true;
+    interviewMsgsRef.current = [];
+    addMessage('assistant', `**Profile Interview Started**
+
+I'll ask you some questions to learn about your professional background. This information will help me give you better resume suggestions.
+
+When you're done, type \`/done\` to save the information to your profile.
+
+Let's begin!`);
+
+    beginThinking();
+    try {
+      addThinkingStep('Starting interview...');
+      interviewMsgsRef.current.push({ role: 'user', content: 'Please start the interview.' });
+      const response = await profileInterviewChat(modelRef.current, interviewMsgsRef.current);
+      interviewMsgsRef.current.push({ role: 'assistant', content: response });
+      completeThinkingStep('Ready');
+      endThinking();
+      addMessage('assistant', response);
+    } catch (error) {
+      endThinking();
+      interviewModeRef.current = false;
+      addMessage('error', `Failed to start interview: ${error.message}`);
+    }
+  };
+
+  const continueInterview = async (userMessage) => {
+    interviewMsgsRef.current.push({ role: 'user', content: userMessage });
+    beginThinking();
+    try {
+      addThinkingStep('Thinking...');
+      const response = await profileInterviewChat(modelRef.current, interviewMsgsRef.current);
+      interviewMsgsRef.current.push({ role: 'assistant', content: response });
+      completeThinkingStep('Response ready');
+      endThinking();
+      addMessage('assistant', response);
+    } catch (error) {
+      endThinking();
+      addMessage('error', error.message);
+    }
+  };
+
+  const finishInterview = async () => {
+    if (interviewMsgsRef.current.length < 4) {
+      addMessage('assistant', "We haven't talked enough yet! Please answer a few more questions so I have information to save.");
+      return;
+    }
+    beginThinking();
+    try {
+      addThinkingStep('Analyzing conversation...');
+      const extracted = await extractProfileFromInterview(modelRef.current, interviewMsgsRef.current);
+      completeThinkingStep('Saving to profile...');
+      saveExtractedProfile(extracted);
+      completeThinkingStep('Profile updated!');
+      endThinking();
+
+      interviewModeRef.current = false;
+      interviewMsgsRef.current = [];
+
+      let summary = "**Profile Updated!**\n\nI've saved the following information to your profile:\n\n";
+      if (extracted.personalSummary) summary += '- Personal summary\n';
+      if (extracted.careerGoals) summary += '- Career goals\n';
+      if (extracted.workExperience?.length > 0) summary += `- ${extracted.workExperience.length} work experience entries\n`;
+      if (extracted.skills?.length > 0) summary += `- ${extracted.skills.length} skills\n`;
+      if (extracted.education?.length > 0) summary += `- ${extracted.education.length} education entries\n`;
+      if (extracted.projects?.length > 0) summary += `- ${extracted.projects.length} projects\n`;
+      if (extracted.certifications?.length > 0) summary += `- ${extracted.certifications.length} certifications\n`;
+      if (extracted.achievements?.length > 0) summary += `- ${extracted.achievements.length} achievements\n`;
+      if (extracted.industryKnowledge) summary += '- Industry knowledge\n';
+      if (extracted.preferences) summary += '- Work preferences\n';
+      summary += '\nYou can view and edit your profile from **Tools > User Profile**.';
+      addMessage('assistant', summary);
+    } catch (error) {
+      endThinking();
+      addMessage('error', `Failed to extract profile: ${error.message}\n\nYou can try \`/done\` again or continue the conversation.`);
+    }
+  };
+
+  // ── simple commands ────────────────────────────────────────────────────
+  const clearHistory = () => {
+    setMessages([]);
+    persistCurrentThread([]);
+    clearLegacyHistory();
+  };
+
+  const showHelp = () => addMessage('assistant', `**Available Commands:**
+
+• **/feedback** - Get detailed feedback on your resume
+• **/improve summary** - Get an improved version of your summary
+• **/improve [section]** - Get suggestions for a specific section
+• **/generate [context]** - Generate bullet points based on context
+• **/profile** - Start AI interview to fill your profile
+• **/done** - Finish profile interview and save
+• **/clear** - Clear chat history
+• **/help** - Show this help message
+
+**Tips:**
+- You can also just type naturally and ask questions about your resume
+- Click "Apply to Resume" buttons to directly update your resume
+- Use the shortcut buttons below the input for quick actions
+- Your User Profile info is automatically included in AI context`);
+
+  const showDebugInfo = () => {
+    const profile = getUserProfile();
+    const hasProfile = profile && (
+      profile.personalSummary || profile.careerGoals ||
+      profile.workExperience?.length > 0 || profile.skills?.length > 0
+    );
+    let msg = '**Debug Information:**\n\n';
+    msg += `**Profile Interview Mode:** ${interviewModeRef.current ? 'Active' : 'Inactive'}\n`;
+    msg += `**Interview Messages:** ${interviewMsgsRef.current.length}\n\n`;
+    msg += '**User Profile Status:**\n';
+    if (!profile) {
+      msg += '- Profile: Not found\n';
+    } else {
+      msg += `- Personal Summary: ${profile.personalSummary ? `Set (${profile.personalSummary.length} chars)` : 'Empty'}\n`;
+      msg += `- Career Goals: ${profile.careerGoals ? 'Set' : 'Empty'}\n`;
+      msg += `- Work Experience: ${profile.workExperience?.length || 0} entries\n`;
+      msg += `- Skills: ${profile.skills?.length || 0} entries\n`;
+      msg += `- Education: ${profile.education?.length || 0} entries\n`;
+      msg += `- Projects: ${profile.projects?.length || 0} entries\n`;
+      msg += `- Industry Knowledge: ${profile.industryKnowledge ? 'Set' : 'Empty'}\n`;
+      msg += `- Preferences: ${profile.preferences ? 'Set' : 'Empty'}\n`;
+    }
+    msg += `\n**AI Context:** ${hasProfile ? 'Profile will be included in AI requests' : 'Profile is empty, not included in AI requests'}`;
+    addMessage('assistant', msg);
+  };
+
+  const handleCommand = async (command) => {
+    const parts = command.split(' ');
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1).join(' ');
+
+    switch (cmd) {
+      case '/feedback':
+        addMessage('user', 'Please review my resume and provide feedback.');
+        await getAIFeedback();
+        break;
+      case '/improve':
+        if (args.toLowerCase().includes('summary')) {
+          addMessage('user', 'Please improve my resume summary.');
+          await getAIImproveSummary();
+        } else {
+          addMessage('user', `Please improve: ${args}`);
+          await getAIResponse(`Please improve this section of my resume: ${args}`);
+        }
+        break;
+      case '/generate':
+        addMessage('user', `Generate content: ${args}`);
+        await getAIGenerateBullets(args);
+        break;
+      case '/clear':
+        clearHistory();
+        break;
+      case '/help':
+        showHelp();
+        break;
+      case '/profile':
+        await startInterview();
+        break;
+      case '/done':
+        if (interviewModeRef.current) await finishInterview();
+        else addMessage('assistant', 'No active interview to finish. Use `/profile` to start a profile interview.');
+        break;
+      case '/debug':
+        showDebugInfo();
+        break;
+      default:
+        addMessage('assistant', `Unknown command: ${cmd}\n\nAvailable commands:\n• /feedback - Get resume feedback\n• /improve [section] - Improve a section\n• /generate [context] - Generate bullet points\n• /profile - Start AI interview to fill your profile\n• /done - Finish profile interview and save\n• /clear - Clear chat history\n• /help - Show this help`);
+    }
+  };
+
+  // ── send entry point ───────────────────────────────────────────────────
+  const send = async (rawText) => {
+    const text = (rawText || '').trim();
+    if (!text || loadingRef.current) return;
+
+    if (getConfiguredProviders().length === 0) {
+      addMessage('error', 'Please configure an API key in settings before using the AI assistant.');
+      return;
+    }
+    if (text.startsWith('/')) {
+      await handleCommand(text);
+      return;
+    }
+
+    const chips = chipsRef.current;
+    let messageWithContext = text;
+    if (chips.length > 0) {
+      const contextText = chips.map((chip) => `[${chip.label}]:\n${chip.content}`).join('\n\n');
+      messageWithContext = `Context from resume:\n${contextText}\n\n---\n\nUser request: ${text}`;
+    }
+
+    addMessage('user', text);
+    const targetPath = chips.length > 0 ? chips[0].path : null;
+    clearChips();
+
+    if (interviewModeRef.current) {
+      await continueInterview(text);
+      return;
+    }
+    if (isChangeRequest(text)) await requestAIChanges(messageWithContext, targetPath);
+    else await getAIResponse(messageWithContext, chips.length > 0);
+  };
+
+  // ── context chips ──────────────────────────────────────────────────────
+  const addChip = (chip) => {
+    const exists = chipsRef.current.some(
+      (c) => (c.path && c.path === chip.path) || c.content === chip.content
+    );
+    if (!exists) setContextChips([...chipsRef.current, chip]);
+  };
+  const openWithContext = ({ context, path, type = 'text' }) => {
+    if (!context) return;
+    addChip({ type, path: path || '', content: context, label: getContextLabel(context, type, path) });
+  };
+  const removeChip = (index) => setContextChips(chipsRef.current.filter((_, i) => i !== index));
+  const clearChips = () => setContextChips([]);
+
+  // ── threads ────────────────────────────────────────────────────────────
+  const switchThread = (threadId, save = true) => {
+    if (save && currentThreadIdRef.current) persistCurrentThread(messagesRef.current);
+    const thread = threadsRef.current.find((t) => t.id === threadId);
+    if (thread) {
+      setCurrentThreadId(threadId);
+      setMessages(thread.messages || []);
+    }
+  };
+  const newThread = () => {
+    const t = makeThread('New Chat');
+    const next = [t, ...threadsRef.current];
+    setThreads(next);
+    persistThreads(next);
+    switchThread(t.id, true);
+  };
+  const deleteThread = (threadId) => {
+    const next = threadsRef.current.filter((t) => t.id !== threadId);
+    if (next.length === threadsRef.current.length) return; // not found
+    if (threadId === currentThreadIdRef.current) {
+      if (next.length === 0) {
+        const t = makeThread('New Chat');
+        setThreads([t]);
+        persistThreads([t]);
+        setCurrentThreadId(t.id);
+        setMessages([]);
+      } else {
+        setThreads(next);
+        persistThreads(next);
+        setCurrentThreadId(next[0].id);
+        setMessages(next[0].messages || []);
+      }
+    } else {
+      setThreads(next);
+      persistThreads(next);
+    }
+  };
+
+  // ── model + options ────────────────────────────────────────────────────
+  const selectModel = (value) => {
+    setCurrentModelState(value);
+    setReasoningSupported(modelSupportsReasoning(value));
+    saveSettings({ defaultModel: value });
+  };
+  const applyCustomSlug = (slug) => {
+    const s = (slug || '').trim();
+    if (!s || !isSafeModelSlug(s)) return false;
+    selectModel(s);
+    return true;
+  };
+  const removeCustomModelEntry = (slug) => {
+    removeCustomModel(slug);
+    // Fall back to the built-in default, NOT getInitialModel(): settings still
+    // points at the just-removed (valid) slug, so getInitialModel() would
+    // re-select what we just removed.
+    if (slug === modelRef.current) selectModel(getDefaultModelId() || FALLBACK_MODEL);
+    refreshCustomModels();
+  };
+  const setReasoning = (level) => setReasoningEffortState(level);
+  const toggleWebSearch = () => setWebSearchState(!webSearchRef.current);
+
+  // ── misc actions ───────────────────────────────────────────────────────
+  const applyAction = (action, value) => {
+    if (action === 'apply-summary') {
+      // The resume re-renders via main.js's store subscription, so no explicit
+      // onApply callback is needed here.
+      store.update('summary', value);
+      addMessage('assistant', '✓ Summary updated successfully!');
+    } else {
+      console.log('Unknown apply action:', action);
+    }
+  };
+  const openDiffForMessage = (messageId) => {
+    const m = messagesRef.current.find((x) => x.id === messageId);
+    if (m?.pendingChanges) showDiffView(m.pendingChanges);
+  };
+
+  const refresh = useCallback(() => {
+    const model = getInitialModel();
+    setConfigured(isConfigured());
+    setConfiguredProviders(getConfiguredProviders());
+    setCustomModels(isConfigured() ? getCustomModels() : []);
+    setCurrentModelState(model);
+    setReasoningSupported(modelSupportsReasoning(model));
+  }, [setCurrentModelState]);
+
+  // ── effects ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const { threads: loaded, currentThreadId: cid } = loadThreads();
+    setThreads(loaded);
+    setCurrentThreadId(cid);
+    setMessages(loaded.find((t) => t.id === cid)?.messages || []);
+    fetchModelCatalog()
+      .then(() => setReasoningSupported(modelSupportsReasoning(modelRef.current)))
+      .catch(() => {});
+  }, [setThreads, setCurrentThreadId, setMessages, modelRef]);
+
+  useEffect(() => {
+    const onSettings = () => refresh();
+    window.addEventListener(SETTINGS_UPDATED_EVENT, onSettings);
+    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, onSettings);
+  }, [refresh]);
+
+  return {
+    // state
+    messages, threads, currentThreadId, loading, thinking, contextChips,
+    currentModel, reasoningEffort, webSearchEnabled,
+    configured, configuredProviders, reasoningSupported, customModels,
+    // actions
+    send, selectModel, applyCustomSlug, removeCustomModelEntry,
+    setReasoning, toggleWebSearch, addChip, openWithContext, removeChip, clearChips,
+    newThread, switchThread, deleteThread, openDiffForMessage, applyAction,
+    startInterview, refresh,
+  };
+}
