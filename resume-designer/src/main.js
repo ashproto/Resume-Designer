@@ -45,7 +45,7 @@ import {
   importLegacyElectronData,
 } from './native.js';
 import { initTheme } from './theme.js';
-import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
+import { openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
 import { openUserProfilePanel } from './userProfilePanel.js';
 import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
@@ -376,8 +376,8 @@ export async function init() {
   // Initialize zoom controls
   initZoomControls();
   
-  // Initialize job description panel
-  initJobDescriptionPanel();
+  // Job descriptions panel is now React (components/jobs/JobsDialog.jsx), opened
+  // via window.openJobDescriptionPanel below (dispatches rd:open-jobs).
   
   // Version history is now a React component (src/components/HistoryDialog.jsx)
   // that opens on the rd:open-history event (see window.openHistoryPanel below).
