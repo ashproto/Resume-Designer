@@ -19,7 +19,6 @@ import {
 } from './renderer.js';
 import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
-import { initStructurePanel, setDesignSettings } from './structurePanel.js';
 import { initVariants } from './variantManager.js';
 import { initUpdateFlow } from './updateFlow.js';
 import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
@@ -357,12 +356,12 @@ export async function init() {
   // Initialize inline editor
   initInlineEditor();
   
-  // Initialize structure panel with design change callback
-  initStructurePanel(handleStructureChange, handleDesignChange);
-  
-  // Sync design settings to structure panel
-  setDesignSettings(currentPalette, currentLayout, customColor);
-  
+  // The structure panel is now a React component (src/components/structure/
+  // StructurePanel.jsx): it edits the resume directly through the store (the
+  // resume re-renders via the store subscription set up below) and dispatches
+  // rd:design-change for the palette/layout/custom-color changes main.js owns.
+  window.addEventListener('rd:design-change', (e) => handleDesignChange(e.detail));
+
   // Initialize PDF export
   initPdfExport();
   
@@ -605,11 +604,6 @@ function handleVariantChange(_variant) {
   renderCurrentResume();
   // Update job description panel analysis for new variant
   onJobPanelVariantChange();
-}
-
-// Handle structure panel changes
-function handleStructureChange() {
-  renderCurrentResume();
 }
 
 // Handle chat panel apply actions

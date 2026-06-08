@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
@@ -15,14 +16,13 @@ import { cn } from '@/lib/utils';
 // NESTED-LIST SCOPING (the #8 fix, restated structurally): each SortableList
 // owns its OWN DndContext. A drag begun inside a nested list (e.g. an
 // experience's bullets) is captured by that inner context and can never cross
-// into the parent list — the isolation that the vanilla code achieved by
-// resolving the list from `draggedItem.closest('[data-sortable]')`. The
-// restrictToParentElement modifier also keeps the drag image inside its list.
+// into the parent list — the isolation the vanilla code achieved by resolving
+// the list from `draggedItem.closest('[data-sortable]')`. restrictToParentElement
+// also keeps the drag image inside its own list.
 
 /**
  * A single, self-contained sortable list. `ids` are the stable item ids in
- * order; `onReorder(fromIndex, toIndex)` is called on drop (wire it to
- * store.moveInArray). Handle-only drag is enforced by SortableItem.
+ * order; `onReorder(fromIndex, toIndex)` fires on drop (wire to store.moveInArray).
  */
 export function SortableList({ ids, onReorder, children, className }) {
   const sensors = useSensors(
@@ -54,16 +54,18 @@ export function SortableList({ ids, onReorder, children, className }) {
   );
 }
 
+// Provides the active item's drag attributes/listeners to a <DragHandle> placed
+// anywhere within the item — so the handle can sit as a direct child (tool /
+// bullet / education rows) OR nested inside another element (the experience
+// accordion header), matching the original markup in each case.
+const SortableItemContext = createContext({ attributes: {}, listeners: undefined });
+
 /**
- * One sortable item. Renders a drag handle (the only drag-initiating element —
- * handle-only drag) followed by the item content. `className` carries the
- * existing item classes (e.g. "sortable-item tool-item"); `.dragging` is added
- * while dragging, matching the vanilla styling hooks.
+ * One sortable item. Renders the draggable container; the caller places a
+ * <DragHandle> wherever the original markup had it (handle-only drag).
+ * `.dragging` is added while dragging, matching the existing styling hooks.
  */
-export function SortableItem({
-  id, className, children,
-  handleClassName = 'drag-handle', handleContent = '⋮⋮', handleTitle = 'Drag to reorder',
-}) {
+export function SortableItem({ id, className, children }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -71,11 +73,20 @@ export function SortableItem({
     opacity: isDragging ? 0.5 : undefined,
   };
   return (
-    <div ref={setNodeRef} style={style} className={cn(className, isDragging && 'dragging')}>
-      <span className={handleClassName} title={handleTitle} {...attributes} {...listeners}>
-        {handleContent}
-      </span>
+    <SortableItemContext.Provider value={{ attributes, listeners }}>
+      <div ref={setNodeRef} style={style} className={cn(className, isDragging && 'dragging')}>
+        {children}
+      </div>
+    </SortableItemContext.Provider>
+  );
+}
+
+/** The drag-initiating handle for the enclosing SortableItem. */
+export function DragHandle({ className = 'drag-handle', children = '⋮⋮', title = 'Drag to reorder' }) {
+  const { attributes, listeners } = useContext(SortableItemContext);
+  return (
+    <span className={className} title={title} {...attributes} {...listeners}>
       {children}
-    </div>
+    </span>
   );
 }
