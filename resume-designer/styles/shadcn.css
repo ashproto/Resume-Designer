@@ -1,0 +1,108 @@
+/*
+ * shadcn/ui + Tailwind layer for the React app chrome.
+ *
+ * Tailwind utilities (Preflight disabled — see tailwind.config.js) plus the
+ * shadcn design-token contract expressed as ALIASES onto the app's existing 49
+ * CSS variables (styles/main.css). Because each shadcn token points at a
+ * --color-* var that already themes via [data-theme] and the
+ * prefers-color-scheme fallback, shadcn surfaces inherit light/dark/system
+ * theming with no extra wiring.
+ *
+ * Loaded by the React bundle (src/main.jsx, Step 4); the vanilla app and the
+ * PDF print window never import it.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The React root hosts the vanilla `.app` skeleton (App.jsx). display:contents
+   makes #root layout-transparent so `.app` keeps its body-level flex/grid. */
+#root {
+  display: contents;
+}
+
+@layer base {
+  :root {
+    --background: var(--color-bg);
+    --foreground: var(--color-text);
+
+    --card: var(--color-panel-bg);
+    --card-foreground: var(--color-text);
+    --popover: var(--color-panel-bg);
+    --popover-foreground: var(--color-text);
+
+    /* Accent is a warm terracotta in BOTH themes (#c45c3e / #d97a5d), so white
+       foreground reads on it in light and dark alike. */
+    --primary: var(--color-accent);
+    --primary-foreground: #ffffff;
+
+    --secondary: var(--color-bg-dark);
+    --secondary-foreground: var(--color-text);
+
+    --muted: var(--color-bg-dark);
+    --muted-foreground: var(--color-text-muted);
+
+    /* shadcn `accent` = the hover/active surface for menu items etc. Reuse the
+       app's native hover tint so menus highlight on-brand. */
+    --accent: var(--color-hover-bg);
+    --accent-foreground: var(--color-text);
+
+    --destructive: #c0392b;
+    --destructive-foreground: #ffffff;
+
+    --border: var(--color-border);
+    --input: var(--color-input-bg);
+    --ring: var(--color-accent);
+
+    --radius: 0.5rem;
+  }
+}
+
+/* ==========================================================================
+   Liquid-glass for shadcn / Radix surfaces  (Tauri desktop shell only)
+   --------------------------------------------------------------------------
+   Mirrors the tier model in styles/glass.css and REUSES its --glass-* tokens,
+   so the `prefers-reduced-transparency` block there (which flips every
+   --glass-*-pct to 100% and --glass-blur to none) neutralizes these surfaces
+   too — no per-rule fallback needed here.
+
+   These rules are intentionally UNLAYERED so they win over both the @layer base
+   aliases above and the Tailwind utility classes (bg-popover/bg-card/…), which
+   live in lower-priority layers. Active only under <html data-tauri="true">
+   (Tauri, or ?translucent in a browser), so a plain browser stays opaque.
+   ========================================================================== */
+
+/* Tint — redefine the floating + card surface tokens translucent under the
+   shell. `--input` is already made translucent by glass.css (via
+   --color-input-bg), so inputs inherit it for free. */
+:root[data-tauri="true"] {
+  --popover: color-mix(in srgb, var(--color-panel-bg) var(--glass-menu-pct), transparent);
+  --card: color-mix(in srgb, var(--color-panel-bg) var(--glass-content-pct), transparent);
+}
+
+/* Blur — portalled floating content (dropdown / select / combobox / popover /
+   tooltip) renders at document.body level, so its backdrop-filter samples the
+   page for real. This is exactly the nested-backdrop-filter defeat that
+   menuPortal.js worked around for the vanilla menus; Radix's body portal
+   supersedes that hack, so #glass-portal/menuPortal.js retire in Step 9. */
+:root[data-tauri="true"] [data-radix-popper-content-wrapper] > * {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* Dialog + Sheet content = modal tier: frosted, a touch more opaque for their
+   dense content (matches the vanilla `.modal` rule). [role="dialog"] is set by
+   Radix Dialog/Sheet/AlertDialog/CommandDialog content; vanilla `.modal`s don't
+   set it, so there's no cross-hit. */
+:root[data-tauri="true"] [role="dialog"] {
+  background: color-mix(in srgb, var(--color-modal-bg) var(--glass-modal-pct), transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* Lighten the modal scrim (the `glass-overlay` class is added to the shadcn
+   Dialog/Sheet Overlay components in Step 3) so the wallpaper vibrancy still
+   reads behind an open dialog — same treatment as glass.css gives `.modal-overlay`. */
+:root[data-tauri="true"] .glass-overlay {
+  background: color-mix(in srgb, var(--color-modal-overlay) 70%, transparent);
+}
