@@ -24,7 +24,7 @@ import { getSettings, saveVariantAnalysis, getVariantAnalysis } from './persiste
 import { createChangeSet } from './diffEngine.js';
 import { showDiffView } from './diffView.js';
 import { store } from './store.js';
-import { getCurrentId } from './headerBar.js';
+import { getCurrentId } from './variantManager.js';
 
 let panelContainer = null;
 let isAnalyzing = false;

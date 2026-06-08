@@ -10,7 +10,7 @@ import { getConfiguredProviders, isConfigured, getDefaultModelId, chat, generate
 import { refreshChatPanel } from './chatPanel.js';
 import { parseResumeText } from './resumeParser.js';
 import { addJobDescription } from './jobDescriptions.js';
-import { loadVariant, renderHeaderBar } from './headerBar.js';
+import { loadVariant } from './variantManager.js';
 
 const ONBOARDING_KEY = 'resume-designer-onboarding-complete';
 
@@ -1812,12 +1812,11 @@ function renderReviewStep(content, footer) {
     // Save variant using persistence function (id, name, data)
     saveVariant(variantId, variantName, resumeData);
     
-    // Load the new variant properly (this sets current ID, initializes persistence, and triggers callbacks)
+    // Load the new variant properly: sets current ID, initializes persistence,
+    // triggers callbacks, and notifies the React header (which re-renders its
+    // variant list automatically — no explicit header refresh needed).
     loadVariant(variantId);
-    
-    // Refresh the header bar dropdown to show the new variant
-    renderHeaderBar();
-    
+
     currentStep = 5; // Go to final step
     renderStep();
   });

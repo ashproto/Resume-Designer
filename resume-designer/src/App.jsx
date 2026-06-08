@@ -1,16 +1,17 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import shellHtml from './shell/appShell.html?raw';
 import { Toaster } from '@/components/ui/sonner';
+import Header from './components/Header.jsx';
 import SettingsDialog from './components/SettingsDialog.jsx';
 import { init } from './main.js';
 
 // Single-root migration shell.
 //
 // React renders an empty container and injects the existing vanilla chrome
-// skeleton (header, chat/structure panels, settings modal, toggles, hidden PDF
-// button) into it ONCE. The markup is app-controlled and fixed at build time (a
-// ?raw import of the former index.html body), NOT user input. The vanilla
-// init() then wires every module against that markup exactly as it did when the
+// skeleton (panels, toggles, hidden PDF button, empty header placeholder) into
+// it ONCE. The markup is app-controlled and fixed at build time (a ?raw import
+// of the former index.html body), NOT user input. The vanilla init() then wires
+// every still-vanilla module against that markup exactly as it did when the
 // markup lived in index.html. Regions are carved out into real React components
 // one at a time (Steps 5-7), shrinking this hosted blob.
 //
@@ -26,6 +27,10 @@ let didBoot = false;
 
 export default function App() {
   const shellRef = useRef(null);
+  // <Header> portals into the `#header-bar` element that lives in the injected
+  // skeleton, so it can't mount until that injection has run. Gate it on
+  // `ready`, flipped true the moment the skeleton is in the DOM.
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (didBoot) return;
@@ -40,12 +45,16 @@ export default function App() {
         host.appendChild(parsed.body.firstChild);
       }
     }
+    // The skeleton (incl. #header-bar) is now in the DOM — let portal-based
+    // chrome mount before the still-vanilla init() wires everything else.
+    setReady(true);
     init().catch((err) => console.error('[App] init failed:', err));
   }, []);
 
   return (
     <>
       <div ref={shellRef} style={{ display: 'contents' }} />
+      {ready && <Header />}
       <SettingsDialog />
       <Toaster />
     </>

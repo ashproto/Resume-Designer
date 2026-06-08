@@ -20,7 +20,8 @@ import {
 import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
 import { initStructurePanel, setDesignSettings } from './structurePanel.js';
-import { initHeaderBar } from './headerBar.js';
+import { initVariants } from './variantManager.js';
+import { initUpdateFlow } from './updateFlow.js';
 import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initSettingsModal, loadApiKeysToModal } from './settingsModal.js';
 import { initZoomControls } from './zoomControls.js';
@@ -346,8 +347,13 @@ export async function init() {
   // Initialize photo service
   initPhotoService();
   
-  // Initialize header bar (includes variant management)
-  initHeaderBar(handleVariantChange);
+  // Initialize variant management. The header VIEW is now a React component
+  // (src/components/Header.jsx) that subscribes to this module; main.js only
+  // wires the variant-change callback (re-render + job-panel re-sync). Register
+  // the updater->toast bridge here too, BEFORE startupUpdateCheck() below, so it
+  // catches startup status events.
+  initVariants(handleVariantChange);
+  initUpdateFlow();
 
   // Initialize inline editor
   initInlineEditor();

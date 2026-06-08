@@ -22,17 +22,18 @@ import {
   getUsageSummary, getUsageByDate, exportUsageData, clearUsageData,
   formatTokenCount, formatCost,
 } from '../tokenTrackingService.js';
+import { triggerManualUpdateCheck } from '../updateFlow.js';
+import { useUpdateBusy } from '../hooks/useUpdateBusy.js';
+import { exportFullBackupWithFeedback, importBackupFromFile } from '../backupFlow.js';
 
 // The Settings panel, converted from the static #settings-modal + settingsModal.js
 // to a shadcn Dialog. It opens via the `rd:open-settings` window event dispatched
 // by settingsModal.js's openSettings() shim (header + chat gears route through it).
 //
-// Wiring split (temporary, until headerBar converts in Step 6): this component
-// drives theme / API key / channel / auto-update / usage / replay / version
-// directly through the service modules. The Check-for-Updates and backup
-// Export/Import buttons keep their legacy ids so headerBar.js's document-level
-// delegated handlers (which own the update-status toast + backup/reload flows)
-// continue to handle them unchanged.
+// All actions wire directly to the service modules: theme / API key / channel /
+// auto-update / usage / replay / version, plus Check-for-Updates (updateFlow.js,
+// surfacing through Sonner) and backup Export/Import (backupFlow.js). The old
+// headerBar.js delegated handlers that used to own those flows are gone.
 
 const THEME_OPTIONS = [
   { value: 'light', label: 'Light', Icon: Sun },
@@ -76,6 +77,7 @@ export default function SettingsDialog() {
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [version, setVersion] = useState('—');
   const [usage, setUsage] = useState(null);
+  const updateBusy = useUpdateBusy();
 
   const refreshUsage = useCallback(() => {
     setUsage({ summary: getUsageSummary(), byDate: getUsageByDate() });
@@ -259,8 +261,9 @@ export default function SettingsDialog() {
               </section>
               <section className="space-y-2">
                 <h3 className="text-sm font-semibold">Check now</h3>
-                {/* Legacy id: headerBar.js's delegated handler owns the check flow + toast. */}
-                <Button id="settings-check-updates" variant="secondary">Check for Updates</Button>
+                <Button variant="secondary" onClick={triggerManualUpdateCheck} disabled={updateBusy}>
+                  {updateBusy ? 'Checking…' : 'Check for Updates'}
+                </Button>
                 <p className="text-xs text-muted-foreground">Current version: <span>{version}</span></p>
               </section>
             </TabsContent>
@@ -272,11 +275,19 @@ export default function SettingsDialog() {
               <h3 className="text-sm font-semibold">Backup &amp; restore</h3>
               <p className="text-xs text-muted-foreground">Save or restore all resumes, settings, job descriptions, and history as a single JSON file.</p>
               <div className="flex gap-2">
-                {/* Legacy ids: headerBar.js's delegated click/change handlers own the backup flow. */}
-                <Button id="settings-export-backup" variant="secondary">Export Full Backup</Button>
-                <label id="settings-import-backup" className={cn(buttonVariants({ variant: 'secondary' }), 'cursor-pointer')}>
+                <Button variant="secondary" onClick={exportFullBackupWithFeedback}>Export Full Backup</Button>
+                <label className={cn(buttonVariants({ variant: 'secondary' }), 'cursor-pointer')}>
                   Import Backup…
-                  <input id="settings-import-backup-file" type="file" accept="application/json,.json" hidden />
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    hidden
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = ''; // allow re-selecting the same file
+                      if (file) importBackupFromFile(file);
+                    }}
+                  />
                 </label>
               </div>
             </section>
