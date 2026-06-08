@@ -10,7 +10,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -274,6 +274,7 @@ export default function Header() {
         <DialogContent className="max-w-sm glass-card">
           <DialogHeader>
             <DialogTitle>Rename resume</DialogTitle>
+            <DialogDescription className="sr-only">Enter a new name for the current resume variant</DialogDescription>
           </DialogHeader>
           <form onSubmit={submitRename} className="space-y-4">
             <div className="space-y-2">

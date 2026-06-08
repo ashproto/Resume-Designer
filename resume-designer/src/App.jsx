@@ -3,6 +3,7 @@ import shellHtml from './shell/appShell.html?raw';
 import { Toaster } from '@/components/ui/sonner';
 import Header from './components/Header.jsx';
 import SettingsDialog from './components/SettingsDialog.jsx';
+import HistoryDialog from './components/HistoryDialog.jsx';
 import { init } from './main.js';
 
 // Single-root migration shell.
@@ -56,6 +57,7 @@ export default function App() {
       <div ref={shellRef} style={{ display: 'contents' }} />
       {ready && <Header />}
       <SettingsDialog />
+      <HistoryDialog />
       <Toaster />
     </>
   );

@@ -45,7 +45,6 @@ import {
 } from './native.js';
 import { initTheme } from './theme.js';
 import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
-import { initHistoryPanel, openHistoryPanel } from './historyPanel.js';
 import { initUserProfilePanel, openUserProfilePanel } from './userProfilePanel.js';
 import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
@@ -376,15 +375,16 @@ export async function init() {
   // Initialize job description panel
   initJobDescriptionPanel();
   
-  // Initialize history panel
-  initHistoryPanel();
-  
+  // Version history is now a React component (src/components/HistoryDialog.jsx)
+  // that opens on the rd:open-history event (see window.openHistoryPanel below).
+
   // Initialize user profile panel
   initUserProfilePanel();
   
   // Expose panel openers and wizards globally
   window.openJobDescriptionPanel = openJobDescriptionPanel;
-  window.openHistoryPanel = openHistoryPanel;
+  // History is React (HistoryDialog) — open it via its window event.
+  window.openHistoryPanel = () => window.dispatchEvent(new CustomEvent('rd:open-history'));
   window.openUserProfilePanel = openUserProfilePanel;
   window.showOnboardingWizard = showOnboardingWizard;
   window.startProfileInterviewFromChat = startProfileInterviewFromPanel;
