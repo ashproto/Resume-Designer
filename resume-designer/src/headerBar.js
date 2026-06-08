@@ -16,7 +16,6 @@ import {
   exportAsMarkdown,
   exportFullBackup,
   importFullBackupFromEnvelope,
-  importFullBackupMerge,
   generateUniqueVariantName
 } from './persistence.js';
 import { registerPortalMenu, isInPortal, purgePortal } from './menuPortal.js';
@@ -24,11 +23,8 @@ import { store, generateId, EMPTY_RESUME } from './store.js';
 import { flushPendingProfileSave } from './userProfilePanel.js';
 import {
   isElectron,
-  isTauri,
   checkForUpdates,
   onUpdateStatus,
-  probeLegacyElectronData,
-  importLegacyElectronData,
 } from './native.js';
 import { openSettings } from './settingsModal.js';
 
@@ -124,96 +120,6 @@ function showPromptModal(message, defaultValue = '') {
         cleanup(null);
       }
     });
-  });
-}
-
-/**
- * Three-button modal for the "Import from previous Electron version"
- * flow. Resolves to 'merge', 'replace', or null (cancel).
- *
- * Uses the project's existing .modal-overlay / .modal classes so
- * theming, dark mode, and the print-mode hide rule come for free.
- * Native `confirm()` only supports OK/Cancel, so we hand-roll this
- * to expose all three choices in one dialog rather than chaining
- * confirms.
- *
- * Dynamic values (counts, source path) are injected via textContent
- * placeholders rather than template-string interpolation, so a path
- * that happens to contain `<`/`>` can never become HTML.
- */
-function showLegacyImportDialog(probe) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.id = 'legacy-import-modal-overlay';
-    const variantWord = probe.variantCount === 1 ? 'resume' : 'resumes';
-    const jdWord = probe.jobDescriptionCount === 1 ? 'job description' : 'job descriptions';
-    // Static HTML skeleton with placeholder ids; populated below via
-    // textContent (XSS-safe).
-    overlay.innerHTML = `
-      <div class="modal" style="max-width: 480px;">
-        <div class="modal-header">
-          <h3 class="modal-title">Import data from your previous version?</h3>
-          <button class="modal-close" id="legacy-import-close">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-        <div class="modal-content">
-          <p style="margin-top: 0;">Found data from the old Electron version:</p>
-          <ul style="margin: 8px 0 12px 20px; padding: 0;">
-            <li><strong id="legacy-import-variant-count"></strong> <span id="legacy-import-variant-word"></span></li>
-            <li><strong id="legacy-import-jd-count"></strong> <span id="legacy-import-jd-word"></span></li>
-            <li id="legacy-import-profile-line" hidden>Your user profile</li>
-          </ul>
-          <p style="font-size: 0.85em; color: var(--color-text-muted); margin: 0 0 16px 0; word-break: break-all;">
-            Source: <code id="legacy-import-source-path"></code>
-          </p>
-          <p style="margin: 0 0 8px 0;"><strong>Merge:</strong> Add the old resumes alongside your current ones. Your current resumes, user profile, and settings are preserved.</p>
-          <p style="margin: 0 0 16px 0;"><strong>Replace:</strong> Discard your current data and use the old data instead.</p>
-          <div class="form-actions" style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
-            <button class="btn btn-secondary" id="legacy-import-cancel">Cancel</button>
-            <button class="btn btn-secondary" id="legacy-import-replace">Replace</button>
-            <button class="btn btn-primary" id="legacy-import-merge">Merge</button>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    // Inject dynamic values via textContent — never innerHTML — so a
-    // hostile path or unexpected count value can't break out into
-    // executable markup.
-    overlay.querySelector('#legacy-import-variant-count').textContent = String(probe.variantCount);
-    overlay.querySelector('#legacy-import-variant-word').textContent = variantWord;
-    overlay.querySelector('#legacy-import-jd-count').textContent = String(probe.jobDescriptionCount);
-    overlay.querySelector('#legacy-import-jd-word').textContent = jdWord;
-    overlay.querySelector('#legacy-import-source-path').textContent = probe.sourcePath ?? 'unknown';
-    if (probe.userProfilePresent) {
-      overlay.querySelector('#legacy-import-profile-line').hidden = false;
-    }
-
-    requestAnimationFrame(() => overlay.classList.add('show'));
-
-    const cleanup = (result) => {
-      overlay.classList.remove('show');
-      setTimeout(() => overlay.remove(), 200);
-      document.removeEventListener('keydown', keyHandler);
-      resolve(result);
-    };
-    overlay.querySelector('#legacy-import-close').addEventListener('click', () => cleanup(null));
-    overlay.querySelector('#legacy-import-cancel').addEventListener('click', () => cleanup(null));
-    overlay.querySelector('#legacy-import-replace').addEventListener('click', () => cleanup('replace'));
-    overlay.querySelector('#legacy-import-merge').addEventListener('click', () => cleanup('merge'));
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) cleanup(null);
-    });
-    const keyHandler = (e) => {
-      if (e.key === 'Escape') cleanup(null);
-    };
-    document.addEventListener('keydown', keyHandler);
   });
 }
 
@@ -372,123 +278,6 @@ function showImportSuccessAndReload(message) {
   // `{ once: true }` so a stray double-click can't fire reload twice.
   okBtn.addEventListener('click', proceed, { once: true });
   document.addEventListener('keydown', keyHandler);
-}
-
-/**
- * Tools → Import from previous Electron version… handler.
- *
- * - Probe via Rust. If nothing found, show a friendly alert with the
- *   path we checked so the user can see we actually looked.
- * - If found, show the merge/replace/cancel dialog (above).
- * - On Merge: call importFullBackupMerge — current state wins on
- *   collision, so anything the user has built in the new version is
- *   preserved; old variants get added alongside.
- * - On Replace: call importFullBackupFromEnvelope — destructive,
- *   wipes current owned keys and writes the legacy envelope.
- * - On either success, reload so the in-memory store re-reads from
- *   localStorage and the variant selector reflects the new state.
- */
-async function handleImportLegacyElectron() {
-  if (!isTauri) {
-    alert('Legacy-data import is only available in the desktop app.');
-    return;
-  }
-  let probe;
-  try {
-    probe = await probeLegacyElectronData();
-  } catch (err) {
-    console.error('[legacy-import] probe failed:', err);
-    alert(`Could not check for legacy data: ${err?.message ?? String(err)}`);
-    return;
-  }
-  if (!probe?.found) {
-    const where = probe?.sourcePath
-      ? `Looked at: ${probe.sourcePath}`
-      : 'No legacy Electron data directory exists at the standard userData path.';
-    alert(`No legacy Electron data found.\n\n${where}`);
-    return;
-  }
-
-  const choice = await showLegacyImportDialog(probe);
-  if (!choice) return;
-
-  let envelope;
-  try {
-    envelope = await importLegacyElectronData();
-  } catch (err) {
-    console.error('[legacy-import] extract failed:', err);
-    alert(`Could not read legacy data: ${err?.message ?? String(err)}`);
-    return;
-  }
-
-  try {
-    // Flush ALL pending debounced writers that target owned localStorage
-    // keys, then run the import. Two writers exist today:
-    //   1. resume store (src/store.js:415) — 500 ms setTimeout that
-    //      writes `data` to localStorage via saveCallback(data).
-    //   2. profile panel (src/userProfilePanel.js:654) — 500 ms
-    //      setTimeout whose saveUserProfile() re-reads
-    //      `resume-designer-data`, splices in `userProfile` from
-    //      `profileData`, and writes back.
-    //
-    // Both bypass the import path entirely. The import writes
-    // localStorage directly, and reloadWithOverlay() yields the event
-    // loop for ~16 ms so its overlay paint commits before reload. Any
-    // save callback whose timer already fired (and is sitting in the
-    // macrotask queue) will run during that yield — writing PRE-import
-    // state on top of the freshly-imported data and reloading into a
-    // corrupted backup. Flushing both writers here closes that race.
-    //
-    // saveNow() and flushPendingProfileSave() both clearTimeout +
-    // synchronously persist — the synchronous-persist matters for the
-    // Merge path (current data wins on collision, so unsaved edits
-    // need to be in localStorage when the merge runs).
-    try {
-      store.saveNow();
-      flushPendingProfileSave();
-    } catch (err) {
-      // Don't block the import — worst case the user's last few
-      // keystrokes since the last debounced save are lost, but the
-      // imported data is what they explicitly asked for.
-      console.warn('[legacy-import] pre-import flush failed:', err);
-    }
-
-    let summary;
-    let skipNote = '';
-    if (choice === 'merge') {
-      const r = importFullBackupMerge(envelope);
-      summary =
-        `Merged in ${r.variantsAdded} resumes, ${r.jobDescriptionsAdded} job descriptions, ` +
-        `and ${r.settingsKeysAdded} settings keys from your previous version.`;
-      if (r.historySkipped > 0) {
-        skipNote =
-          `\n\nNote: ${r.historySkipped} undo/redo history ` +
-          `${r.historySkipped === 1 ? 'entry was' : 'entries were'} too large to fit ` +
-          `in browser storage and ${r.historySkipped === 1 ? 'was' : 'were'} skipped. ` +
-          `Your resumes themselves are intact.`;
-      }
-    } else {
-      const r = importFullBackupFromEnvelope(envelope);
-      summary =
-        `Restored ${r.keysImported} keys from your previous version ` +
-        `(removed ${r.removedExistingKeys} existing keys).`;
-      if (r.historySkipped > 0) {
-        skipNote =
-          `\n\nNote: ${r.historySkipped} undo/redo history ` +
-          `${r.historySkipped === 1 ? 'entry was' : 'entries were'} too large to fit ` +
-          `in browser storage and ${r.historySkipped === 1 ? 'was' : 'were'} skipped. ` +
-          `Your resumes themselves are intact.`;
-      }
-    }
-    // Custom DOM modal instead of native alert() — see
-    // showImportSuccessAndReload's doc-comment for why. The "Reloading…"
-    // line is dropped from the message text because the OK click flows
-    // directly into the loading overlay, which IS the reload UX.
-    showImportSuccessAndReload(`${summary}${skipNote}`);
-  } catch (err) {
-    console.error('[legacy-import] apply failed:', err);
-    alert(`Import failed: ${err?.message ?? String(err)}`);
-  }
 }
 
 // Initialize header bar
@@ -767,9 +556,8 @@ export function renderHeaderBar() {
         <!-- Tools Dropdown -->
         <div class="header-tools-dropdown">
           <button class="header-tools-btn" id="btn-header-tools" title="Tools">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
             </svg>
             <span class="btn-text">Tools</span>
             <svg class="dropdown-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -839,60 +627,6 @@ export function renderHeaderBar() {
         </svg>
       </button>
 
-      <div class="theme-toggle-dropdown" id="theme-toggle-dropdown">
-        <button class="header-action-btn theme-toggle-btn" id="theme-toggle-btn" title="Toggle theme">
-          <svg class="theme-icon theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="5"/>
-            <line x1="12" y1="1" x2="12" y2="3"/>
-            <line x1="12" y1="21" x2="12" y2="23"/>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-            <line x1="1" y1="12" x2="3" y2="12"/>
-            <line x1="21" y1="12" x2="23" y2="12"/>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-          </svg>
-          <svg class="theme-icon theme-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-          </svg>
-          <svg class="theme-icon theme-icon-system" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="3" width="20" height="14" rx="2"/>
-            <line x1="8" y1="21" x2="16" y2="21"/>
-            <line x1="12" y1="17" x2="12" y2="21"/>
-          </svg>
-        </button>
-        <div class="theme-toggle-menu" id="theme-toggle-menu">
-          <button class="theme-option" data-theme="light">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="5"/>
-              <line x1="12" y1="1" x2="12" y2="3"/>
-              <line x1="12" y1="21" x2="12" y2="23"/>
-              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-              <line x1="1" y1="12" x2="3" y2="12"/>
-              <line x1="21" y1="12" x2="23" y2="12"/>
-              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-            </svg>
-            Light
-          </button>
-          <button class="theme-option" data-theme="dark">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-            </svg>
-            Dark
-          </button>
-          <button class="theme-option" data-theme="system">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2"/>
-              <line x1="8" y1="21" x2="16" y2="21"/>
-              <line x1="12" y1="17" x2="12" y2="21"/>
-            </svg>
-            System
-          </button>
-        </div>
-      </div>
-      
       <button class="btn btn-primary header-pdf-btn" id="header-download-pdf">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -1140,13 +874,6 @@ function setupHeaderEventListeners() {
       openSettings();
     }
 
-    // Import from previous Electron version (Settings → Data) — opt-in path
-    // for users whose auto-migration didn't run. Opens a probe+confirm flow
-    // with Merge/Replace choice.
-    if (target.id === 'settings-import-legacy-electron') {
-      handleImportLegacyElectron();
-    }
-
     // Check for updates (Settings → Updates)
     if (target.id === 'settings-check-updates') {
       triggerManualUpdateCheck();
@@ -1236,12 +963,11 @@ function setupHeaderEventListeners() {
           );
           if (!ok) return;
           // Flush all pending debounced writers (resume store + profile
-          // panel) before the destructive restore. See
-          // handleImportLegacyElectron above for the full reasoning —
-          // short version: reloadWithOverlay yields to the event loop
-          // for 16 ms before reload(), and any queued save callback
-          // (resume `data` OR profile `profileData`) fires in that
-          // window and overwrites the just-imported resume-designer-data.
+          // panel) before the destructive restore: reloadWithOverlay
+          // yields to the event loop for 16 ms before reload(), and any
+          // queued save callback (resume `data` OR profile `profileData`)
+          // fires in that window and overwrites the just-imported
+          // resume-designer-data.
           try {
             store.saveNow();
             flushPendingProfileSave();
@@ -1260,9 +986,8 @@ function setupHeaderEventListeners() {
           const result = importFullBackupFromEnvelope(preview);
           let backupNote = '';
           if (result.historySkipped > 0) {
-            // Same skip-note shape as handleImportLegacyElectron so a
-            // user sees consistent language whether they import via
-            // file picker or via the legacy-Electron menu item.
+            // Surface how many oversized undo/redo entries were dropped
+            // so the success count is honest about what actually landed.
             backupNote =
               `\n\nNote: ${result.historySkipped} undo/redo history ` +
               `${result.historySkipped === 1 ? 'entry was' : 'entries were'} ` +

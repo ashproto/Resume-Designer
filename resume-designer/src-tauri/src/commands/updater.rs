@@ -22,10 +22,24 @@ const STABLE_ENDPOINT: &str =
 const BETA_ENDPOINT: &str =
     "https://github.com/SiriusA7/Resume-Designer/releases/download/next/latest.json";
 
-fn endpoint_for(channel: &str) -> &'static str {
+// The beta channel is a *superset*: it also reads the stable manifest so a beta
+// user still receives a stable release that's newer than the latest pre-release
+// (GitHub's `/releases/latest` excludes pre-releases, so the two never overlap).
+fn endpoints_for(channel: &str) -> Vec<&'static str> {
     match channel {
-        "beta" | "next" => BETA_ENDPOINT,
-        _ => STABLE_ENDPOINT,
+        "beta" | "next" => vec![BETA_ENDPOINT, STABLE_ENDPOINT],
+        _ => vec![STABLE_ENDPOINT],
+    }
+}
+
+// `a >= b` by semver. Unparseable versions sort last, so a parseable candidate
+// always wins; if neither parses we keep the incumbent (`a`).
+fn version_ge(a: &str, b: &str) -> bool {
+    match (semver::Version::parse(a), semver::Version::parse(b)) {
+        (Ok(va), Ok(vb)) => va >= vb,
+        (Ok(_), Err(_)) => true,
+        (Err(_), Ok(_)) => false,
+        (Err(_), Err(_)) => true,
     }
 }
 
@@ -61,6 +75,21 @@ pub enum DownloadEvent {
     Finished,
 }
 
+/// Check a single endpoint's manifest in isolation. Returning a `Result` (rather
+/// than letting `?` escape) lets the caller treat a per-endpoint failure as
+/// non-fatal and continue to the channel's other endpoint(s).
+async fn check_endpoint(app: &AppHandle, endpoint: &str) -> Result<Option<Update>, String> {
+    let url = Url::parse(endpoint).map_err(|e| e.to_string())?;
+    app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Check the given channel's endpoint for an update. Stores the result (if any)
 /// in `PendingUpdate` and returns lightweight metadata for the renderer.
 #[tauri::command]
@@ -69,18 +98,47 @@ pub async fn check_update_on_channel(
     channel: String,
     pending: State<'_, PendingUpdate>,
 ) -> Result<Option<UpdateInfo>, String> {
-    let url = Url::parse(endpoint_for(&channel)).map_err(|e| e.to_string())?;
-    let update = app
-        .updater_builder()
-        .endpoints(vec![url])
-        .map_err(|e| e.to_string())?
-        .build()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
+    // Check each of the channel's endpoints independently and keep the
+    // highest-version update. (Tauri's multi-endpoint support is first-wins,
+    // not max-version, so the superset can't be expressed as a single builder.)
+    //
+    // A per-endpoint failure is non-fatal: a beta user must still be offered a
+    // newer *stable* release even when the rolling `next` manifest is briefly
+    // missing/404 (e.g. while the pre-release is being republished). We surface
+    // an error only when *no* endpoint could be reached.
+    let mut best: Option<Update> = None;
+    let mut first_error: Option<String> = None;
+    let mut checked_any = false;
+    for endpoint in endpoints_for(&channel) {
+        match check_endpoint(&app, endpoint).await {
+            Ok(found) => {
+                checked_any = true;
+                if let Some(candidate) = found {
+                    best = match best {
+                        Some(current) if version_ge(&current.version, &candidate.version) => {
+                            Some(current)
+                        }
+                        _ => Some(candidate),
+                    };
+                }
+            }
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+    }
 
-    let info = update.as_ref().map(|u| UpdateInfo {
+    // Every endpoint errored — report the first failure rather than silently
+    // masquerading as "up to date".
+    if !checked_any {
+        return Err(
+            first_error.unwrap_or_else(|| "no update endpoint could be checked".to_string())
+        );
+    }
+
+    let info = best.as_ref().map(|u| UpdateInfo {
         version: u.version.clone(),
         current_version: u.current_version.clone(),
         notes: u.body.clone(),
@@ -89,7 +147,7 @@ pub async fn check_update_on_channel(
     *pending
         .0
         .lock()
-        .map_err(|_| "pending-update lock poisoned".to_string())? = update;
+        .map_err(|_| "pending-update lock poisoned".to_string())? = best;
 
     Ok(info)
 }
