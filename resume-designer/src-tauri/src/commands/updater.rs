@@ -75,6 +75,21 @@ pub enum DownloadEvent {
     Finished,
 }
 
+/// Check a single endpoint's manifest in isolation. Returning a `Result` (rather
+/// than letting `?` escape) lets the caller treat a per-endpoint failure as
+/// non-fatal and continue to the channel's other endpoint(s).
+async fn check_endpoint(app: &AppHandle, endpoint: &str) -> Result<Option<Update>, String> {
+    let url = Url::parse(endpoint).map_err(|e| e.to_string())?;
+    app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Check the given channel's endpoint for an update. Stores the result (if any)
 /// in `PendingUpdate` and returns lightweight metadata for the renderer.
 #[tauri::command]
@@ -86,24 +101,41 @@ pub async fn check_update_on_channel(
     // Check each of the channel's endpoints independently and keep the
     // highest-version update. (Tauri's multi-endpoint support is first-wins,
     // not max-version, so the superset can't be expressed as a single builder.)
+    //
+    // A per-endpoint failure is non-fatal: a beta user must still be offered a
+    // newer *stable* release even when the rolling `next` manifest is briefly
+    // missing/404 (e.g. while the pre-release is being republished). We surface
+    // an error only when *no* endpoint could be reached.
     let mut best: Option<Update> = None;
+    let mut first_error: Option<String> = None;
+    let mut checked_any = false;
     for endpoint in endpoints_for(&channel) {
-        let url = Url::parse(endpoint).map_err(|e| e.to_string())?;
-        let found = app
-            .updater_builder()
-            .endpoints(vec![url])
-            .map_err(|e| e.to_string())?
-            .build()
-            .map_err(|e| e.to_string())?
-            .check()
-            .await
-            .map_err(|e| e.to_string())?;
-        if let Some(candidate) = found {
-            best = match best {
-                Some(current) if version_ge(&current.version, &candidate.version) => Some(current),
-                _ => Some(candidate),
-            };
+        match check_endpoint(&app, endpoint).await {
+            Ok(found) => {
+                checked_any = true;
+                if let Some(candidate) = found {
+                    best = match best {
+                        Some(current) if version_ge(&current.version, &candidate.version) => {
+                            Some(current)
+                        }
+                        _ => Some(candidate),
+                    };
+                }
+            }
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
         }
+    }
+
+    // Every endpoint errored — report the first failure rather than silently
+    // masquerading as "up to date".
+    if !checked_any {
+        return Err(
+            first_error.unwrap_or_else(|| "no update endpoint could be checked".to_string())
+        );
     }
 
     let info = best.as_ref().map(|u| UpdateInfo {
