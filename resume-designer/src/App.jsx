@@ -6,6 +6,7 @@ import SettingsDialog from './components/SettingsDialog.jsx';
 import HistoryDialog from './components/HistoryDialog.jsx';
 import StructurePanel from './components/structure/StructurePanel.jsx';
 import ChatPanel from './components/chat/ChatPanel.jsx';
+import ProfileDialog from './components/profile/ProfileDialog.jsx';
 import { init } from './main.js';
 
 // Single-root migration shell.
@@ -62,6 +63,7 @@ export default function App() {
       {ready && <ChatPanel />}
       <SettingsDialog />
       <HistoryDialog />
+      <ProfileDialog />
       <Toaster />
     </>
   );

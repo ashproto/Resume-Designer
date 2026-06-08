@@ -46,7 +46,7 @@ import {
 } from './native.js';
 import { initTheme } from './theme.js';
 import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
-import { initUserProfilePanel, openUserProfilePanel } from './userProfilePanel.js';
+import { openUserProfilePanel } from './userProfilePanel.js';
 import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
 import { initHeaderStyleService, applyHeaderStyle, getHeaderStyleSettings } from './headerStyleService.js';
@@ -382,8 +382,8 @@ export async function init() {
   // Version history is now a React component (src/components/HistoryDialog.jsx)
   // that opens on the rd:open-history event (see window.openHistoryPanel below).
 
-  // Initialize user profile panel
-  initUserProfilePanel();
+  // User profile editor is now React (components/profile/ProfileDialog.jsx),
+  // opened via window.openUserProfilePanel below (dispatches rd:open-profile).
   
   // Expose panel openers and wizards globally
   window.openJobDescriptionPanel = openJobDescriptionPanel;
