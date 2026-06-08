@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>shadcn + glass preview (dev-only)</title>
+  <!-- Mirror index.html's liquid-glass opt-in so ?translucent sets data-tauri in
+       a plain browser, exercising glass.css + the shadcn glass layer. -->
+  <script>
+    (function () {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        if (params.has('print')) return;
+        var inTauri = 'isTauri' in window || '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
+        if (inTauri || params.has('translucent')) {
+          document.documentElement.setAttribute('data-tauri', 'true');
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles/main.css" />
+  <link rel="stylesheet" href="/styles/glass.css" />
+  <style>
+    /* A vivid backdrop so backdrop-filter blur is visible in a browser (no OS
+       vibrancy here). Not html/body/.app, so glass.css's transparency rules
+       leave it intact for the frosted surfaces to sample. */
+    .harness-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background: linear-gradient(135deg, #6a4c93 0%, #1982c4 50%, #8ac926 100%);
+    }
+    body { font-family: var(--font-body); }
+  </style>
+</head>
+<body>
+  <div class="harness-bg"></div>
+  <div id="root"></div>
+  <script type="module" src="/src/dev/shadcnPreview.jsx"></script>
+</body>
+</html>

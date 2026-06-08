@@ -272,19 +272,12 @@ function showMigrationToast(probe, result = null) {
 }
 
 // Initialize the application
-async function init() {
-  // Print-mode short-circuit: when this window was opened by pdf.js's hidden
-  // PDF-export window (URL `?print=1`), skip ALL the app chrome init and run
-  // a minimal render-only flow that emits a `print-ready` event when the
-  // resume is laid out and ready for capture. See initPrintMode below.
-  if (typeof location !== 'undefined') {
-    const params = new URLSearchParams(location.search);
-    if (params.get('print') === '1') {
-      return initPrintMode();
-    }
-  }
+export async function init() {
+  // Print-mode is now a separate framework-free entry (print.html /
+  // src/printEntry.js calls initPrintMode() directly), so the main window
+  // never short-circuits here.
 
-  // FIRST thing after print-mode check: see if there's legacy Electron
+  // FIRST thing: see if there's legacy Electron
   // data to pull in. Must happen before getSettings() / store
   // initialization below, since those read from the localStorage we're
   // about to populate.
@@ -482,7 +475,7 @@ async function init() {
  * On any failure, emits `print-error` so the main window can surface a
  * meaningful error instead of timing out.
  */
-async function initPrintMode() {
+export async function initPrintMode() {
   // Resolve this print window's own label so every event we emit can be
   // tagged with it. Each PDF export uses a unique label (e.g.
   // `pdf-print-1716234567890`); the main window's listener uses that label
@@ -1219,5 +1212,5 @@ function renderCurrentResume() {
   updateTextToolbarState();
 }
 
-// Start the app
-init();
+// init() is invoked by the React entry (src/main.jsx -> App.jsx) after mount;
+// the print window (src/printEntry.js) calls initPrintMode() directly.

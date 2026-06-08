@@ -304,7 +304,7 @@ async function generatePdfNative(_resumeEl, filename) {
     // stealing keyboard focus; `skipTaskbar: true` keeps it out of the
     // macOS Dock / Windows taskbar.
     printWindow = new WebviewWindow(PRINT_LABEL, {
-      url: '/?print=1',
+      url: '/print.html',
       visible: true,
       x: -10000,
       y: -10000,
