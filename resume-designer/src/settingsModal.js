@@ -20,7 +20,3 @@ export function openSettings(tab) {
  *  points (header gear, chat-panel gear) are now React buttons that import
  *  openSettings() directly, so there's nothing left to wire here. */
 export function initSettingsModal() {}
-
-/** Retained no-op: main.js calls this from the SETTINGS_UPDATED_EVENT handler.
- *  The React dialog reads settings reactively, so nothing needs reloading. */
-export function loadApiKeysToModal() {}

@@ -10,6 +10,7 @@
  */
 
 import { isElectron, pickPdfSavePath, capturePdfFromWindow } from './native.js';
+import { getCurrentId, getVariantList } from './variantManager.js';
 import { store } from './store.js';
 
 let html2pdfModule = null;
@@ -104,9 +105,10 @@ function showPdfDialog() {
   const overlay = document.getElementById('pdf-dialog-overlay');
   const filenameInput = document.getElementById('pdf-filename');
   
-  // Get the active variant name for default filename
-  const variantDropdown = document.getElementById('variant-dropdown');
-  const selectedLabel = variantDropdown?.querySelector('.dropdown-label')?.textContent || 'Resume';
+  // Default filename from the active variant. The header is a React component
+  // now (no #variant-dropdown element), so read the name from the variant store.
+  const current = getVariantList().find((v) => v.id === getCurrentId());
+  const selectedLabel = current?.name || 'Resume';
   const defaultFilename = `Colleen-Sinclair-${selectedLabel.trim().replace(/\s+/g, '-')}`;
   
   if (filenameInput) {

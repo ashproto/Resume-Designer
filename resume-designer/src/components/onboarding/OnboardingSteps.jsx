@@ -766,7 +766,12 @@ export function JobDescriptionStep({ jobDescriptions, onAdd, onRemove, onBack, o
 
   const handleNext = async () => {
     setBusy(true);
-    await onNext();
+    try {
+      await onNext();
+    } catch (e) {
+      alert('Something went wrong: ' + e.message);
+      setBusy(false);
+    }
   };
 
   return (

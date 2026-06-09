@@ -24,7 +24,7 @@ import { initUpdateFlow } from './updateFlow.js';
 import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initDiffView } from './diffView.js';
 import { initInlineChanges } from './inlineChanges.js';
-import { initSettingsModal, loadApiKeysToModal } from './settingsModal.js';
+import { initSettingsModal } from './settingsModal.js';
 import { initZoomControls } from './zoomControls.js';
 import { initWindowDrag } from './tauriDrag.js';
 import {
@@ -439,12 +439,10 @@ export async function init() {
   // Initialize settings modal
   initSettingsModal();
 
-  // Keep settings UI synchronized across onboarding/chat/settings flows.
+  // Keep chat availability in sync when settings change. Settings is now a React
+  // dialog (SettingsDialog.jsx) that reads settings reactively, so the old
+  // #settings-modal refresh is gone.
   window.addEventListener(SETTINGS_UPDATED_EVENT, () => {
-    const modal = document.getElementById('settings-modal');
-    if (modal?.classList.contains('show')) {
-      loadApiKeysToModal();
-    }
     refreshChatPanel();
   });
   
