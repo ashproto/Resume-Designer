@@ -423,7 +423,7 @@ export async function pickPdfSavePath(defaultName = 'Resume.pdf') {
 /**
  * Invoke the Rust capture command against a SPECIFIC window's web view
  * (identified by label). Used by pdf.js after spawning a hidden print window
- * at `/?print=1` and receiving its `print-ready` event.
+ * at `/print.html` and receiving its `print-ready` event.
  *
  * Notice there is NO `savePath` parameter: the destination path is bound
  * server-side by the prior `pickPdfSavePath` call (which stashes the

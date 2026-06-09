@@ -84,7 +84,7 @@
    tooltip) renders at document.body level, so its backdrop-filter samples the
    page for real. This is exactly the nested-backdrop-filter defeat that
    menuPortal.js worked around for the vanilla menus; Radix's body portal
-   supersedes that hack, so #glass-portal/menuPortal.js retire in Step 9. */
+   supersedes that hack (the old #glass-portal layer and menuPortal.js are gone). */
 :root[data-tauri="true"] [data-radix-popper-content-wrapper] > * {
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);

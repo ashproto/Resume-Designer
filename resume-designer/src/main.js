@@ -469,7 +469,7 @@ export async function init() {
 }
 
 /**
- * Print-mode init for the hidden child window pdf.js spawns at `/?print=1`.
+ * Print-mode init for the hidden child window pdf.js spawns at `/print.html`.
  *
  * Runs ONLY the minimum needed to render the active variant's resume:
  * design services (fonts/spacing/accent/photo/headerStyle) and the renderer

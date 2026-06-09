@@ -2,7 +2,7 @@
  * PDF Export Utilities
  *
  * Desktop (Tauri): renders the resume in a HIDDEN child WebviewWindow at
- * `/?print=1` and captures it via WKWebView.createPDF (macOS) /
+ * `/print.html` and captures it via WKWebView.createPDF (macOS) /
  * WebView2.PrintToPdfAsync (Windows). Main window stays unchanged the whole
  * time — no full-screen takeover.
  *
@@ -196,9 +196,9 @@ async function handleDownloadPdf(customFilename) {
  *     stays unchanged during the dialog — no chrome toggle, no flash.
  *  2. Subscribe to `print-ready` / `print-error` events from the soon-to-be
  *     hidden child window.
- *  3. Spawn a hidden, decoration-less WebviewWindow pointed at `/?print=1`.
- *     main.js detects the param and runs `initPrintMode()` (services →
- *     render → measure → emit ready).
+ *  3. Spawn a hidden, decoration-less WebviewWindow pointed at `/print.html`.
+ *     Its framework-free entry (src/printEntry.js) runs `initPrintMode()`
+ *     (services → render → measure → emit ready).
  *  4. Receive the resume's measured bounds via the event payload.
  *  5. Invoke `capture_pdf_from_window` to run WKWebView.createPDF /
  *     WebView2.PrintToPdfAsync against the hidden window's web view.

@@ -159,23 +159,6 @@
   backdrop-filter: var(--glass-blur);
 }
 
-/* --- 7b. Glass portal --------------------------------------------------------
-   A plain, filter-free, body-level layer that floating menus are re-parented
-   into (see src/menuPortal.js) while open. The whole point: a menu's
-   backdrop-filter is defeated by WebKit when it's nested inside another
-   backdrop-filter (the frosted .chat-panel / .header-bar). Moving it here — a
-   sibling of those surfaces with NO filter of its own — lets its blur sample the
-   page for real. The layer is click-through; only the menu inside catches clicks. */
-#glass-portal {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-  pointer-events: none;
-}
-#glass-portal > * {
-  pointer-events: auto;
-}
-
 /* --- 8. Secondary pop-over panels (jobs / history / profile) -------------- */
 /* These appear OVER a scrim (unlike the always-present ambient drawers), so
    they read like modals: more opaque for their dense content + blur. */
