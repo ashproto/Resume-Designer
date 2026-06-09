@@ -1046,7 +1046,19 @@ function applyTextCommand(command) {
     if (command === 'clear') result = clearInlineFormatting(target.value || '', start, end);
     if (!result) return;
 
-    target.value = result.value;
+    // Write through the prototype's native value setter, not `target.value =`.
+    // React installs a value-tracker on any input it gives an onChange handler
+    // (e.g. the structure panel's summary textarea); a direct assignment updates
+    // that tracker, so the dispatched input event is deduped and onChange never
+    // fires — the format markers would land in the DOM but never reach the store.
+    // The native setter leaves the tracker stale, so React sees a real change.
+    // For plain vanilla inputs this behaves exactly like `target.value =`.
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    if (valueSetter) valueSetter.call(target, result.value);
+    else target.value = result.value;
     target.focus();
     target.setSelectionRange(result.start, result.end);
     target.dispatchEvent(new Event('input', { bubbles: true }));
