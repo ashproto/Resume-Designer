@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Sun, Moon, Monitor, Eye, EyeOff } from 'lucide-react';
+import {
+  Sun, Moon, Monitor, Eye, EyeOff,
+  SlidersHorizontal, Sparkles, RefreshCw, Database, BarChart3,
+} from 'lucide-react';
 
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+  Dialog, DialogContent, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Button, buttonVariants } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
 import { getSettings, saveSettings } from '../persistence.js';
@@ -27,13 +25,17 @@ import { useUpdateBusy } from '../hooks/useUpdateBusy.js';
 import { exportFullBackupWithFeedback, importBackupFromFile } from '../backupFlow.js';
 
 // The Settings panel, converted from the static #settings-modal + settingsModal.js
-// to a shadcn Dialog. It opens via the `rd:open-settings` window event dispatched
-// by settingsModal.js's openSettings() shim (header + chat gears route through it).
+// to a shadcn Dialog (Step 5), then restyled (consistency fix) to reuse the
+// original `.settings-*` / `.modal-*` / `.usage-*` / `.btn` design language that
+// still lives in styles/main.css. Like ProfileDialog and JobsDialog, it hosts
+// bespoke-classed markup inside a glass shadcn Dialog shell rather than rendering
+// raw shadcn Tabs/Button/Input/Switch (which defaulted to the unstyled shadcn
+// look). It opens via the `rd:open-settings` window event dispatched by
+// settingsModal.js's openSettings() shim (header + chat gears route through it).
 //
 // All actions wire directly to the service modules: theme / API key / channel /
 // auto-update / usage / replay / version, plus Check-for-Updates (updateFlow.js,
-// surfacing through Sonner) and backup Export/Import (backupFlow.js). The old
-// headerBar.js delegated handlers that used to own those flows are gone.
+// surfacing through Sonner) and backup Export/Import (backupFlow.js).
 
 const THEME_OPTIONS = [
   { value: 'light', label: 'Light', Icon: Sun },
@@ -41,25 +43,37 @@ const THEME_OPTIONS = [
   { value: 'system', label: 'System', Icon: Monitor },
 ];
 
-function UsageTable({ headers, rows, firstCol }) {
+// Tab order matches the original settings modal. Updates is desktop-only.
+const TABS = [
+  { id: 'general', label: 'General', Icon: SlidersHorizontal },
+  { id: 'api-keys', label: 'AI', Icon: Sparkles },
+  ...(isTauri ? [{ id: 'updates', label: 'Updates', Icon: RefreshCw }] : []),
+  { id: 'data', label: 'Data', Icon: Database },
+  { id: 'usage', label: 'Usage', Icon: BarChart3 },
+];
+
+// Reusable breakdown table for the Usage tab (reuses the .usage-table styles).
+function UsageTable({ headers, rows, firstColClass }) {
   return (
-    <div className="overflow-hidden rounded-md border border-border">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-muted-foreground">
-          <tr>{headers.map((h) => <th key={h} className="px-3 py-1.5 text-left font-medium">{h}</th>)}</tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr><td colSpan={headers.length} className="px-3 py-3 text-center text-muted-foreground">No usage data yet</td></tr>
-          ) : rows.map((cells, i) => (
-            <tr key={i} className="border-t border-border">
-              {cells.map((c, j) => (
-                <td key={j} className={cn('px-3 py-1.5', j === 0 && firstCol)}>{c}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="usage-table-container">
+      <div className="usage-table-scrollable">
+        <table className="usage-table">
+          <thead>
+            <tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr className="usage-empty-row"><td colSpan={headers.length}>No usage data yet</td></tr>
+            ) : rows.map((cells, i) => (
+              <tr key={i}>
+                {cells.map((c, j) => (
+                  <td key={j}>{j === 0 && firstColClass ? <span className={firstColClass}>{c}</span> : c}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -156,127 +170,154 @@ export default function SettingsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-2xl glass-card">
-        <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-          <DialogDescription className="sr-only">Application settings</DialogDescription>
-        </DialogHeader>
+      <DialogContent
+        showCloseButton={false}
+        className="flex max-h-[85vh] w-[90vw] max-w-[640px] flex-col gap-0 overflow-hidden p-0 glass-card"
+      >
+        <DialogTitle className="sr-only">Settings</DialogTitle>
+        <DialogDescription className="sr-only">Application settings</DialogDescription>
 
-        <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <TabsList>
-            <TabsTrigger value="general">General</TabsTrigger>
-            <TabsTrigger value="api-keys">AI</TabsTrigger>
-            {isTauri && <TabsTrigger value="updates">Updates</TabsTrigger>}
-            <TabsTrigger value="data">Data</TabsTrigger>
-            <TabsTrigger value="usage">Usage</TabsTrigger>
-          </TabsList>
+        <div className="modal-header shrink-0">
+          <h2 className="modal-title">Settings</h2>
+          <button type="button" className="modal-close" title="Close" onClick={() => setOpen(false)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
 
+        <div className="settings-tabs shrink-0">
+          {TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={cn('settings-tab', tab === id && 'active')}
+              onClick={() => setTab(id)}
+            >
+              <Icon size={16} /> {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="modal-content min-h-0 flex-1">
           {/* General */}
-          <TabsContent value="general" className="space-y-6 pt-4">
-            <section className="space-y-2">
-              <h3 className="text-sm font-semibold">Appearance</h3>
-              <Label>Theme</Label>
-              <div className="flex gap-2">
-                {THEME_OPTIONS.map(({ value, label, Icon }) => (
-                  <Button
-                    key={value}
-                    type="button"
-                    variant={theme === value ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => pickTheme(value)}
-                  >
-                    <Icon /> {label}
-                  </Button>
-                ))}
-              </div>
-            </section>
-            <section className="space-y-2">
-              <h3 className="text-sm font-semibold">Onboarding</h3>
-              <Button
-                variant="secondary"
-                onClick={() => { setOpen(false); window.showOnboardingWizard?.(); }}
-              >
-                Replay welcome guide
-              </Button>
-              <p className="text-xs text-muted-foreground">Re-run the first-time setup wizard. Your resumes and settings are kept.</p>
-            </section>
-            <section className="space-y-1">
-              <h3 className="text-sm font-semibold">About</h3>
-              <p className="text-xs text-muted-foreground">Resume Designer <span>{version}</span></p>
-            </section>
-          </TabsContent>
-
-          {/* AI */}
-          <TabsContent value="api-keys" className="space-y-6 pt-4">
-            <p className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-              Your OpenRouter API key is stored locally and is sent only to OpenRouter. Never share it.
-            </p>
-            <section className="space-y-2">
-              <h3 className="text-sm font-semibold">OpenRouter</h3>
-              <Label htmlFor="settings-openrouter-key">API Key</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="settings-openrouter-key"
-                  type={showKey ? 'text' : 'password'}
-                  placeholder="sk-or-v1-..."
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-                <Button type="button" variant="outline" size="icon" onClick={() => setShowKey((v) => !v)} title="Show/hide">
-                  {showKey ? <EyeOff /> : <Eye />}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">One key for Claude, GPT, Gemini and 300+ models. Get a key at openrouter.ai/keys</p>
-            </section>
-            <section className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold">Model fallback</h3>
-                <p className="text-xs text-muted-foreground">Retry an alternate model if the chosen one is unavailable or rate-limited.</p>
-              </div>
-              <Switch checked={autoFallback} onCheckedChange={setAutoFallback} />
-            </section>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={handleClearKeys}>Clear All Keys</Button>
-              <Button onClick={handleSaveKeys}>Save Settings</Button>
-            </div>
-          </TabsContent>
-
-          {/* Updates (Tauri only) */}
-          {isTauri && (
-            <TabsContent value="updates" className="space-y-6 pt-4">
-              <section className="space-y-2">
-                <h3 className="text-sm font-semibold">Update channel</h3>
-                <div className="inline-flex rounded-md border border-border p-0.5">
-                  {['stable', 'beta'].map((c) => (
-                    <Button key={c} type="button" size="sm" variant={channel === c ? 'default' : 'ghost'} onClick={() => pickChannel(c)} className="capitalize">
-                      {c}
-                    </Button>
+          {tab === 'general' && (
+            <>
+              <div className="settings-section">
+                <h3 className="settings-section-title">Appearance</h3>
+                <div className="settings-theme-options">
+                  {THEME_OPTIONS.map(({ value, label, Icon }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={cn('theme-option', theme === value && 'selected')}
+                      onClick={() => pickTheme(value)}
+                    >
+                      <Icon size={16} /> {label}
+                    </button>
                   ))}
                 </div>
-                <p className="text-xs text-muted-foreground">Beta installs pre-release builds from the <code>next</code> branch. Stable installs only versioned releases.</p>
-                <label className="flex items-center gap-2 pt-1 text-sm">
-                  <Switch checked={autoUpdate} onCheckedChange={toggleAutoUpdate} />
-                  Check for updates automatically on launch
+              </div>
+              <div className="settings-section">
+                <h3 className="settings-section-title">Onboarding</h3>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => { setOpen(false); window.showOnboardingWizard?.(); }}
+                >
+                  Replay welcome guide
+                </button>
+                <p className="settings-hint">Re-run the first-time setup wizard. Your resumes and settings are kept.</p>
+              </div>
+              <div className="settings-section">
+                <h3 className="settings-section-title">About</h3>
+                <p className="settings-hint">Resume Designer {version}</p>
+              </div>
+            </>
+          )}
+
+          {/* AI */}
+          {tab === 'api-keys' && (
+            <>
+              <div className="settings-section">
+                <h3 className="settings-section-title">OpenRouter</h3>
+                <label className="form-label" htmlFor="settings-openrouter-key">API Key</label>
+                <div className="api-key-input-wrapper">
+                  <input
+                    id="settings-openrouter-key"
+                    className="form-input api-key-input"
+                    type={showKey ? 'text' : 'password'}
+                    placeholder="sk-or-v1-..."
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  <button type="button" className="api-key-toggle" title="Show/hide key" onClick={() => setShowKey((v) => !v)}>
+                    {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <p className="settings-hint">
+                  Your key is stored locally and is sent only to OpenRouter — never share it. One key covers Claude,
+                  GPT, Gemini and 300+ models. Get a key at openrouter.ai/keys
+                </p>
+              </div>
+              <div className="settings-section">
+                <h3 className="settings-section-title">Model fallback</h3>
+                <label className="settings-checkbox">
+                  <input type="checkbox" checked={autoFallback} onChange={(e) => setAutoFallback(e.target.checked)} />
+                  <span>Retry an alternate model if the chosen one is unavailable or rate-limited.</span>
                 </label>
-              </section>
-              <section className="space-y-2">
-                <h3 className="text-sm font-semibold">Check now</h3>
-                <Button variant="secondary" onClick={triggerManualUpdateCheck} disabled={updateBusy}>
+              </div>
+              <div className="settings-actions">
+                <button type="button" className="btn btn-secondary" onClick={handleClearKeys}>Clear All Keys</button>
+                <button type="button" className="btn btn-primary" onClick={handleSaveKeys}>Save Settings</button>
+              </div>
+            </>
+          )}
+
+          {/* Updates (desktop only) */}
+          {isTauri && tab === 'updates' && (
+            <>
+              <div className="settings-section">
+                <h3 className="settings-section-title">Update channel</h3>
+                <div className="settings-segmented">
+                  {[['stable', 'Stable'], ['beta', 'Beta']].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={cn('settings-segment', channel === value && 'active')}
+                      onClick={() => pickChannel(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="settings-hint">
+                  Beta installs pre-release builds from the <code>next</code> branch. Stable installs only versioned releases.
+                </p>
+                <label className="settings-checkbox mt-3">
+                  <input type="checkbox" checked={autoUpdate} onChange={(e) => toggleAutoUpdate(e.target.checked)} />
+                  <span>Check for updates automatically on launch</span>
+                </label>
+              </div>
+              <div className="settings-section">
+                <h3 className="settings-section-title">Check now</h3>
+                <button type="button" className="btn btn-secondary" onClick={triggerManualUpdateCheck} disabled={updateBusy}>
                   {updateBusy ? 'Checking…' : 'Check for Updates'}
-                </Button>
-                <p className="text-xs text-muted-foreground">Current version: <span>{version}</span></p>
-              </section>
-            </TabsContent>
+                </button>
+                <p className="settings-hint">Current version: {version}</p>
+              </div>
+            </>
           )}
 
           {/* Data */}
-          <TabsContent value="data" className="space-y-4 pt-4">
-            <section className="space-y-2">
-              <h3 className="text-sm font-semibold">Backup &amp; restore</h3>
-              <p className="text-xs text-muted-foreground">Save or restore all resumes, settings, job descriptions, and history as a single JSON file.</p>
-              <div className="flex gap-2">
-                <Button variant="secondary" onClick={exportFullBackupWithFeedback}>Export Full Backup</Button>
-                <label className={cn(buttonVariants({ variant: 'secondary' }), 'cursor-pointer')}>
+          {tab === 'data' && (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Backup &amp; restore</h3>
+              <p className="settings-hint">Save or restore all resumes, settings, job descriptions, and history as a single JSON file.</p>
+              <div className="settings-actions-left">
+                <button type="button" className="btn btn-secondary" onClick={exportFullBackupWithFeedback}>Export Full Backup</button>
+                <label className="btn btn-secondary">
                   Import Backup…
                   <input
                     type="file"
@@ -290,49 +331,52 @@ export default function SettingsDialog() {
                   />
                 </label>
               </div>
-            </section>
-          </TabsContent>
+            </div>
+          )}
 
           {/* Usage */}
-          <TabsContent value="usage" className="space-y-4 pt-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {[
-                ['Total Input', summary ? formatTokenCount(summary.totalInputTokens) : '0'],
-                ['Total Output', summary ? formatTokenCount(summary.totalOutputTokens) : '0'],
-                ['Est. Cost', summary ? formatCost(summary.totalCost) : '$0.00'],
-                ['API Calls', String(totalCalls)],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-md border border-border p-3">
-                  <div className="text-xs text-muted-foreground">{label}</div>
-                  <div className="text-lg font-semibold">{value}</div>
-                </div>
-              ))}
-            </div>
+          {tab === 'usage' && (
+            <div className="usage-section">
+              <div className="usage-summary">
+                {[
+                  ['Total Input', summary ? formatTokenCount(summary.totalInputTokens) : '0', false],
+                  ['Total Output', summary ? formatTokenCount(summary.totalOutputTokens) : '0', false],
+                  ['Est. Cost', summary ? formatCost(summary.totalCost) : '$0.00', true],
+                  ['API Calls', String(totalCalls), false],
+                ].map(([label, value, isCost]) => (
+                  <div key={label} className="usage-stat-card">
+                    <div className="usage-stat-label">{label}</div>
+                    <div className={cn('usage-stat-value', isCost && 'usage-cost')}>{value}</div>
+                  </div>
+                ))}
+              </div>
 
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium">Usage by Model</h4>
-              <UsageTable
-                headers={['Model', 'Calls', 'Input', 'Output', 'Cost']}
-                firstCol="font-medium"
-                rows={summary ? Object.values(summary.byModel).sort((a, b) => b.cost - a.cost).map((d) => [d.model, d.calls, formatTokenCount(d.inputTokens), formatTokenCount(d.outputTokens), formatCost(d.cost)]) : []}
-              />
-            </div>
+              <div className="usage-breakdown">
+                <h4 className="usage-breakdown-title">Usage by Model</h4>
+                <UsageTable
+                  headers={['Model', 'Calls', 'Input', 'Output', 'Cost']}
+                  firstColClass="usage-model-name"
+                  rows={summary ? Object.values(summary.byModel).sort((a, b) => b.cost - a.cost).map((d) => [d.model, d.calls, formatTokenCount(d.inputTokens), formatTokenCount(d.outputTokens), formatCost(d.cost)]) : []}
+                />
+              </div>
 
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium">Usage by Feature</h4>
-              <UsageTable
-                headers={['Feature', 'Calls', 'Input', 'Output', 'Cost']}
-                rows={summary ? Object.entries(summary.byFeature).sort((a, b) => b[1].cost - a[1].cost).map(([feature, d]) => [feature, d.calls, formatTokenCount(d.inputTokens), formatTokenCount(d.outputTokens), formatCost(d.cost)]) : []}
-              />
-            </div>
+              <div className="usage-breakdown">
+                <h4 className="usage-breakdown-title">Usage by Feature</h4>
+                <UsageTable
+                  headers={['Feature', 'Calls', 'Input', 'Output', 'Cost']}
+                  firstColClass="usage-feature-name"
+                  rows={summary ? Object.entries(summary.byFeature).sort((a, b) => b[1].cost - a[1].cost).map(([feature, d]) => [feature, d.calls, formatTokenCount(d.inputTokens), formatTokenCount(d.outputTokens), formatCost(d.cost)]) : []}
+                />
+              </div>
 
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={handleExportUsage}>Export Data</Button>
-              <Button variant="secondary" onClick={handleClearUsage}>Clear Data</Button>
-              <Button onClick={refreshUsage}>Refresh</Button>
+              <div className="settings-actions-left">
+                <button type="button" className="btn btn-secondary" onClick={handleExportUsage}>Export Data</button>
+                <button type="button" className="btn btn-secondary" onClick={handleClearUsage}>Clear Data</button>
+                <button type="button" className="btn btn-primary" onClick={refreshUsage}>Refresh</button>
+              </div>
             </div>
-          </TabsContent>
-        </Tabs>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

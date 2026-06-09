@@ -50,10 +50,17 @@
   select {
     text-transform: none;
   }
-  button,
-  [type='button'],
-  [type='reset'],
-  [type='submit'] {
+  /* Scoped to the `button` ELEMENT selector (0,0,1) — deliberately NOT the
+     Preflight `[type='button'],[type='reset'],[type='submit']` attribute
+     selectors (0,1,0). Those tie the specificity of single-class button rules
+     (.btn-primary, .theme-option, shadcn variants); because this reset lives in
+     the React CSS bundle that loads AFTER the link-tag main.css, the tie broke
+     in favour of `background-color: transparent` and blanked the accent on any
+     bespoke `.btn-primary`/`type="button"` button (e.g. Settings "Save"). The
+     element selector still neutralizes native <button> chrome for unstyled /
+     ghost buttons, but loses to ANY class-set background regardless of load
+     order. (No <input type="button|submit|reset"> exists in the app.) */
+  button {
     -webkit-appearance: button;
     appearance: button;
     background-color: transparent;
