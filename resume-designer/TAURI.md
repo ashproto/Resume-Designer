@@ -57,7 +57,7 @@ resume-designer/
 │           ├── mod.rs         # PdfResult / print_to_pdf dispatcher
 │           ├── pdf_macos.rs   # WKWebView createPDF
 │           └── pdf_windows.rs # WebView2 PrintToPdfAsync
-├── src/                       # Renderer (vanilla JS + Vite)
+├── src/                       # Renderer (React + shadcn chrome, vanilla resume render, Vite)
 ├── index.html
 ├── package.json
 └── vite.config.js

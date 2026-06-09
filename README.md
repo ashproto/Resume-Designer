@@ -81,7 +81,7 @@ Your key is stored locally on your device and is sent only to OpenRouter to make
 
 ## Run from source
 
-The app is a vanilla-JS + [Vite](https://vitejs.dev/) front end wrapped in a [Tauri 2](https://v2.tauri.app/) desktop shell. All commands run from the `resume-designer/` directory.
+The app is a [React](https://react.dev/) + [Vite](https://vitejs.dev/) front end wrapped in a [Tauri 2](https://v2.tauri.app/) desktop shell. All commands run from the `resume-designer/` directory.
 
 ```bash
 git clone https://github.com/SiriusA7/Resume-Designer.git
@@ -111,7 +111,7 @@ Full build, signing, notarization, and release details are in [`resume-designer/
 
 ## Tech stack
 
-- **Front end:** vanilla JavaScript (no UI framework) + Vite 5, with a small reactive store.
+- **Front end:** [React](https://react.dev/) + [shadcn/ui](https://ui.shadcn.com/) (Radix + Tailwind) for the app chrome, with the resume document rendered by framework-free vanilla JS; Vite 5 and a small reactive store underneath.
 - **Desktop shell:** Tauri 2 (Rust) — native dialogs, file system, auto-updater, and a WKWebView/WebView2-based PDF capture.
 - **AI:** [OpenRouter](https://openrouter.ai) HTTP API (bring your own key).
 - **Notable libraries:** `pdfjs-dist` + `mammoth` (PDF/DOCX import), `html2pdf.js` + `html-to-image` (browser PDF export), `marked` (chat rendering), `diff` (inline AI-edit diffs).
