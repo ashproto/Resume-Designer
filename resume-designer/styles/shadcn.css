@@ -21,6 +21,56 @@
   display: contents;
 }
 
+/* Form-control normalization — the subset of Tailwind Preflight that shadcn
+   components depend on. Preflight as a whole is disabled (it would flatten the
+   resume's headings/lists/margins and fight the 13.5k-line vanilla CSS — see
+   tailwind.config.js), but WITHOUT this subset native <button>/<input>/<select>/
+   <textarea> fall back to the UA default font (Arial) and native chrome, which
+   renders as dated "native" controls in WKWebView (the macOS Tauri webview) and
+   was the cause of the Settings dialog looking unstyled. These are element-level
+   rules, so the vanilla CSS's class-based control styles (.btn, .form-input, …)
+   still win on specificity — only the otherwise-unstyled shadcn controls change. */
+@layer base {
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    font-size: 100%;
+    font-weight: inherit;
+    line-height: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    margin: 0;
+  }
+  button,
+  select {
+    text-transform: none;
+  }
+  button,
+  [type='button'],
+  [type='reset'],
+  [type='submit'] {
+    -webkit-appearance: button;
+    appearance: button;
+    background-color: transparent;
+    background-image: none;
+  }
+  :-moz-focusring {
+    outline: auto;
+  }
+  ::-moz-focus-inner {
+    border-style: none;
+    padding: 0;
+  }
+  textarea {
+    resize: vertical;
+  }
+}
+
 @layer base {
   :root {
     --background: var(--color-bg);
