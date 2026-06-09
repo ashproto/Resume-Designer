@@ -8,6 +8,7 @@ import StructurePanel from './components/structure/StructurePanel.jsx';
 import ChatPanel from './components/chat/ChatPanel.jsx';
 import ProfileDialog from './components/profile/ProfileDialog.jsx';
 import JobsDialog from './components/jobs/JobsDialog.jsx';
+import OnboardingWizard from './components/onboarding/OnboardingWizard.jsx';
 import { init } from './main.js';
 
 // Single-root migration shell.
@@ -66,6 +67,7 @@ export default function App() {
       <HistoryDialog />
       <ProfileDialog />
       <JobsDialog />
+      <OnboardingWizard />
       <Toaster />
     </>
   );
