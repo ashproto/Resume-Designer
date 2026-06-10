@@ -45,7 +45,16 @@ export default {
   			},
   			destructive: {
   				DEFAULT: 'color-mix(in srgb, var(--destructive) calc(<alpha-value> * 100%), transparent)',
-  				foreground: 'color-mix(in srgb, var(--destructive-foreground) calc(<alpha-value> * 100%), transparent)'
+  				foreground: 'color-mix(in srgb, var(--destructive-foreground) calc(<alpha-value> * 100%), transparent)',
+  				bg: 'color-mix(in srgb, var(--destructive-bg) calc(<alpha-value> * 100%), transparent)'
+  			},
+  			success: {
+  				DEFAULT: 'color-mix(in srgb, var(--success) calc(<alpha-value> * 100%), transparent)',
+  				bg: 'color-mix(in srgb, var(--success-bg) calc(<alpha-value> * 100%), transparent)'
+  			},
+  			warning: {
+  				DEFAULT: 'color-mix(in srgb, var(--warning) calc(<alpha-value> * 100%), transparent)',
+  				bg: 'color-mix(in srgb, var(--warning-bg) calc(<alpha-value> * 100%), transparent)'
   			},
   			muted: {
   				DEFAULT: 'color-mix(in srgb, var(--muted) calc(<alpha-value> * 100%), transparent)',
@@ -68,6 +77,10 @@ export default {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',
   			sm: 'calc(var(--radius) - 4px)'
+  		},
+  		fontFamily: {
+  			mono: 'var(--font-mono-ui)',
+  			sans: 'var(--font-ui)'
   		},
   		keyframes: {
   			'accordion-down': {

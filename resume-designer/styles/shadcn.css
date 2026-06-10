@@ -104,7 +104,16 @@
     --accent: var(--color-hover-bg);
     --accent-foreground: var(--color-text);
 
-    --destructive: #c0392b;
+    /* Status tokens (spec §2.4). Unlike the aliases above these are raw values
+       (main.css has no --color-* status palette), so they need their own dark
+       overrides below — mirroring main.css's [data-theme="dark"] +
+       prefers-color-scheme fallback pattern. */
+    --success: #3d7a4f;
+    --success-bg: #e9f2ec;
+    --warning: #9a6b1f;
+    --warning-bg: #f7efdd;
+    --destructive: #b3402e;
+    --destructive-bg: #f7e9e6;
     --destructive-foreground: #ffffff;
 
     --border: var(--color-border);
@@ -112,6 +121,29 @@
     --ring: var(--color-accent);
 
     --radius: 0.5rem;
+  }
+
+  [data-theme="dark"] {
+    --success: #82c79a;
+    --success-bg: rgba(61, 122, 79, 0.25);
+    --warning: #d9a84e;
+    --warning-bg: rgba(154, 107, 31, 0.25);
+    --destructive: #e07a6a;
+    --destructive-bg: rgba(179, 64, 46, 0.25);
+  }
+
+  /* System preference fallback — same pattern as main.css. White foreground
+     stays readable on the dark #e07a6a, matching the app's terracotta-accent
+     convention (white-on-accent in both themes). */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --success: #82c79a;
+      --success-bg: rgba(61, 122, 79, 0.25);
+      --warning: #d9a84e;
+      --warning-bg: rgba(154, 107, 31, 0.25);
+      --destructive: #e07a6a;
+      --destructive-bg: rgba(179, 64, 46, 0.25);
+    }
   }
 }
 

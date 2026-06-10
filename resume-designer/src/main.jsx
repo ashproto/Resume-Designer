@@ -4,6 +4,12 @@
 //
 // The hidden PDF-capture window uses a separate framework-free entry
 // (print.html / src/printEntry.js) so React never loads in the capture graph.
+import '@fontsource/geist-sans/400.css';
+import '@fontsource/geist-sans/500.css';
+import '@fontsource/geist-sans/600.css';
+import '@fontsource/geist-sans/700.css';
+import '@fontsource/geist-mono/400.css';
+import '@fontsource/geist-mono/500.css';
 import '../styles/shadcn.css';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';

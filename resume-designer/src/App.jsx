@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import shellHtml from './shell/appShell.html?raw';
 import { Toaster } from '@/components/ui/sonner';
+import { ConfirmHost } from '@/components/ui/confirm';
 import Header from './components/Header.jsx';
 import SettingsDialog from './components/SettingsDialog.jsx';
 import HistoryDialog from './components/HistoryDialog.jsx';
@@ -69,6 +70,7 @@ export default function App() {
       <JobsDialog />
       <OnboardingWizard />
       <Toaster />
+      <ConfirmHost />
     </>
   );
 }
