@@ -1,17 +1,25 @@
 import { useRef, useState } from 'react';
-import { cn } from '@/lib/utils';
+import {
+  Brain, Briefcase, Check, ChevronDown, CircleHelp, FileText, Globe,
+  LayoutPanelTop, List, MessageCircle, Pencil, Send, Trash2, User, X, Zap,
+} from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+
 import { ModelSelector } from './ModelSelector.jsx';
 
 const SLASH_COMMANDS = [
-  { command: '/feedback', description: 'Get detailed resume feedback', icon: 'message-circle' },
-  { command: '/improve', description: 'Improve a section (e.g., /improve summary)', icon: 'edit' },
-  { command: '/generate', description: 'Generate bullet points from context', icon: 'zap' },
-  { command: '/profile', description: 'Start AI interview to fill your profile', icon: 'user' },
-  { command: '/done', description: 'Finish profile interview and save', icon: 'check' },
-  { command: '/debug', description: 'Show current profile status', icon: 'help-circle' },
-  { command: '/clear', description: 'Clear chat history', icon: 'trash' },
-  { command: '/help', description: 'Show available commands', icon: 'help-circle' },
+  { command: '/feedback', description: 'Get detailed resume feedback', Icon: MessageCircle },
+  { command: '/improve', description: 'Improve a section (e.g., /improve summary)', Icon: Pencil },
+  { command: '/generate', description: 'Generate bullet points from context', Icon: Zap },
+  { command: '/profile', description: 'Start AI interview to fill your profile', Icon: User },
+  { command: '/done', description: 'Finish profile interview and save', Icon: Check },
+  { command: '/debug', description: 'Show current profile status', Icon: CircleHelp },
+  { command: '/clear', description: 'Clear chat history', Icon: Trash2 },
+  { command: '/help', description: 'Show available commands', Icon: CircleHelp },
 ];
 
 const COMMANDS_NEEDING_ARGS = ['/improve', '/generate'];
@@ -25,37 +33,12 @@ const REASONING_OPTIONS = [
 
 const reasoningLabel = (v) => ({ none: 'Off', low: 'Low', medium: 'Medium', high: 'High' }[v] || 'Medium');
 
-function CommandIcon({ name }) {
-  switch (name) {
-    case 'message-circle':
-      return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>;
-    case 'edit':
-      return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
-    case 'zap':
-      return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>;
-    case 'user':
-      return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>;
-    case 'check':
-      return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>;
-    case 'trash':
-      return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>;
-    default:
-      return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>;
-  }
-}
-
-function ChipIcon({ type }) {
-  switch (type) {
-    case 'section':
-      return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /></svg>;
-    case 'experience':
-      return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></svg>;
-    case 'bullet':
-      return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><circle cx="4" cy="6" r="1" fill="currentColor" /><circle cx="4" cy="12" r="1" fill="currentColor" /><circle cx="4" cy="18" r="1" fill="currentColor" /></svg>;
-    default:
-      return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>;
-  }
-}
+// Context-chip leading icon by chip type.
+const CHIP_ICONS = {
+  section: LayoutPanelTop,
+  experience: Briefcase,
+  bullet: List,
+};
 
 /**
  * The composer: context chips, quick-action shortcuts, slash-command
@@ -130,132 +113,164 @@ export function ChatComposer({
   };
 
   return (
-    <div className="chat-input-area">
+    <div className="relative shrink-0 space-y-2.5 border-t p-3">
       {contextChips.length > 0 && (
-        <div className="context-chips has-chips">
-          <div className="context-chips-header">
-            <span className="context-chips-label">Context:</span>
-            <button className="context-chips-clear" type="button" onClick={onClearChips}>Clear all</button>
-          </div>
-          <div className="context-chips-list">
-            {contextChips.map((chip, i) => (
-              <div className="context-chip" key={i}>
-                <span className="context-chip-icon"><ChipIcon type={chip.type} /></span>
-                <span className="context-chip-label">{chip.label}</span>
-                <button className="context-chip-remove" type="button" title="Remove" onClick={() => onRemoveChip(i)}>×</button>
-              </div>
-            ))}
-          </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Context</span>
+          {contextChips.map((chip, i) => {
+            const ChipIcon = CHIP_ICONS[chip.type] || FileText;
+            return (
+              <span
+                key={i}
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-primary/10 py-0.5 pl-2.5 pr-1 text-[11.5px] font-medium text-primary"
+              >
+                <ChipIcon className="size-3 shrink-0" />
+                <span className="min-w-0 truncate">{chip.label}</span>
+                <button
+                  type="button"
+                  title="Remove"
+                  aria-label="Remove context"
+                  className="flex size-3.5 shrink-0 items-center justify-center rounded-full text-primary hover:bg-primary/20"
+                  onClick={() => onRemoveChip(i)}
+                >
+                  <X className="size-2.5" />
+                </button>
+              </span>
+            );
+          })}
+          <button
+            type="button"
+            className="text-[11.5px] font-medium text-primary hover:underline"
+            onClick={onClearChips}
+          >
+            Clear all
+          </button>
         </div>
       )}
 
-      <div className="chat-shortcuts">
-        <button className="chat-shortcut" type="button" onClick={() => onSend('/feedback')}>Get Feedback</button>
-        <button className="chat-shortcut" type="button" onClick={() => onSend('/improve summary')}>Improve Summary</button>
+      <div className="flex flex-wrap gap-1.5 max-[1024px]:hidden">
+        <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" onClick={() => onSend('/feedback')}>
+          Get Feedback
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" onClick={() => onSend('/improve summary')}>
+          Improve Summary
+        </Button>
       </div>
 
       {slashItems && (
-        <div className="slash-commands-popup show">
-          <div className="slash-commands-header">Commands</div>
-          <div className="slash-commands-list">
-            {slashItems.map((cmd, i) => (
-              <button
-                key={cmd.command}
-                type="button"
-                className={cn('slash-command-item', i === slashIndex && 'selected')}
-                onMouseEnter={() => setSlashIndex(i)}
-                onClick={() => fillSlash(cmd.command, false)}
-              >
-                <div className="slash-command-icon"><CommandIcon name={cmd.icon} /></div>
-                <div className="slash-command-info">
-                  <span className="slash-command-name">{cmd.command}</span>
-                  <span className="slash-command-desc">{cmd.description}</span>
-                </div>
-              </button>
-            ))}
+        <div className="absolute inset-x-2 bottom-full z-50 mb-2 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg">
+          <div className="border-b px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Commands</div>
+          <div className="max-h-[280px] overflow-y-auto p-1">
+            {slashItems.map(({ command, description, Icon }, i) => {
+              const selected = i === slashIndex;
+              return (
+                <button
+                  key={command}
+                  type="button"
+                  className={cn(
+                    'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left',
+                    selected ? 'bg-accent' : 'hover:bg-accent'
+                  )}
+                  onMouseEnter={() => setSlashIndex(i)}
+                  onClick={() => fillSlash(command, false)}
+                >
+                  <span
+                    className={cn(
+                      'flex size-7 shrink-0 items-center justify-center rounded-md',
+                      selected ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                    )}
+                  >
+                    <Icon className="size-3.5" />
+                  </span>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="font-mono text-[12.5px] font-medium">{command}</span>
+                    <span className="truncate text-[11.5px] text-muted-foreground">{description}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      <div className="chat-input-wrapper">
-        <textarea
+      {/* Composer: bordered rounded card wrapping the uncontrolled textarea + the
+          controls row (model button, web/reasoning toggles, send) — mockup `.composer`. */}
+      <div className="rounded-[12px] border border-input bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
+        <Textarea
           id="chat-input"
-          className="chat-input"
           placeholder="Ask anything..."
-          rows="1"
+          rows={1}
           ref={inputRef}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
+          className="max-h-[200px] min-h-0 resize-none rounded-none border-0 bg-transparent px-3 pb-1 pt-2.5 shadow-none focus-visible:ring-0"
         />
-        <button className="chat-send-btn" type="button" title="Send message" onClick={submit}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-        </button>
-      </div>
+        <div className="flex items-center gap-1 px-1.5 pb-1.5 pt-0.5">
+          <ModelSelector
+            currentModel={currentModel}
+            configured={configured}
+            customModels={customModels}
+            onSelect={onSelectModel}
+            onApplyCustomSlug={onApplyCustomSlug}
+            onRemoveCustom={onRemoveCustom}
+            onConfigure={onConfigure}
+          />
 
-      <div className="chat-input-controls">
-        <ModelSelector
-          currentModel={currentModel}
-          configured={configured}
-          customModels={customModels}
-          onSelect={onSelectModel}
-          onApplyCustomSlug={onApplyCustomSlug}
-          onRemoveCustom={onRemoveCustom}
-          onConfigure={onConfigure}
-        />
+          <span className="mx-0.5 h-4 w-px bg-border" />
 
-        <div className="chat-options-divider" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn('size-7', webSearchEnabled && 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary')}
+            title={webSearchEnabled ? 'Web search enabled' : 'Enable web search'}
+            aria-label={webSearchEnabled ? 'Web search enabled' : 'Enable web search'}
+            onClick={onToggleWebSearch}
+          >
+            <Globe className="size-4" />
+          </Button>
 
-        <button
-          className={cn('chat-option-btn', webSearchEnabled && 'active')}
-          type="button"
-          title={webSearchEnabled ? 'Web search enabled' : 'Enable web search'}
-          onClick={onToggleWebSearch}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="2" y1="12" x2="22" y2="12" />
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-          </svg>
-        </button>
-
-        <div className="chat-reasoning-dropdown">
           <Popover open={reasoningOpen && reasoningSupported} onOpenChange={setReasoningOpen}>
             <PopoverTrigger asChild>
-              <button
-                className={cn('chat-option-btn reasoning-btn', !reasoningSupported && 'disabled')}
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs font-normal text-muted-foreground"
                 disabled={!reasoningSupported}
                 title={reasoningSupported ? 'Reasoning effort' : 'Reasoning not available for this model'}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-                <span className="reasoning-label">{reasoningSupported ? reasoningLabel(reasoningEffort) : 'N/A'}</span>
-                <svg className="reasoning-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
+                <Brain className="size-3.5" />
+                <span>{reasoningSupported ? reasoningLabel(reasoningEffort) : 'N/A'}</span>
+                <ChevronDown className="size-3 opacity-60" />
+              </Button>
             </PopoverTrigger>
             <PopoverContent align="end" sideOffset={8} className="w-[200px] p-1">
-              <div className="chat-reasoning-header">Reasoning Effort</div>
+              <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Reasoning Effort</div>
               {REASONING_OPTIONS.map((o) => (
                 <button
                   key={o.level}
                   type="button"
-                  className={cn('chat-reasoning-option', o.level === reasoningEffort && 'selected')}
+                  className={cn(
+                    'flex w-full flex-col items-start gap-0.5 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground',
+                    o.level === reasoningEffort && 'bg-accent text-accent-foreground'
+                  )}
                   onClick={() => { onSetReasoning(o.level); setReasoningOpen(false); }}
                 >
-                  <span className="option-label">{o.label}</span>
-                  <span className="option-desc">{o.desc}</span>
+                  <span className="text-sm">{o.label}</span>
+                  <span className="text-xs text-muted-foreground">{o.desc}</span>
                 </button>
               ))}
             </PopoverContent>
           </Popover>
+
+          <Button
+            size="icon"
+            className="ml-auto size-[30px] rounded-lg"
+            title="Send message"
+            aria-label="Send message"
+            onClick={submit}
+          >
+            <Send className="size-4" />
+          </Button>
         </div>
       </div>
     </div>

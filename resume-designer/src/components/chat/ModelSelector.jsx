@@ -1,22 +1,20 @@
 import { useState } from 'react';
-import { cn } from '@/lib/utils';
-import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
-import { AI_MODELS, getModelLabel } from './useChat.js';
+import { Check, ChevronDown, Settings2, X } from 'lucide-react';
 
-function CheckIcon() {
-  return (
-    <svg className="check-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
+import { Button } from '@/components/ui/button';
+import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
+
+import { AI_MODELS, getModelLabel } from './useChat.js';
 
 /**
  * Model picker — curated groups + the user's cached custom slugs (removable) +
- * a free-type custom-slug field. A shadcn Popover (controlled) replaces the old
- * bespoke .custom-dropdown + menuPortal: Radix portals the content to <body>, so
- * the glass blur escapes the frosted panel for free. The content is wrapped in
- * `.chat-model-selector` so the panel-scoped option styles still apply.
+ * a free-type custom-slug field. A controlled shadcn Popover hosting the real
+ * Command primitive (the shadcn combobox pattern: selected item = visible
+ * leading Check, others transparent). Radix portals the content to <body>, so
+ * the glass blur escapes the frosted panel for free.
  */
 export function ModelSelector({
   currentModel, configured, customModels,
@@ -39,96 +37,88 @@ export function ModelSelector({
   };
 
   return (
-    <div className="chat-model-selector">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <button className="custom-dropdown-trigger" type="button">
-            <span className="dropdown-label">{getModelLabel(currentModel)}</span>
-            <svg className="dropdown-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-        </PopoverTrigger>
-        <PopoverContent align="start" sideOffset={6} className="w-[280px] max-h-[340px] overflow-y-auto p-0">
-          <div className="chat-model-selector">
-            {configured ? (
-              <>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 max-w-40 gap-1.5 px-2 text-xs font-normal text-muted-foreground"
+        >
+          <span className="min-w-0 truncate">{getModelLabel(currentModel)}</span>
+          <ChevronDown className="size-3 shrink-0 opacity-60" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6} className="w-[280px] p-0">
+        {configured ? (
+          <>
+            <Command>
+              <CommandList className="max-h-[260px]">
                 {AI_MODELS.map((group) => (
-                  <div key={group.group}>
-                    <div className="custom-dropdown-group-label">{group.group}</div>
+                  <CommandGroup
+                    key={group.group}
+                    heading={group.group}
+                    className="[&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-primary"
+                  >
                     {group.options.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        className={cn('custom-dropdown-option', opt.value === currentModel && 'selected')}
-                        onClick={() => pick(opt.value)}
-                      >
-                        <CheckIcon />
-                        {opt.label}
-                      </button>
+                      <CommandItem key={opt.value} value={opt.value} onSelect={() => pick(opt.value)}>
+                        <Check className={cn('size-4', opt.value !== currentModel && 'opacity-0')} />
+                        <span className="min-w-0 truncate">{opt.label}</span>
+                      </CommandItem>
                     ))}
-                  </div>
+                  </CommandGroup>
                 ))}
 
                 {customModels.length > 0 && (
-                  <div>
-                    <div className="custom-dropdown-group-label">Custom</div>
+                  <CommandGroup heading="Custom">
                     {customModels.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        className={cn('custom-dropdown-option custom-model-option', s === currentModel && 'selected')}
-                        onClick={() => pick(s)}
-                      >
-                        <CheckIcon />
-                        <span className="custom-model-label">{getModelLabel(s)}</span>
+                      <CommandItem key={s} value={s} onSelect={() => pick(s)}>
+                        <Check className={cn('size-4', s !== currentModel && 'opacity-0')} />
+                        <span className="min-w-0 flex-1 truncate">{getModelLabel(s)}</span>
                         <span
-                          className="custom-model-remove"
                           role="button"
                           aria-label="Remove"
                           title="Remove from list"
+                          className="ml-auto rounded-sm p-0.5 text-muted-foreground hover:bg-muted-foreground/20 hover:text-destructive"
                           onClick={(e) => { e.stopPropagation(); onRemoveCustom(s); }}
                         >
-                          ×
+                          <X className="size-3.5" />
                         </span>
-                      </button>
+                      </CommandItem>
                     ))}
-                  </div>
+                  </CommandGroup>
                 )}
+              </CommandList>
+            </Command>
 
-                <div className="custom-dropdown-divider" />
-                <div className="custom-dropdown-custom">
-                  <input
-                    type="text"
-                    className={cn('custom-model-input', invalid && 'invalid')}
-                    placeholder="Custom slug, e.g. anthropic/claude-opus-4.8"
-                    title={invalid ? 'Enter a valid OpenRouter slug, e.g. anthropic/claude-opus-4.8' : undefined}
-                    value={slug}
-                    onChange={(e) => { setSlug(e.target.value); setInvalid(false); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applySlug(); } }}
-                  />
-                  <button type="button" className="custom-model-apply" onClick={applySlug}>Use</button>
-                </div>
-              </>
-            ) : (
-              <div className="custom-dropdown-notice">
-                <span className="notice-text">OpenRouter API key not configured</span>
-                <button
-                  type="button"
-                  className="notice-configure-btn"
-                  onClick={() => { setOpen(false); onConfigure(); }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-                  </svg>
-                  Configure
-                </button>
+            <div className="border-t p-2">
+              <div className="flex gap-1.5">
+                <Input
+                  className={cn('h-[30px] font-mono text-xs', invalid && 'border-destructive')}
+                  aria-invalid={invalid || undefined}
+                  placeholder="Custom slug, e.g. anthropic/claude-opus-4.8"
+                  value={slug}
+                  onChange={(e) => { setSlug(e.target.value); setInvalid(false); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applySlug(); } }}
+                />
+                <Button size="sm" className="h-[30px]" onClick={applySlug}>Use</Button>
               </div>
-            )}
+              {invalid && (
+                <p className="mt-1 text-xs text-destructive">
+                  Enter a valid OpenRouter slug, e.g. anthropic/claude-opus-4.8
+                </p>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="space-y-2 p-3">
+            <p className="text-sm text-muted-foreground">OpenRouter API key not configured</p>
+            <Button size="sm" onClick={() => { setOpen(false); onConfigure(); }}>
+              <Settings2 className="size-3.5" />
+              Configure
+            </Button>
           </div>
-        </PopoverContent>
-      </Popover>
-    </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

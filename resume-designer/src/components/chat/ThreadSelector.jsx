@@ -1,13 +1,18 @@
 import { useState } from 'react';
-import { cn } from '@/lib/utils';
+import { ChevronDown, Plus, X } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { confirmDestructive } from '@/components/ui/confirm';
+import { cn } from '@/lib/utils';
+
 import { getThreadDisplayName } from '../../chatThreads.js';
 
 /**
  * Chat-thread switcher. A controlled shadcn Popover (not DropdownMenu) so that
  * deleting a thread re-renders the list in place without the menu auto-closing,
- * matching the old behavior. Content is wrapped in `.thread-selector` so the
- * existing menu styles apply after Radix portals it to <body>.
+ * matching the old behavior. Rows are styled after shadcn's DropdownMenuItem
+ * source; the per-row delete reveals on hover.
  */
 export function ThreadSelector({ threads, currentThreadId, onSwitch, onNew, onDelete }) {
   const [open, setOpen] = useState(false);
@@ -15,62 +20,70 @@ export function ThreadSelector({ threads, currentThreadId, onSwitch, onNew, onDe
 
   // Single-thread deletion asks for confirmation (you can't be left with none
   // unintentionally); with multiple threads it's a one-click delete.
-  const handleDelete = (id) => {
-    if (threads.length > 1 || window.confirm('Delete this chat thread?')) onDelete(id);
+  const handleDelete = async (id) => {
+    if (threads.length > 1) {
+      onDelete(id);
+      return;
+    }
+    const ok = await confirmDestructive({
+      title: 'Delete this chat thread?',
+      description: 'This conversation history will be permanently deleted.',
+      actionLabel: 'Delete',
+    });
+    if (ok) onDelete(id);
   };
 
   return (
-    <div className="thread-selector">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <button className="thread-selector-trigger" type="button">
-            <span className="thread-name">{getThreadDisplayName(current)}</span>
-            <svg className="thread-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-        </PopoverTrigger>
-        <PopoverContent align="start" sideOffset={6} className="w-[260px] max-h-[320px] overflow-hidden p-0 flex flex-col">
-          <div className="thread-selector flex flex-col min-h-0">
-            <div className="thread-menu-header">
-              <span>Chat Threads</span>
-              <button
-                className="thread-new-btn"
-                type="button"
-                title="Start new chat"
-                onClick={() => { onNew(); setOpen(false); }}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 w-full justify-between gap-1 px-2.5 text-[13px] font-normal text-foreground"
+        >
+          <span className="min-w-0 truncate">{getThreadDisplayName(current)}</span>
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6} className="w-[260px] p-1">
+        <div className="flex items-center justify-between px-2 py-1.5 text-xs font-medium text-muted-foreground">
+          <span>Chat Threads</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6"
+            title="Start new chat"
+            aria-label="Start new chat"
+            onClick={() => { onNew(); setOpen(false); }}
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        </div>
+        <div className="max-h-[280px] overflow-y-auto">
+          {threads.map((t) => (
+            <div
+              key={t.id}
+              className={cn(
+                'group flex cursor-default items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground',
+                t.id === currentThreadId && 'bg-accent text-accent-foreground'
+              )}
+              onClick={() => { onSwitch(t.id); setOpen(false); }}
+            >
+              <span className="min-w-0 flex-1 truncate">{getThreadDisplayName(t)}</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-5 shrink-0 opacity-0 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                title="Delete thread"
+                aria-label="Delete thread"
+                onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
+                <X className="size-3.5" />
+              </Button>
             </div>
-            <div className="thread-list">
-              {threads.map((t) => (
-                <div
-                  key={t.id}
-                  className={cn('thread-item', t.id === currentThreadId && 'active')}
-                  onClick={() => { onSwitch(t.id); setOpen(false); }}
-                >
-                  <span className="thread-item-name">{getThreadDisplayName(t)}</span>
-                  <button
-                    className="thread-delete-btn"
-                    type="button"
-                    title="Delete thread"
-                    onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

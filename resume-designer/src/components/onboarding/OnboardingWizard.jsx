@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { cn } from '@/lib/utils';
+
 import { completeOnboarding } from '../../onboarding.js';
 import {
   INTERVIEW_QUESTIONS,
@@ -40,10 +46,12 @@ import {
  * Always mounted (renders null when closed) so its event listeners exist before
  * main.js's 300ms first-run check fires. Opens on `rd:open-onboarding` (detail =
  * { skipApiKeyStep }) and closes on `rd:close-onboarding`, both dispatched by the
- * onboarding.js bridge. The full-screen overlay reuses the existing
- * `.onboarding-*` CSS (styles/onboarding.css) verbatim — the `.show` class drives
- * the fade/scale transition, and `body:has(.onboarding-overlay.show)` keeps hiding
- * the inline-editor AI menu while the wizard is up.
+ * onboarding.js bridge. The full-screen overlay is styled with Tailwind/shadcn
+ * (Progress header + card panel); the `onboarding-overlay` + `show` class tokens
+ * are kept purely as a cross-module contract — styles/onboarding.css's
+ * `body:has(.onboarding-overlay.show)` rule hides the inline-editor AI menu while
+ * the wizard is up. `entered` drives the fade/scale transition (mount without
+ * `show`/opacity, add both on the next animation frame).
  *
  * Steps: 0 API key · 1 choose path · 2 import|interview|job-input · 3 job
  * descriptions · 4 review · 5 final. New-resume mode (the header "+" button) skips
@@ -175,7 +183,7 @@ export default function OnboardingWizard() {
 
   const improveText = useCallback((questionText, value) => {
     const settings = getSettings();
-    const modelId = settings.defaultModel || 'anthropic/claude-sonnet-4.5';
+    const modelId = settings.defaultModel || getDefaultModelId();
     return improveInterviewAnswer(questionText, value, modelId);
   }, []);
 
@@ -341,28 +349,49 @@ export default function OnboardingWizard() {
           />
         );
       case 5:
-        return <FinalStep onFinish={finish} />;
+        return <FinalStep onFinish={finish} onOpenProfile={openProfile} />;
       default:
         return null;
     }
   };
 
   return (
-    <div className={`onboarding-overlay${entered ? ' show' : ''}`} id="onboarding-overlay">
-      <div className="onboarding-wizard">
-        <div className="onboarding-header">
-          <div className="onboarding-progress" id="onboarding-progress">
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${(displayStep / totalSteps) * 100}%` }} />
-            </div>
-            <span className="progress-text">Step {displayStep} of {totalSteps}</span>
+    <div
+      id="onboarding-overlay"
+      className={cn(
+        // `onboarding-overlay` + `show` are functional tokens (see doc comment),
+        // not stylesheet hooks — all visuals below are Tailwind.
+        'onboarding-overlay fixed inset-0 z-[3000] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm transition-opacity duration-300',
+        entered ? 'show opacity-100' : 'pointer-events-none opacity-0',
+      )}
+    >
+      <div
+        className={cn(
+          'flex w-full max-w-[620px] max-h-[90vh] flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-lg glass-card',
+          'transition-transform duration-300',
+          entered ? 'scale-100' : 'scale-95',
+        )}
+      >
+        {/* Header — mockup .ob-head: 16px 22px, fixed 140px progress + step text. */}
+        <div className="shrink-0 border-b px-[22px] py-4">
+          <div className="flex items-center gap-3.5" id="onboarding-progress">
+            <Progress value={(displayStep / totalSteps) * 100} className="h-[7px] w-[140px]" />
+            <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
+              Step {displayStep} of {totalSteps}
+            </span>
+            <span className="flex-1" />
             {isNewResumeMode && (
-              <button className="wizard-close-btn" id="wizard-close-btn" title="Cancel" onClick={doClose}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                id="wizard-close-btn"
+                title="Cancel"
+                aria-label="Cancel"
+                onClick={doClose}
+              >
+                <X className="size-4" />
+              </Button>
             )}
           </div>
         </div>

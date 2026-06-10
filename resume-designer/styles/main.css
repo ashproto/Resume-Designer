@@ -714,14 +714,17 @@ html[data-theme="dark"] .header-variant-select {
   overflow: hidden;
 }
 
-/* Zoom Controls Toolbar */
+/* Zoom Controls Toolbar — floating "zoom pill" (approved mockup .zoom-pill):
+   light surface, 11px radius, 1px border, hairline dividers, tabular-nums
+   readout, ghost icon buttons. Glass overrides layer translucency under Tauri. */
 .zoom-controls {
   display: flex;
   align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  background: rgba(45, 42, 38, 0.95);
-  border-radius: 8px;
+  gap: 2px;
+  padding: 4px;
+  background: var(--color-panel-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
   /* Anchored to .preview-area (position:relative) rather than the viewport, so
      it centers on the content column at first paint and tracks sidebar open/close.
      position:fixed centered on 50vw landed it far-left until a reflow corrected it. */
@@ -730,7 +733,7 @@ html[data-theme="dark"] .header-variant-select {
   left: 50%;
   transform: translateX(-50%);
   z-index: 50;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 22px -8px rgba(45, 42, 38, 0.25);
   max-width: calc(100% - 24px);
   flex-wrap: wrap;
   justify-content: center;
@@ -740,19 +743,19 @@ html[data-theme="dark"] .header-variant-select {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   background: transparent;
   border: none;
-  border-radius: 6px;
-  color: rgba(248, 246, 243, 0.8);
+  border-radius: 7px;
+  color: var(--color-text-muted);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .zoom-btn:hover {
-  background: rgba(248, 246, 243, 0.1);
-  color: var(--color-sidebar-text);
+  background: var(--color-hover-bg);
+  color: var(--color-text);
 }
 
 .zoom-btn:active {
@@ -760,25 +763,26 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 .zoom-level {
-  min-width: 50px;
-  padding: 0 var(--space-sm);
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: rgba(248, 246, 243, 0.9);
+  min-width: 44px;
+  padding: 0 7px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .zoom-divider {
   width: 1px;
-  height: 20px;
-  background: rgba(248, 246, 243, 0.2);
-  margin: 0 var(--space-xs);
+  height: 18px;
+  background: var(--color-border);
+  margin: 0 4px;
 }
 
 .text-tools {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-xs);
+  gap: 2px;
 }
 
 .text-tool-label {
@@ -788,7 +792,7 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 .text-size-level {
-  min-width: 46px;
+  min-width: 42px;
   padding: 0 4px;
 }
 
@@ -799,20 +803,20 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 .text-tool-btn.active {
-  background: rgba(248, 246, 243, 0.18);
-  color: var(--color-sidebar-text);
+  background: var(--color-accent-soft, rgba(196, 92, 62, 0.12));
+  color: var(--color-accent);
 }
 
 .zoom-btn:disabled,
 .zoom-btn.disabled {
-  opacity: 0.3;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .zoom-btn:disabled:hover,
 .zoom-btn.disabled:hover {
   background: transparent;
-  color: rgba(248, 246, 243, 0.8);
+  color: var(--color-text-muted);
 }
 
 /* Resume Scroller - handles all scrolling */
@@ -943,12 +947,8 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 /* ==========================================================================
-   PDF Dialog
+   Form controls (shared by the print-window Settings modal + backup modal)
    ========================================================================== */
-
-.pdf-dialog {
-  max-width: 400px;
-}
 
 .form-group {
   margin-bottom: var(--space-lg);
@@ -976,38 +976,6 @@ html[data-theme="dark"] .header-variant-select {
 .form-input:focus {
   outline: none;
   border-color: var(--color-accent);
-}
-
-.pdf-filename-wrapper {
-  display: flex;
-  align-items: stretch;
-}
-
-.pdf-filename-wrapper .form-input {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  border-right: none;
-}
-
-.pdf-extension {
-  display: flex;
-  align-items: center;
-  padding: 0 var(--space-md);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-left: none;
-  border-radius: 0 6px 6px 0;
-  font-family: var(--font-body);
-  font-size: 0.875rem;
-  color: var(--color-text-muted);
-}
-
-.pdf-dialog-actions {
-  display: flex;
-  gap: var(--space-sm);
-  justify-content: flex-end;
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--color-border);
 }
 
 /* ==========================================================================

@@ -1,20 +1,31 @@
 import { useState, useRef, useReducer, useEffect, useCallback } from 'react';
-import { cn } from '@/lib/utils';
+import {
+  Contact, User, Briefcase, Star, BookOpen, FolderGit2, Plus,
+  Upload, Download, Sparkles, Check, X,
+} from 'lucide-react';
+import { toast } from 'sonner';
+
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+
 import { getUserProfile, saveUserProfile } from '../../persistence.js';
 import { DEFAULT_PROFILE, profileToMarkdown, markdownToProfile } from '../../profileMarkdown.js';
-import { TabIcon, ProfileTabContent } from './ProfileTabs.jsx';
+import { ProfileTabContent } from './ProfileTabs.jsx';
 
 const SAVE_DELAY = 500;
 
+// The 7 profile sections, rendered as a left nav rail of `buttonVariants` items
+// with lucide icons — the same idiom SettingsDialog uses for its tabs.
 const PROFILE_TABS = [
-  { id: 'contact', label: 'Contact', icon: 'contact' },
-  { id: 'summary', label: 'Summary', icon: 'user' },
-  { id: 'experience', label: 'Experience', icon: 'briefcase' },
-  { id: 'skills', label: 'Skills', icon: 'star' },
-  { id: 'education', label: 'Education', icon: 'book' },
-  { id: 'projects', label: 'Projects', icon: 'folder' },
-  { id: 'more', label: 'More', icon: 'plus' },
+  { id: 'contact', label: 'Contact', Icon: Contact },
+  { id: 'summary', label: 'Summary', Icon: User },
+  { id: 'experience', label: 'Experience', Icon: Briefcase },
+  { id: 'skills', label: 'Skills', Icon: Star },
+  { id: 'education', label: 'Education', Icon: BookOpen },
+  { id: 'projects', label: 'Projects', Icon: FolderGit2 },
+  { id: 'more', label: 'More', Icon: Plus },
 ];
 
 // A deep, shape-complete clone of the stored profile to edit against (so edits
@@ -30,10 +41,11 @@ function buildWorkingCopy() {
 }
 
 /**
- * The User Profile editor — the React port of userProfilePanel.js. A shadcn
- * Dialog (built-in close suppressed; the header carries its own) wrapping the
- * existing `.profile-*` markup across 7 tabs. Always mounted (like Settings) so
- * the `rd:profile-flush` listener is present even when closed: that flush is
+ * The User Profile editor — a genuine shadcn rail dialog matching SettingsDialog:
+ * a glass `DialogContent` with the built-in close suppressed (the header carries
+ * its own ghost X), a left `<nav>` rail of `buttonVariants` section items, and a
+ * scrolling content pane. Always mounted (like Settings) so the
+ * `rd:profile-flush` listener is present even when closed: that flush is
  * dispatched synchronously by backupFlow.js right before a backup import to win
  * the autosave-clobbers-import race.
  *
@@ -115,7 +127,7 @@ export default function ProfileDialog() {
       bump();
     }).catch((err) => {
       console.error('Failed to import profile:', err);
-      window.alert(`Failed to import profile: ${err.message}`);
+      toast.error(`Failed to import profile: ${err.message}`);
     });
   };
 
@@ -129,25 +141,26 @@ export default function ProfileDialog() {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="flex max-h-[85vh] w-[90vw] max-w-[700px] flex-col gap-0 overflow-hidden p-0 glass-card"
+        className="flex max-h-[85vh] w-[90vw] max-w-[740px] flex-col gap-0 overflow-hidden p-0 glass-card"
       >
-        <DialogTitle className="sr-only">User Profile</DialogTitle>
         <DialogDescription className="sr-only">Background information for AI assistance</DialogDescription>
 
-        <div className="profile-panel-header">
-          <div className="profile-panel-title-row">
-            <div>
-              <h2>User Profile</h2>
-              <span className="profile-panel-subtitle">Background info for AI assistance</span>
-            </div>
-            <div className="profile-header-actions">
-              <span className={cn('save-indicator', saved && 'show')}>Saved</span>
-              <label className="profile-import-btn" title="Import profile from markdown file">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
+        {/* Header — mockup .dlg-head: 20px 22px 16px, title 17px, desc 13px. */}
+        <div className="flex shrink-0 items-start justify-between gap-3 px-[22px] pb-4 pt-5">
+          <div className="space-y-1">
+            <DialogTitle>User Profile</DialogTitle>
+            <p className="text-[13px] text-muted-foreground">Background info for AI assistance</p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {saved && (
+              <Badge className="mr-1 gap-1 border-transparent bg-success-bg text-success">
+                <Check className="h-3 w-3" />
+                Saved
+              </Badge>
+            )}
+            <Button asChild variant="outline" size="sm">
+              <label className="cursor-pointer" title="Import profile from markdown file">
+                <Upload className="h-4 w-4" />
                 Import
                 <input
                   type="file"
@@ -156,47 +169,60 @@ export default function ProfileDialog() {
                   onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleImport(f); }}
                 />
               </label>
-              <button className="profile-export-btn" type="button" title="Export profile to markdown file" onClick={handleExport}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Export
-              </button>
-              <button className="profile-ai-interview-btn" type="button" title="Fill profile via AI interview" onClick={startInterview}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                AI Interview
-              </button>
-              <button className="profile-panel-close" type="button" title="Close" onClick={() => handleOpenChange(false)}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              title="Export profile to markdown file"
+              onClick={handleExport}
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </Button>
+            <Button type="button" size="sm" title="Fill profile via AI interview" onClick={startInterview}>
+              <Sparkles className="h-4 w-4" />
+              AI Interview
+            </Button>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={() => handleOpenChange(false)}
+              className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </button>
           </div>
         </div>
 
-        <div className="profile-panel-tabs">
-          {PROFILE_TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={cn('profile-tab', t.id === tab && 'active')}
-              onClick={() => setTab(t.id)}
-            >
-              <TabIcon icon={t.icon} />
-              <span>{t.label}</span>
-            </button>
-          ))}
-        </div>
+        {/* Body: nav rail + content. Rail mirrors SettingsDialog — active item is
+            terracotta-tinted (bg-primary/10 text-primary) per the mockup .rail;
+            geometry pinned to .rail (172px col, 14px/10px pad) + .rail-item
+            (13.5px/500, gap-9px, py-[7px]/px-2.5, rounded-md). */}
+        <div className="grid min-h-0 flex-1 grid-cols-[172px_1fr] border-t">
+          <nav className="flex flex-col gap-0.5 bg-muted/30 px-2.5 py-3.5">
+            {PROFILE_TABS.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left text-[13.5px] font-medium transition-colors [&_svg]:size-4 [&_svg]:shrink-0',
+                  tab === id
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                <Icon /> {label}
+              </button>
+            ))}
+          </nav>
 
-        <div className="profile-panel-content">
-          <div key={`${tab}-${version}`}>
-            <ProfileTabContent tab={tab} profile={profileRef.current} scheduleSave={scheduleSave} refresh={refresh} />
+          <div className="min-h-0 overflow-y-auto px-[22px] py-[18px]">
+            <div key={`${tab}-${version}`}>
+              <ProfileTabContent tab={tab} profile={profileRef.current} scheduleSave={scheduleSave} refresh={refresh} />
+            </div>
           </div>
         </div>
       </DialogContent>

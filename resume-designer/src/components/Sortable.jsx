@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import { GripVertical } from 'lucide-react';
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
@@ -81,8 +82,16 @@ export function SortableItem({ id, className, children }) {
   );
 }
 
-/** The drag-initiating handle for the enclosing SortableItem. */
-export function DragHandle({ className = 'drag-handle', children = '⋮⋮', title = 'Drag to reorder' }) {
+/**
+ * The drag-initiating handle for the enclosing SortableItem. Defaults to a
+ * muted lucide grip styled with Tailwind utilities; callers may still pass
+ * their own className/children (export shape unchanged).
+ */
+export function DragHandle({
+  className = 'flex cursor-grab touch-none items-center text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing',
+  children = <GripVertical className="size-3.5" />,
+  title = 'Drag to reorder',
+}) {
   const { attributes, listeners } = useContext(SortableItemContext);
   return (
     <span className={className} title={title} {...attributes} {...listeners}>

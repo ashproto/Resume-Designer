@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Check } from 'lucide-react';
+import { Bold, ChevronDown, Plus, Trash2, X } from 'lucide-react';
 
 import { store, generateId, experienceSortValue } from '../../store.js';
 import { SortableList, SortableItem, DragHandle } from '../Sortable.jsx';
@@ -14,12 +14,17 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Segmented, SegmentedItem } from '@/components/ui/segmented';
+import { confirmDestructive } from '@/components/ui/confirm';
+import { cn } from '@/lib/utils';
 
-// Structure panel, converted from structurePanel.js (Step 7). It's a docked
-// side <aside> (not a modal), so it keeps its skeleton shell + slide CSS: this
-// component wires the skeleton toggle/close buttons, syncs the .open / .panel-open
-// classes, and portals its body into #structure-panel-content.
+// Structure panel — restyled onto genuine shadcn primitives + Tailwind for the
+// full-shadcn chrome redesign. It's a docked side <aside> (not a modal), so it
+// keeps its skeleton shell + slide CSS: this component wires the skeleton
+// toggle/close buttons, syncs the .open / .panel-open classes, and portals its
+// body into #structure-panel-content.
 //
 // Data flow (the cursor-jump fix, in React): inputs are UNCONTROLLED
 // (defaultValue) and write to the store on change without remounting — so typing
@@ -31,10 +36,10 @@ import { Label } from '@/components/ui/label';
 // so it survives remounts; scroll position is captured + restored.
 
 const TAB_OPTIONS = {
-  header: { label: 'Header', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="6" rx="1" /><rect x="3" y="12" width="18" height="9" rx="1" opacity="0.3" /></svg> },
-  sidebar: { label: 'Sidebar', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="6" height="18" rx="1" /><rect x="12" y="3" width="9" height="18" rx="1" opacity="0.3" /></svg> },
-  main: { label: 'Main Content', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="6" height="18" rx="1" opacity="0.3" /><rect x="12" y="3" width="9" height="18" rx="1" /></svg> },
-  design: { label: 'Design', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 2a4.5 4.5 0 0 0 0 9 4.5 4.5 0 0 1 0 9 10 10 0 0 0 0-18z" /></svg> },
+  header: { tabLabel: 'Header', label: 'Header' },
+  sidebar: { tabLabel: 'Sidebar', label: 'Sidebar' },
+  main: { tabLabel: 'Main', label: 'Main Content' },
+  design: { tabLabel: 'Design', label: 'Design' },
 };
 
 const SECTION_TEMPLATES = {
@@ -70,64 +75,112 @@ function writeTool(index, value) {
   writeField('tools', serializeTools(items));
 }
 
+// ------------------------------ small building blocks ------------------------
+
+// Compact labeled field. Resume-data inputs stay UNCONTROLLED (defaultValue)
+// and write through writeField on change — never `value`.
+function Field({ label, type = 'text', path, defaultValue }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Input
+        type={type} className="h-8" data-field={path} defaultValue={defaultValue}
+        onChange={(e) => writeField(path, e.target.value)}
+      />
+    </div>
+  );
+}
+
+// Ghost icon delete button at the end of a sortable row.
+function RowDeleteButton({ title = 'Delete', onClick }) {
+  return (
+    <Button
+      variant="ghost" size="icon" type="button"
+      className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+      title={title} onClick={onClick}
+    >
+      <X className="size-3.5" />
+    </Button>
+  );
+}
+
+// "+ Add …" ghost row at the foot of a list.
+function AddRowButton({ label, onClick }) {
+  return (
+    <Button
+      variant="ghost" size="sm" type="button"
+      className="w-full justify-start gap-2 text-muted-foreground"
+      onClick={onClick}
+    >
+      <Plus className="size-3.5" /> {label}
+    </Button>
+  );
+}
+
 // ------------------------------ sub-views ------------------------------------
 
 function SectionContentList({ sectionIndex, content }) {
   const ids = content.map((_, i) => `sc-${sectionIndex}-${i}`);
   return (
     <SortableList
-      className="section-content-list"
+      className="space-y-1.5"
       ids={ids}
       onReorder={(from, to) => store.moveInArray(`sections[${sectionIndex}].content`, from, to)}
     >
       {content.map((item, i) => (
-        <SortableItem key={ids[i]} id={ids[i]} className="section-content-item">
-          <DragHandle className="drag-handle small">⋮</DragHandle>
-          <input
-            type="text" className="form-input"
+        <SortableItem key={ids[i]} id={ids[i]} className="flex items-center gap-1.5">
+          <DragHandle />
+          <Input
+            type="text" className="h-8 flex-1"
             data-field={`sections[${sectionIndex}].content[${i}]`}
             defaultValue={item}
             onChange={(e) => writeField(`sections[${sectionIndex}].content[${i}]`, e.target.value)}
           />
-          <button className="item-delete-btn small" title="Delete"
-            onClick={() => store.removeFromArray(`sections[${sectionIndex}].content`, i)}>×</button>
+          <RowDeleteButton onClick={() => store.removeFromArray(`sections[${sectionIndex}].content`, i)} />
         </SortableItem>
       ))}
-      <button className="add-item-btn" onClick={() => store.addToArray(`sections[${sectionIndex}].content`, 'New item')}>
-        + Add item
-      </button>
+      <AddRowButton label="Add item" onClick={() => store.addToArray(`sections[${sectionIndex}].content`, 'New item')} />
     </SortableList>
   );
 }
 
 function SectionItem({ section, index }) {
   const type = section?.type === 'skills' ? 'skills' : 'list';
+  const removeSection = async () => {
+    const ok = await confirmDestructive({
+      title: 'Delete this section?',
+      description: 'The section and its items will be permanently removed from this resume.',
+      actionLabel: 'Delete',
+    });
+    if (ok) store.removeFromArray('sections', index);
+  };
   return (
-    <SortableItem id={section.id || `section-${index}`} className="sortable-item section-item">
-      <DragHandle />
-      <div className="section-item-content">
-        <input
-          type="text" className="form-input section-title-input"
+    <SortableItem id={section.id || `section-${index}`} className="space-y-2.5 rounded-[9px] border bg-background p-2.5">
+      <div className="flex items-center gap-1.5">
+        <DragHandle />
+        <Input
+          type="text" className="h-8 flex-1"
           data-field={`sections[${index}].title`}
           defaultValue={section.title}
           onChange={(e) => writeField(`sections[${index}].title`, e.target.value)}
         />
-        <div className="section-mode-control">
-          <span className="section-mode-label">Display</span>
-          <div className="section-mode-options">
-            {[['list', 'Bulleted'], ['skills', 'Inline Tags']].map(([t, label]) => (
-              <button key={t} type="button"
-                className={`section-mode-btn ${type === t ? 'active' : ''}`}
-                onClick={() => writeField(`sections[${index}].type`, t)}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <SectionContentList sectionIndex={index} content={section.content || []} />
+        <RowDeleteButton title="Delete section" onClick={removeSection} />
       </div>
-      <button className="item-delete-btn" title="Delete section"
-        onClick={() => { if (confirm('Delete this section?')) store.removeFromArray('sections', index); }}>×</button>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">Display</span>
+        <Segmented size="xs">
+          {[['list', 'Bulleted'], ['skills', 'Inline Tags']].map(([t, label]) => (
+            <SegmentedItem
+              key={t} size="xs"
+              active={type === t}
+              onClick={() => writeField(`sections[${index}].type`, t)}
+            >
+              {label}
+            </SegmentedItem>
+          ))}
+        </Segmented>
+      </div>
+      <SectionContentList sectionIndex={index} content={section.content || []} />
     </SortableItem>
   );
 }
@@ -141,58 +194,70 @@ function ExperienceItem({ exp, index }) {
     // state persists across later structural re-renders (#9).
     store.updateSilent(`experience[${index}]._expanded`, next);
   };
+  const removeExperience = async () => {
+    const ok = await confirmDestructive({
+      title: 'Delete this experience?',
+      description: 'The experience entry will be permanently removed from this resume.',
+      actionLabel: 'Delete',
+    });
+    if (ok) store.removeFromArray('experience', index);
+  };
   const bulletIds = (exp.bullets || []).map((_, i) => `b-${index}-${i}`);
   return (
-    <SortableItem id={exp.id || `exp-${index}`} className="accordion-item">
-      <div className="accordion-header" onClick={toggle}>
+    <SortableItem id={exp.id || `exp-${index}`} className="overflow-hidden rounded-[9px] border bg-background">
+      <div className="flex cursor-pointer items-center gap-2 px-2.5 py-2" onClick={toggle}>
         <DragHandle />
-        <span className="accordion-title">{exp.title || 'Untitled Position'}</span>
-        <span className="accordion-subtitle">{exp.company || ''}</span>
-        <ChevronDown className={`accordion-chevron ${expanded ? 'expanded' : ''}`} size={16} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold">{exp.title || 'Untitled Position'}</span>
+          <span className="block truncate text-[11.5px] text-muted-foreground">{exp.company || ''}</span>
+        </span>
+        <ChevronDown
+          className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-180')}
+        />
       </div>
-      <div className={`accordion-content ${expanded ? 'expanded' : ''}`}>
+      {/* Body stays MOUNTED when closed (Tailwind `hidden`), matching the old
+          CSS expand/collapse — its uncontrolled inputs must keep their DOM
+          values across toggles without a remount. */}
+      <div className={cn('space-y-3 border-t bg-muted/40 p-2.5', !expanded && 'hidden')}>
         {[['title', 'Job Title'], ['company', 'Company'], ['dates', 'Dates']].map(([f, label]) => (
-          <div className="form-group" key={f}>
-            <label>{label}</label>
-            <input type="text" className="form-input"
-              data-field={`experience[${index}].${f}`}
-              defaultValue={exp[f] || ''}
-              onChange={(e) => writeField(`experience[${index}].${f}`, e.target.value)} />
-          </div>
+          <Field
+            key={f} label={label}
+            path={`experience[${index}].${f}`}
+            defaultValue={exp[f] || ''}
+          />
         ))}
-        <div className="form-group">
-          <label>Bullets</label>
-          <SortableList className="bullet-list" ids={bulletIds}
-            onReorder={(from, to) => store.moveInArray(`experience[${index}].bullets`, from, to)}>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Bullets</Label>
+          <SortableList
+            className="space-y-1.5" ids={bulletIds}
+            onReorder={(from, to) => store.moveInArray(`experience[${index}].bullets`, from, to)}
+          >
             {(exp.bullets || []).map((bullet, i) => (
-              <SortableItem key={bulletIds[i]} id={bulletIds[i]} className="bullet-item">
-                <DragHandle className="drag-handle small">⋮</DragHandle>
-                <span className="bullet-marker">•</span>
-                <input type="text" className="form-input"
+              <SortableItem key={bulletIds[i]} id={bulletIds[i]} className="flex items-center gap-1.5">
+                <DragHandle />
+                <Input
+                  type="text" className="h-8 flex-1"
                   data-field={`experience[${index}].bullets[${i}]`}
                   defaultValue={bullet}
-                  onChange={(e) => writeField(`experience[${index}].bullets[${i}]`, e.target.value)} />
-                <button className="item-delete-btn small" title="Delete"
-                  onClick={() => store.removeFromArray(`experience[${index}].bullets`, i)}>×</button>
+                  onChange={(e) => writeField(`experience[${index}].bullets[${i}]`, e.target.value)}
+                />
+                <RowDeleteButton onClick={() => store.removeFromArray(`experience[${index}].bullets`, i)} />
               </SortableItem>
             ))}
-            <button className="add-item-btn" onClick={() => store.addToArray(`experience[${index}].bullets`, 'New bullet point')}>+ Add bullet</button>
+            <AddRowButton label="Add bullet" onClick={() => store.addToArray(`experience[${index}].bullets`, 'New bullet point')} />
           </SortableList>
         </div>
-        <div className="accordion-actions">
-          <button className="btn-danger-small"
-            onClick={() => { if (confirm('Delete this experience entry?')) store.removeFromArray('experience', index); }}>
-            Delete Experience
-          </button>
-        </div>
+        <Button
+          variant="ghost" size="sm" type="button"
+          className="text-destructive hover:text-destructive"
+          onClick={removeExperience}
+        >
+          <Trash2 className="size-3.5" /> Delete Experience
+        </Button>
       </div>
     </SortableItem>
   );
 }
-
-const AddIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-);
 
 // ------------------------------ main component -------------------------------
 
@@ -203,6 +268,10 @@ export default function StructurePanel() {
   const [collapsed, setCollapsed] = useState({});
   const [renameOpen, setRenameOpen] = useState(false); // "Custom Section…" title dialog
   const [customTitle, setCustomTitle] = useState('');
+  // Visual-only highlight for the experience "Sort by" segmented control (the
+  // sort itself is a one-shot reorder; this just reflects the last choice, with
+  // Date as the default active segment per the mockup).
+  const [sortMode, setSortMode] = useState('date');
   const tabContentRef = useRef(null);
   const scrollPos = useRef(0);
 
@@ -267,6 +336,7 @@ export default function StructurePanel() {
     setCustomTitle('');
   };
   const sortExperience = (mode) => {
+    setSortMode(mode);
     const experience = store.get('experience');
     if (!Array.isArray(experience) || experience.length < 2) return;
     const sorted = [...experience];
@@ -281,7 +351,7 @@ export default function StructurePanel() {
 
   const handleBold = () => {
     const field = document.activeElement;
-    if (!field?.matches?.('.form-input, .form-textarea')) return;
+    if (!field?.matches?.('input[data-field], textarea[data-field]')) return;
     const path = field.dataset.field;
     if (!path) return;
     const s = field.selectionStart ?? 0;
@@ -304,40 +374,39 @@ export default function StructurePanel() {
 
   return createPortal(
     <>
-      {/* Tab selector */}
-      <div className="panel-section-selector">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="panel-section-dropdown" type="button">
-              <span className="dropdown-icon">{TAB_OPTIONS[tab].icon}</span>
-              <span className="dropdown-label">{TAB_OPTIONS[tab].label}</span>
-              <ChevronDown className="dropdown-chevron" size={16} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-44">
-            {Object.entries(TAB_OPTIONS).map(([key, opt]) => (
-              <DropdownMenuItem key={key} onSelect={() => { scrollPos.current = 0; setTab(key); }}>
-                <span className="dropdown-icon">{opt.icon}</span>
-                <span className="flex-1">{opt.label}</span>
-                {tab === key && <Check className="size-4" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+      {/* Fixed top zone: 4-tab segmented switcher + bold toolbar (content scrolls). */}
+      <div className="shrink-0 space-y-2.5 border-b px-4 pb-3 pt-3.5">
+        <Segmented className="flex w-full">
+          {Object.entries(TAB_OPTIONS).map(([key, { tabLabel, label }]) => (
+            <SegmentedItem
+              key={key}
+              className="flex-1"
+              active={tab === key}
+              onClick={() => { scrollPos.current = 0; setTab(key); }}
+              title={label}
+            >
+              {tabLabel}
+            </SegmentedItem>
+          ))}
+        </Segmented>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline" size="icon" type="button" className="size-7"
+            title="Bold (Cmd/Ctrl+B)"
+            onMouseDown={(e) => e.preventDefault()} onClick={handleBold}
+          >
+            <Bold className="size-3.5" />
+          </Button>
+          <span className="text-xs text-muted-foreground">Format selected text</span>
+        </div>
       </div>
 
-      {/* Bold formatting toolbar */}
-      <div className="panel-text-toolbar">
-        <button className="panel-text-btn" type="button" title="Bold (Cmd/Ctrl+B)"
-          onMouseDown={(e) => e.preventDefault()} onClick={handleBold}>
-          <strong>B</strong>
-        </button>
-        <span className="panel-text-hint">Format selected text</span>
-      </div>
-
-      {/* Tab content — keyed so content tabs remount on data change; design tab stays put */}
+      {/* Tab content — keyed so content tabs remount on data change; design tab
+          stays put. This wrapper is the scroller (flex-1 + overflow-y-auto inside
+          the host's flex column), exactly as .panel-tab-content was before. */}
       <div
-        className="panel-tab-content"
+        className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-3.5"
         ref={tabContentRef}
         onScroll={(e) => { scrollPos.current = e.currentTarget.scrollTop; }}
         key={tab === 'design' ? 'design' : `${tab}-${dataVersion}`}
@@ -345,15 +414,12 @@ export default function StructurePanel() {
         {tab === 'header' && (
           <>
             <PanelSection title="Name & Title" {...sectionProps('name-title')}>
-              <div className="form-group"><label>Name</label>
-                <input type="text" className="form-input" data-field="name" defaultValue={data.name || ''} onChange={(e) => writeField('name', e.target.value)} /></div>
-              <div className="form-group"><label>Professional Title</label>
-                <input type="text" className="form-input" data-field="tagline" defaultValue={data.tagline || ''} onChange={(e) => writeField('tagline', e.target.value)} /></div>
+              <Field label="Name" path="name" defaultValue={data.name || ''} />
+              <Field label="Professional Title" path="tagline" defaultValue={data.tagline || ''} />
             </PanelSection>
             <PanelSection title="Contact Information" {...sectionProps('contact-info')}>
               {[['location', 'Location', 'text'], ['email', 'Email', 'email'], ['phone', 'Phone', 'tel'], ['portfolio', 'Portfolio URL', 'text'], ['instagram', 'Instagram', 'text']].map(([f, label, type]) => (
-                <div className="form-group" key={f}><label>{label}</label>
-                  <input type={type} className="form-input" data-field={`contact.${f}`} defaultValue={data.contact?.[f] || ''} onChange={(e) => writeField(`contact.${f}`, e.target.value)} /></div>
+                <Field key={f} label={label} type={type} path={`contact.${f}`} defaultValue={data.contact?.[f] || ''} />
               ))}
             </PanelSection>
           </>
@@ -364,7 +430,9 @@ export default function StructurePanel() {
             <PanelSection title="Sidebar Sections" {...sectionProps('sidebar-sections')} headerExtra={
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="panel-add-btn" type="button" title="Add section"><AddIcon /></button>
+                  <Button variant="ghost" size="icon" type="button" className="size-7" title="Add section">
+                    <Plus className="size-4" />
+                  </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {Object.entries(SECTION_TEMPLATES).map(([key, t]) => (
@@ -374,14 +442,14 @@ export default function StructurePanel() {
                 </DropdownMenuContent>
               </DropdownMenu>
             }>
-              <SortableList className="sortable-list" ids={sections.map((s, i) => s.id || `section-${i}`)}
+              <SortableList className="space-y-2" ids={sections.map((s, i) => s.id || `section-${i}`)}
                 onReorder={(from, to) => store.moveInArray('sections', from, to)}>
                 {sections.map((section, i) => <SectionItem key={section.id || `section-${i}`} section={section} index={i} />)}
               </SortableList>
             </PanelSection>
 
             <PanelSection title="Tools" {...sectionProps('tools')}>
-              <SortableList className="sortable-list" ids={tools.map((_, i) => `tool-${i}`)}
+              <SortableList className="space-y-1.5" ids={tools.map((_, i) => `tool-${i}`)}
                 onReorder={(from, to) => {
                   const items = normalizeTools(store.get('tools'));
                   const [moved] = items.splice(from, 1);
@@ -390,15 +458,16 @@ export default function StructurePanel() {
                   bump();
                 }}>
                 {tools.map((tool, i) => (
-                  <SortableItem key={`tool-${i}`} id={`tool-${i}`} className="sortable-item tool-item">
+                  <SortableItem key={`tool-${i}`} id={`tool-${i}`} className="flex items-center gap-1.5">
                     <DragHandle />
-                    <input type="text" className="form-input flex-grow" placeholder="Tool name"
-                      defaultValue={tool} onChange={(e) => writeTool(i, e.target.value)} />
-                    <button className="item-delete-btn" title="Delete"
-                      onClick={() => { const items = normalizeTools(store.get('tools')); items.splice(i, 1); writeField('tools', serializeTools(items)); bump(); }}>×</button>
+                    <Input
+                      type="text" className="h-8 flex-1" placeholder="Tool name"
+                      defaultValue={tool} onChange={(e) => writeTool(i, e.target.value)}
+                    />
+                    <RowDeleteButton onClick={() => { const items = normalizeTools(store.get('tools')); items.splice(i, 1); writeField('tools', serializeTools(items)); bump(); }} />
                   </SortableItem>
                 ))}
-                <button className="add-item-btn" onClick={() => { const items = normalizeTools(store.get('tools')); items.push('New tool'); writeField('tools', serializeTools(items)); bump(); }}>+ Add tool</button>
+                <AddRowButton label="Add tool" onClick={() => { const items = normalizeTools(store.get('tools')); items.push('New tool'); writeField('tools', serializeTools(items)); bump(); }} />
               </SortableList>
             </PanelSection>
           </>
@@ -407,41 +476,53 @@ export default function StructurePanel() {
         {tab === 'main' && (
           <>
             <PanelSection title="Summary" {...sectionProps('summary')}>
-              <div className="form-group">
-                <textarea className="form-textarea" data-field="summary" rows={4} placeholder="A brief professional summary..."
-                  defaultValue={data.summary || ''} onChange={(e) => writeField('summary', e.target.value)} />
-              </div>
+              <Textarea
+                data-field="summary" rows={4} placeholder="A brief professional summary..."
+                defaultValue={data.summary || ''} onChange={(e) => writeField('summary', e.target.value)}
+              />
             </PanelSection>
 
             <PanelSection title="Experience" {...sectionProps('experience')} headerExtra={
-              <button className="panel-add-btn" type="button" title="Add experience"
-                onClick={() => store.addToArray('experience', { id: generateId('exp'), title: 'New Position', company: 'Company Name', dates: 'Start – End', bullets: ['Describe your accomplishments'], _expanded: true })}><AddIcon /></button>
+              <Button
+                variant="ghost" size="icon" type="button" className="size-7" title="Add experience"
+                onClick={() => store.addToArray('experience', { id: generateId('exp'), title: 'New Position', company: 'Company Name', dates: 'Start – End', bullets: ['Describe your accomplishments'], _expanded: true })}
+              >
+                <Plus className="size-4" />
+              </Button>
             }>
               {experience.length > 1 && (
-                <div className="experience-sort-bar">
-                  <span className="experience-sort-label">Sort by</span>
-                  <button className="experience-sort-btn" type="button" title="Sort by date (most recent first)" onClick={() => sortExperience('date')}>Date</button>
-                  <button className="experience-sort-btn" type="button" title="Sort by relevance to the target role" onClick={() => sortExperience('relevance')}>Relevance</button>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Sort by</span>
+                  <Segmented size="xs">
+                    <SegmentedItem size="xs" active={sortMode === 'date'} title="Sort by date (most recent first)" onClick={() => sortExperience('date')}>Date</SegmentedItem>
+                    <SegmentedItem size="xs" active={sortMode === 'relevance'} title="Sort by relevance to the target role" onClick={() => sortExperience('relevance')}>Relevance</SegmentedItem>
+                  </Segmented>
                 </div>
               )}
-              <SortableList className="accordion-list" ids={experience.map((e, i) => e.id || `exp-${i}`)}
+              <SortableList className="space-y-2" ids={experience.map((e, i) => e.id || `exp-${i}`)}
                 onReorder={(from, to) => store.moveInArray('experience', from, to)}>
                 {experience.map((exp, i) => <ExperienceItem key={exp.id || `exp-${i}`} exp={exp} index={i} />)}
               </SortableList>
             </PanelSection>
 
             <PanelSection title="Education" {...sectionProps('education')} headerExtra={
-              <button className="panel-add-btn" type="button" title="Add education"
-                onClick={() => store.addToArray('education', 'Degree — Institution — Dates')}><AddIcon /></button>
+              <Button
+                variant="ghost" size="icon" type="button" className="size-7" title="Add education"
+                onClick={() => store.addToArray('education', 'Degree — Institution — Dates')}
+              >
+                <Plus className="size-4" />
+              </Button>
             }>
-              <SortableList className="sortable-list" ids={education.map((_, i) => `edu-${i}`)}
+              <SortableList className="space-y-1.5" ids={education.map((_, i) => `edu-${i}`)}
                 onReorder={(from, to) => store.moveInArray('education', from, to)}>
                 {education.map((edu, i) => (
-                  <SortableItem key={`edu-${i}`} id={`edu-${i}`} className="sortable-item">
+                  <SortableItem key={`edu-${i}`} id={`edu-${i}`} className="flex items-center gap-1.5">
                     <DragHandle />
-                    <input type="text" className="form-input flex-grow" data-field={`education[${i}]`}
-                      defaultValue={edu} onChange={(e) => writeField(`education[${i}]`, e.target.value)} />
-                    <button className="item-delete-btn" title="Delete" onClick={() => store.removeFromArray('education', i)}>×</button>
+                    <Input
+                      type="text" className="h-8 flex-1" data-field={`education[${i}]`}
+                      defaultValue={edu} onChange={(e) => writeField(`education[${i}]`, e.target.value)}
+                    />
+                    <RowDeleteButton onClick={() => store.removeFromArray('education', i)} />
                   </SortableItem>
                 ))}
               </SortableList>

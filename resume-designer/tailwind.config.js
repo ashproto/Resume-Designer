@@ -22,11 +22,12 @@ export default {
   // thing not covered under system-dark. Accepted.
   darkMode: ['selector', '[data-theme="dark"]'],
   content: ['./index.html', './print.html', './src/**/*.{js,jsx}'],
-  corePlugins: {
-    // Tailwind's global reset (Preflight) would fight the existing ~13.5k-line
-    // hand-written CSS. Disable it; shadcn components style themselves explicitly.
-    preflight: false,
-  },
+  // Preflight (Tailwind's base reset) is ON — real shadcn components require it
+  // for correct borders, box-sizing, and typography. Without it, browser-default
+  // <button>/<input> chrome bleeds through and `border` utilities don't render.
+  // The résumé document (#resume) is a vanilla island styled by resume.css, and
+  // the PDF renders via print.html (no Tailwind) — so neither the on-screen résumé
+  // nor PDF export depends on Preflight being off.
   theme: {
   	extend: {
   		colors: {

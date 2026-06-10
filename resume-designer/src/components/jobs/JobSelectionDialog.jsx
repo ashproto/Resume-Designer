@@ -1,12 +1,28 @@
 import { useEffect, useState } from 'react';
+import { Search, X } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 
-// Job-selection modal for "Analyze Resume Fit", ported from
-// showJobSelectionModal + renderJobSelectionModalContent in
-// jobDescriptionPanel.js. The body-appended overlay is now a shadcn Dialog;
-// selection / model / reasoning live in local state seeded each time the
-// dialog opens, and confirm hands the chosen jobs back to the parent.
+// Job-selection modal for "Analyze Resume Fit", ported from showJobSelectionModal
+// + renderJobSelectionModalContent in jobDescriptionPanel.js. A standard shadcn
+// Dialog: Model + Reasoning are real shadcn Selects, each job is a checkbox
+// label-card (tinted when selected). Selection / model / reasoning live in local
+// state seeded each time the dialog opens; confirm hands the chosen jobs back.
+
+const REASONING_OPTIONS = [
+  { value: 'none', label: 'Off' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+];
 
 export function JobSelectionDialog({ open, onOpenChange, jobs, models, defaultModelId, onConfirm }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -41,78 +57,105 @@ export function JobSelectionDialog({ open, onOpenChange, jobs, models, defaultMo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} className="p-0 gap-0 max-w-[560px] glass-card">
-        <DialogTitle className="sr-only">Analyze Resume Fit</DialogTitle>
+      <DialogContent
+        showCloseButton={false}
+        className="flex max-h-[85vh] w-[90vw] max-w-[560px] flex-col gap-0 overflow-hidden p-0 glass-card"
+      >
         <DialogDescription className="sr-only">Select job descriptions to analyze your resume against</DialogDescription>
-        <div className="jd-select-modal">
-          <div className="jd-select-header">
-            <h3>Analyze Resume Fit</h3>
-            <button className="jd-select-close" onClick={() => onOpenChange(false)}>&times;</button>
-          </div>
-          <div className="jd-select-body">
-            <div className="jd-ai-options">
-              <div className="jd-model-selector">
-                <label>Model</label>
-                <select className="jd-model-select" value={modelId} onChange={(e) => setModelId(e.target.value)}>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="jd-reasoning-selector">
-                <label>Reasoning</label>
-                <select className="jd-reasoning-select" value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
-                  <option value="none">Off</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </div>
-            </div>
 
-            <div className="jd-select-section-label">Select Job Description(s)</div>
-            <div className="jd-select-info">
-              <span className="jd-select-count">{selectedIds.size} selected</span>
-              <div className="jd-select-actions-header">
-                <button className="jd-select-all-btn" onClick={selectAll}>Select All</button>
-                <button className="jd-select-none-btn" onClick={clearAll}>Clear</button>
-              </div>
+        {/* Header */}
+        <div className="flex shrink-0 items-start justify-between border-b p-6">
+          <div className="space-y-1">
+            <DialogTitle>Analyze Resume Fit</DialogTitle>
+            <p className="text-sm text-muted-foreground">Pick the jobs and model to compare against.</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => onOpenChange(false)}
+            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+          >
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="jd-select-model">Model</Label>
+              <Select value={modelId} onValueChange={setModelId}>
+                <SelectTrigger id="jd-select-model">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent className="glass-card">
+                  {models.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="jd-select-list">
-              {jobs.map((jd) => {
-                const selected = selectedIds.has(jd.id);
-                const preview =
-                  jd.description.length > 100 ? jd.description.substring(0, 100) + '...' : jd.description;
-                return (
-                  <label key={jd.id} className={`jd-select-item ${selected ? 'selected' : ''}`}>
-                    <input
-                      type="checkbox"
-                      className="jd-select-checkbox"
-                      checked={selected}
-                      onChange={() => toggle(jd.id)}
-                    />
-                    <div className="jd-select-item-content">
-                      <div className="jd-select-item-header">
-                        <span className="jd-select-item-title">{jd.title}</span>
-                        <span className="jd-select-item-company">{jd.company}</span>
-                      </div>
-                      <p className="jd-select-item-preview">{preview}</p>
+            <div className="space-y-1.5">
+              <Label htmlFor="jd-select-reasoning">Reasoning</Label>
+              <Select value={reasoning} onValueChange={setReasoning}>
+                <SelectTrigger id="jd-select-reasoning">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="glass-card">
+                  {REASONING_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between">
+            <Label>Job Description(s)</Label>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
+              <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAll}>Select All</Button>
+              <Button variant="link" size="sm" className="h-auto p-0 text-muted-foreground" onClick={clearAll}>Clear</Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {jobs.map((jd) => {
+              const selected = selectedIds.has(jd.id);
+              const preview =
+                jd.description.length > 100 ? jd.description.substring(0, 100) + '...' : jd.description;
+              return (
+                <Label
+                  key={jd.id}
+                  className={cn(
+                    'flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-3 transition-colors',
+                    selected && 'border-primary/50 bg-primary/[0.025]',
+                  )}
+                >
+                  <Checkbox className="mt-0.5" checked={selected} onCheckedChange={() => toggle(jd.id)} />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="truncate text-sm font-medium">{jd.title}</span>
+                      <span className="truncate text-xs text-muted-foreground">{jd.company}</span>
                     </div>
-                  </label>
-                );
-              })}
-            </div>
+                    <p className="text-xs leading-relaxed text-muted-foreground">{preview}</p>
+                  </div>
+                </Label>
+              );
+            })}
           </div>
-          <div className="jd-select-footer">
-            <button className="btn btn-secondary" onClick={() => onOpenChange(false)}>Cancel</button>
-            <button className="btn btn-primary" disabled={selectedIds.size === 0} onClick={confirm}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              Analyze{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
-            </button>
-          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex shrink-0 justify-end gap-2 border-t p-6">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={selectedIds.size === 0} onClick={confirm}>
+            <Search className="h-4 w-4" />
+            Analyze{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { Settings2, X } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+
 import { getSettings, saveSettings } from '../../persistence.js';
 import { openSettings } from '../../settingsModal.js';
 import { useChat } from './useChat.js';
@@ -17,6 +21,9 @@ const MAX_WIDTH = 500;
  * vanilla panel did. The floating `#toggle-chat-panel` button and its busy
  * indicator stay in the skeleton and are wired here by effect. All cross-module
  * entry points arrive as `rd:chat-*` window events (dispatched by chatPanel.js).
+ *
+ * Interior styling is genuine shadcn (Tailwind utilities + ui/* primitives);
+ * only the panel shell/toggle positioning still lives in styles/chat.css.
  */
 export default function ChatPanel() {
   const chat = useChat();
@@ -84,7 +91,7 @@ export default function ChatPanel() {
   const startResize = (e) => {
     e.preventDefault();
     const handle = e.currentTarget;
-    handle.classList.add('active');
+    handle.dataset.resizing = 'true';
     host?.classList.add('resizing');
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -94,7 +101,7 @@ export default function ChatPanel() {
       document.documentElement.style.setProperty('--chat-panel-width', `${w}px`);
     };
     const end = () => {
-      handle.classList.remove('active');
+      delete handle.dataset.resizing;
       host?.classList.remove('resizing');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
@@ -113,34 +120,51 @@ export default function ChatPanel() {
 
   return createPortal(
     <>
-      <div className="chat-resize-handle" onMouseDown={startResize} />
+      {/* Resize handle — the panel is docked left, so its grab edge is on the
+          RIGHT (width = clientX). Pure Tailwind; the drag state paints via the
+          data-resizing attribute set in startResize. */}
+      <div
+        className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-primary/40 data-[resizing=true]:bg-primary/60"
+        onMouseDown={startResize}
+      />
 
-      <div className="chat-header">
-        <div className="chat-header-top">
-          <h2 className="chat-title">AI Assistant</h2>
-          <div className="chat-header-actions">
-            <button className="chat-settings-btn" type="button" title="API Settings" onClick={openApiSettings}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </button>
-            <button className="chat-close-btn" type="button" title="Close panel" onClick={() => setOpen(false)}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
+      {/* Header: title row + thread row. */}
+      <div className="shrink-0 border-b px-4 pb-3 pt-3.5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold tracking-tight">AI Assistant</h2>
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              title="API Settings"
+              aria-label="API Settings"
+              onClick={openApiSettings}
+            >
+              <Settings2 className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              title="Close panel"
+              aria-label="Close panel"
+              onClick={() => setOpen(false)}
+            >
+              <X className="size-4" />
+            </Button>
           </div>
         </div>
         {chat.configured && (
-          <ThreadSelector
-            threads={chat.threads}
-            currentThreadId={chat.currentThreadId}
-            onSwitch={chat.switchThread}
-            onNew={chat.newThread}
-            onDelete={chat.deleteThread}
-          />
+          <div className="mt-1 flex">
+            <ThreadSelector
+              threads={chat.threads}
+              currentThreadId={chat.currentThreadId}
+              onSwitch={chat.switchThread}
+              onNew={chat.newThread}
+              onDelete={chat.deleteThread}
+            />
+          </div>
         )}
       </div>
 

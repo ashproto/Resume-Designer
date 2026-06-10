@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState } from 'react';
 import {
   FileText, Pencil, Sparkles, Upload, ArrowUpDown, Plus, Minus,
-  RotateCcw, Columns2, Check, X,
+  RotateCcw, Columns2, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -15,19 +15,15 @@ import { store } from '../store.js';
 import { diffResumeData } from '../diffEngine.js';
 import { showDiffView } from '../diffView.js';
 
-// Version-history dialog, rebuilt for the full-shadcn chrome redesign (spec §5.2):
-// a simple ~480px Dialog (header title + muted description + ghost X, no rail)
-// whose body is a pure-Tailwind timeline — 30px circular icon markers on a 1.5px
-// rail, type Badge + muted relative time, 13.5px description, outline sm
-// Restore/Compare, and an accent "Current version" pill on the active entry. No
-// bespoke CSS (history.css is deleted). Opens on the `rd:open-history` window
-// event (dispatched by main.js's window.openHistoryPanel shim, called from the
-// header's Tools -> Version History menu). Restore/Compare still go through the
-// store + diffView exactly as before; the only behavior deltas are the §5.11
-// mechanism swaps: restore confirm() -> confirmDestructive AlertDialog, and the
-// compare no-difference alert() -> sonner toast.
+// Version-history dialog — a vertical-rail timeline, matching the approved mockup
+// (rd-timeline): each entry is a row with a left rail (bordered 30px icon dot +
+// a 1.5px connector line down to the next dot) and a body holding a squared type
+// badge + relative time, the description, and outline Restore/Compare actions
+// (the current version gets a terracotta-tinted dot + a "Current" badge instead).
+// Built from genuine shadcn primitives (Dialog / Badge / Button) + Tailwind, no
+// bespoke CSS. Opens on `rd:open-history`; Restore/Compare go through the store +
+// diffView. Restore confirm() -> confirmDestructive; compare no-diff -> toast.
 
-// CHANGE_TYPES value -> display label.
 const TYPE_LABELS = {
   initial: 'Created',
   edit: 'Edit',
@@ -38,8 +34,7 @@ const TYPE_LABELS = {
   remove: 'Removed',
 };
 
-// CHANGE_TYPES value -> lucide marker icon (spec §5.2). 'edit' is also the
-// fallback for any unknown changeType.
+// changeType -> lucide icon. 'edit' (Pencil) is the unknown-type fallback.
 const TYPE_ICONS = {
   initial: FileText,
   edit: Pencil,
@@ -76,8 +71,7 @@ export default function HistoryDialog() {
     return () => window.removeEventListener('rd:open-history', onOpen);
   }, []);
 
-  // Re-render the timeline when history changes (e.g. after a restore) — but
-  // only while open, matching the old `isOpen && renderEntries()` guard.
+  // Re-render when history changes (e.g. after a restore) — only while open.
   useEffect(() => {
     if (!open) return;
     return store.subscribe((event) => {
@@ -131,33 +125,34 @@ export default function HistoryDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         showCloseButton={false}
-        className="flex max-h-[85vh] w-[90vw] max-w-[480px] flex-col gap-0 overflow-hidden p-0 glass-card"
+        className="flex max-h-[85vh] w-[90vw] max-w-md flex-col gap-0 overflow-hidden p-0 glass-card"
       >
         <DialogDescription className="sr-only">Resume change history with restore and compare</DialogDescription>
 
         {/* Header */}
-        <div className="flex shrink-0 items-start justify-between border-b px-6 py-5">
-          <div>
-            <DialogTitle className="text-[17px] font-semibold tracking-tight">Version History</DialogTitle>
-            <p className="mt-1 text-[13px] text-muted-foreground">Restore or compare earlier versions.</p>
+        <div className="flex shrink-0 items-start justify-between border-b p-6">
+          <div className="space-y-1">
+            <DialogTitle>Version History</DialogTitle>
+            <p className="text-sm text-muted-foreground">Restore or compare earlier versions.</p>
           </div>
           <button
             type="button"
             aria-label="Close"
             onClick={() => setOpen(false)}
-            className="-mr-1 -mt-0.5 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
           >
             <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
           </button>
         </div>
 
-        {/* Body */}
+        {/* Body — vertical-rail timeline (mockup rd-timeline). */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {rows.length === 0 ? (
             <div className="flex flex-col items-center gap-1 py-14 text-center">
               <FileText className="mb-3 h-10 w-10 text-muted-foreground/40" />
-              <p className="text-[15px] font-medium text-foreground">No history yet</p>
-              <span className="text-[13px] text-muted-foreground">Changes will appear here as you edit</span>
+              <p className="text-sm font-medium">No history yet</p>
+              <span className="text-sm text-muted-foreground">Changes will appear here as you edit</span>
             </div>
           ) : (
             <div className="flex flex-col">
@@ -168,41 +163,39 @@ export default function HistoryDialog() {
                 const Icon = TYPE_ICONS[entry.changeType] || Pencil;
                 return (
                   <div key={originalIndex} className="flex gap-3.5">
-                    {/* Rail: 30px circular marker + 1.5px line */}
+                    {/* Rail: bordered 30px dot (terracotta on the current version)
+                        + a 1.5px connector line down to the next dot. */}
                     <div className="flex flex-col items-center">
-                      <span
+                      <div
                         className={cn(
-                          'inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border bg-background',
+                          'flex size-[30px] shrink-0 items-center justify-center rounded-full border',
                           isCurrent
                             ? 'border-primary bg-primary/[0.06] text-primary'
-                            : 'text-muted-foreground',
+                            : 'bg-background text-muted-foreground',
                         )}
                       >
-                        <Icon className="h-[15px] w-[15px]" />
-                      </span>
-                      {!isLast && <span className="my-1 w-[1.5px] flex-1 bg-border" />}
+                        <Icon className="size-[15px]" />
+                      </div>
+                      {!isLast && <div className="my-1 w-[1.5px] flex-1 bg-border" />}
                     </div>
-
                     {/* Body */}
                     <div className={cn('flex-1', !isLast && 'pb-[18px]')}>
                       <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="rounded-md px-2 py-px text-[11.5px] font-semibold">
+                        {/* Squared type badge (mockup rd-type-badge): muted, 11.5px/600. */}
+                        <span className="inline-flex items-center rounded-[6px] bg-muted px-2 py-px text-[11.5px] font-semibold text-foreground">
                           {label}
-                        </Badge>
+                        </span>
                         <span className="text-xs text-muted-foreground">{formatTime(entry.timestamp)}</span>
+                        {isCurrent && <Badge variant="secondary" className="ml-auto">Current</Badge>}
                       </div>
                       <p className="mt-1.5 text-[13.5px] leading-snug">{entry.description}</p>
-                      {isCurrent ? (
-                        <span className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-primary">
-                          <Check className="h-3.5 w-3.5" /> Current version
-                        </span>
-                      ) : (
+                      {!isCurrent && (
                         <div className="mt-2.5 flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => handleRestore(originalIndex)}>
-                            <RotateCcw className="h-3.5 w-3.5" /> Restore
+                          <Button variant="outline" size="sm" className="h-[31px] rounded-[7px] text-[12.5px]" onClick={() => handleRestore(originalIndex)}>
+                            <RotateCcw className="size-[13px]" /> Restore
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleCompare(originalIndex)}>
-                            <Columns2 className="h-3.5 w-3.5" /> Compare
+                          <Button variant="outline" size="sm" className="h-[31px] rounded-[7px] text-[12.5px]" onClick={() => handleCompare(originalIndex)}>
+                            <Columns2 className="size-[13px]" /> Compare
                           </Button>
                         </div>
                       )}

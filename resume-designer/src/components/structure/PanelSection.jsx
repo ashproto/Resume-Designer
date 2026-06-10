@@ -1,10 +1,14 @@
 import { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+
 import { cn } from '@/lib/utils';
 
 /**
- * Collapsible section for the structure panel's tabs — the React port of the
- * vanilla renderCollapsibleSection(). Reuses the existing `.panel-section` CSS
- * so it looks identical.
+ * Collapsible section card for the structure panel's tabs, composed from shadcn
+ * primitives + Tailwind utilities (no bespoke CSS). Each section is a bordered
+ * `.st-card` from the approved mockup: rounded-lg (10px) border, a clickable
+ * `bg-muted/40` head (title 13.5px + actions), and a `border-t` body. Cards
+ * stack with vertical gap (provided by the tab-content wrapper in StructurePanel).
  *
  * Collapse is UNCONTROLLED by default (internal useState) — used by the design
  * tab, which never remounts on resume-data changes. The content tabs DO remount
@@ -22,25 +26,27 @@ export function PanelSection({
   const toggle = () => { if (isControlled) onToggleCollapse?.(); else setInternal((c) => !c); };
 
   return (
-    <section className={cn('panel-section', collapsed && 'collapsed')}>
-      <div className="panel-section-header" onClick={toggle}>
-        <h3 className="panel-section-title">{title}</h3>
-        <div className="panel-section-actions">
+    <section className="overflow-hidden rounded-lg border">
+      <div
+        className="flex w-full cursor-pointer select-none items-center justify-between gap-2 bg-muted/40 px-3 py-2.5"
+        onClick={toggle}
+      >
+        <h3 className="text-[13.5px] font-semibold">{title}</h3>
+        <div className="flex items-center gap-1">
           {/* Header buttons (e.g. add / reset) must not also toggle collapse. */}
           {headerExtra && <span onClick={(e) => e.stopPropagation()}>{headerExtra}</span>}
           <button
-            className="panel-collapse-btn"
             type="button"
+            className="flex size-5 items-center justify-center text-muted-foreground"
             onClick={(e) => { e.stopPropagation(); toggle(); }}
             title={collapsed ? 'Expand' : 'Collapse'}
+            aria-label={collapsed ? 'Expand' : 'Collapse'}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points={collapsed ? '6 9 12 15 18 9' : '18 15 12 9 6 15'} />
-            </svg>
+            <ChevronDown className={cn('size-4 transition-transform', !collapsed && 'rotate-180')} />
           </button>
         </div>
       </div>
-      <div className="panel-section-content">{children}</div>
+      {!collapsed && <div className="space-y-3 border-t p-3">{children}</div>}
     </section>
   );
 }

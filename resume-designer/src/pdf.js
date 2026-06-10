@@ -15,6 +15,15 @@ import { store } from './store.js';
 
 let html2pdfModule = null;
 
+// Mirror the hidden #download-pdf proxy's busy state onto an app-wide event so
+// the visible (React) header PDF button can show its own spinner/disabled state.
+// busy:true when generation starts; busy:false on EVERY exit path (success,
+// cancel, error). The hidden-button toggling below is kept intact — this is an
+// additional event mirror, not a replacement.
+function setPdfBusy(busy) {
+  window.dispatchEvent(new CustomEvent('rd:pdf-busy', { detail: { busy } }));
+}
+
 // Dynamically import html2pdf.js (browser fallback only)
 async function loadHtml2Pdf() {
   if (!html2pdfModule) {
@@ -26,116 +35,32 @@ async function loadHtml2Pdf() {
 
 export function initPdfExport() {
   const downloadBtn = document.getElementById('download-pdf');
-  
+
   downloadBtn.addEventListener('click', showPdfDialog);
-  
-  // Initialize the PDF dialog
-  initPdfDialog();
 }
 
-// Initialize PDF download dialog
-function initPdfDialog() {
-  // Create modal if it doesn't exist
-  if (!document.getElementById('pdf-dialog-overlay')) {
-    const dialogHTML = `
-      <div class="modal-overlay" id="pdf-dialog-overlay">
-        <div class="modal pdf-dialog">
-          <div class="modal-header">
-            <h3 class="modal-title">Download PDF</h3>
-            <button class="modal-close" id="pdf-dialog-close">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-          </div>
-          <div class="modal-content">
-            <div class="form-group">
-              <label class="form-label" for="pdf-filename">Filename</label>
-              <div class="pdf-filename-wrapper">
-                <input type="text" id="pdf-filename" class="form-input" placeholder="Resume">
-                <span class="pdf-extension">.pdf</span>
-              </div>
-            </div>
-            <div class="pdf-dialog-actions">
-              <button class="btn btn-secondary" id="pdf-dialog-cancel">Cancel</button>
-              <button class="btn btn-primary" id="pdf-dialog-download">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-                Download
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.insertAdjacentHTML('beforeend', dialogHTML);
-    
-    // Set up event listeners
-    const overlay = document.getElementById('pdf-dialog-overlay');
-    const closeBtn = document.getElementById('pdf-dialog-close');
-    const cancelBtn = document.getElementById('pdf-dialog-cancel');
-    const downloadBtn = document.getElementById('pdf-dialog-download');
-    const filenameInput = document.getElementById('pdf-filename');
-    
-    closeBtn?.addEventListener('click', closePdfDialog);
-    cancelBtn?.addEventListener('click', closePdfDialog);
-    overlay?.addEventListener('click', (e) => {
-      if (e.target === overlay) closePdfDialog();
-    });
-    
-    downloadBtn?.addEventListener('click', () => {
-      handleDownloadPdf(filenameInput?.value);
-    });
-    
-    filenameInput?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        handleDownloadPdf(filenameInput?.value);
-      } else if (e.key === 'Escape') {
-        closePdfDialog();
-      }
-    });
-  }
-}
-
-// Show the PDF dialog
+// Open the filename dialog. The dialog itself is a React component
+// (src/components/PdfDialog.jsx); this dispatches the bridge event with the
+// default filename and the export runner, mirroring diffView.js → <DiffDialog/>.
+// The React dialog collects the filename and calls onDownload(filename).
 function showPdfDialog() {
-  const overlay = document.getElementById('pdf-dialog-overlay');
-  const filenameInput = document.getElementById('pdf-filename');
-  
-  // Default filename from the active variant. The header is a React component
-  // now (no #variant-dropdown element), so read the name from the variant store.
+  // Default filename from the active variant — slugified active-variant name
+  // only (no hard-coded prefix). The header is a React component now, so read
+  // the name from the variant store rather than a #variant-dropdown element.
   const current = getVariantList().find((v) => v.id === getCurrentId());
   const selectedLabel = current?.name || 'Resume';
-  const defaultFilename = `Colleen-Sinclair-${selectedLabel.trim().replace(/\s+/g, '-')}`;
-  
-  if (filenameInput) {
-    filenameInput.value = defaultFilename;
-  }
-  
-  overlay?.classList.add('show');
-  
-  // Focus and select filename
-  setTimeout(() => {
-    filenameInput?.focus();
-    filenameInput?.select();
-  }, 100);
-}
+  const defaultFilename = selectedLabel.trim().replace(/\s+/g, '-');
 
-// Close the PDF dialog
-function closePdfDialog() {
-  const overlay = document.getElementById('pdf-dialog-overlay');
-  overlay?.classList.remove('show');
+  window.dispatchEvent(new CustomEvent('rd:open-pdf-dialog', {
+    detail: { defaultFilename, onDownload: handleDownloadPdf },
+  }));
 }
 
 async function handleDownloadPdf(customFilename) {
   const resumeEl = document.getElementById('resume');
-  
-  // Close dialog
-  closePdfDialog();
-  
+
+  // The React dialog has already closed itself by the time it calls this.
+
   // Validate resume element exists
   if (!resumeEl) {
     console.error('PDF generation failed: Resume element not found');
@@ -148,7 +73,9 @@ async function handleDownloadPdf(customFilename) {
     (customFilename.endsWith('.pdf') ? customFilename : `${customFilename}.pdf`) : 
     'Resume.pdf';
   
-  // Show loading state on header button
+  // Show loading state on header button (hidden proxy) + mirror to the visible
+  // React header button via the rd:pdf-busy event.
+  setPdfBusy(true);
   const headerBtn = document.getElementById('download-pdf');
   if (headerBtn) {
     headerBtn.disabled = true;
@@ -175,7 +102,9 @@ async function handleDownloadPdf(customFilename) {
     console.error('PDF generation failed:', error);
     alert(`Failed to generate PDF: ${error.message || 'Unknown error'}. Check the console for details.`);
   } finally {
-    // Restore button state
+    // Restore button state on EVERY exit path (success, user-cancel, error).
+    // Mirror busy:false to the visible React header button too.
+    setPdfBusy(false);
     if (headerBtn) {
       headerBtn.disabled = false;
       headerBtn.innerHTML = `

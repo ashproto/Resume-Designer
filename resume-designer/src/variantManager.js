@@ -142,19 +142,18 @@ export function duplicateVariant() {
 }
 
 /**
- * Delete the active variant. Uses native confirm()/alert() (both work in the
- * Tauri webview, unlike prompt()). Refuses to delete the last variant.
+ * Delete the active variant, unconditionally — confirmation now lives in the
+ * caller (the React header owns a shadcn AlertDialog; spec §2.3-11). Last-variant
+ * protection is preserved here as a guard so no surface can ever delete the only
+ * variant: callers should disable their delete control in that case, but this is
+ * the backstop.
+ *
+ * @returns {{ ok: true } | { ok: false, reason: 'last-variant' }}
  */
 export function deleteCurrentVariant() {
   const variants = getVariants();
   if (Object.keys(variants).length <= 1) {
-    alert('Cannot delete the last variant. Create a new one first.');
-    return false;
-  }
-
-  const current = variants[currentVariantId];
-  if (!confirm(`Are you sure you want to delete "${current.name}"?`)) {
-    return false;
+    return { ok: false, reason: 'last-variant' };
   }
 
   const newCurrentId = deleteVariant(currentVariantId);
@@ -163,7 +162,7 @@ export function deleteCurrentVariant() {
   } else {
     notify();
   }
-  return true;
+  return { ok: true };
 }
 
 /**

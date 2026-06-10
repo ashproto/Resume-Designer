@@ -120,7 +120,10 @@
     --input: var(--color-input-bg);
     --ring: var(--color-accent);
 
-    --radius: 0.5rem;
+    /* 10px. Drives the shadcn radius scale (lg=10, md=8, sm=6) to match the
+       approved mockup geometry: cards/menus 10px, buttons/inputs 8px. The
+       dialog (14px) is overridden directly in ui/dialog.jsx. */
+    --radius: 0.625rem;
   }
 
   [data-theme="dark"] {
