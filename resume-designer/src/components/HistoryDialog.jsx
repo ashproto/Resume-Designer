@@ -1,26 +1,33 @@
 import { useEffect, useReducer, useState } from 'react';
-import { RotateCcw, Columns2, Check, FileText } from 'lucide-react';
+import {
+  FileText, Pencil, Sparkles, Upload, ArrowUpDown, Plus, Minus,
+  RotateCcw, Columns2, Check, X,
+} from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { confirmDestructive } from '@/components/ui/confirm';
 import { cn } from '@/lib/utils';
 
 import { store } from '../store.js';
 import { diffResumeData } from '../diffEngine.js';
 import { showDiffView } from '../diffView.js';
 
-// Version-history panel, converted from historyPanel.js (Step 7 of the React
-// migration) and then restyled (consistency fix) to reuse the original timeline
-// design that already lives in styles/history.css. Like ProfileDialog and
-// JobsDialog, it hosts bespoke `.history-panel-*` / `.history-*` markup inside a
-// glass shadcn Dialog shell instead of rendering raw shadcn primitives + Tailwind
-// utilities (which defaulted to the unstyled shadcn look). Opens on the
-// `rd:open-history` window event (dispatched by main.js's window.openHistoryPanel
-// shim, called from the header's Tools -> Version History menu). Restore/compare
-// still go through the store + diffView exactly as before.
+// Version-history dialog, rebuilt for the full-shadcn chrome redesign (spec §5.2):
+// a simple ~480px Dialog (header title + muted description + ghost X, no rail)
+// whose body is a pure-Tailwind timeline — 30px circular icon markers on a 1.5px
+// rail, type Badge + muted relative time, 13.5px description, outline sm
+// Restore/Compare, and an accent "Current version" pill on the active entry. No
+// bespoke CSS (history.css is deleted). Opens on the `rd:open-history` window
+// event (dispatched by main.js's window.openHistoryPanel shim, called from the
+// header's Tools -> Version History menu). Restore/Compare still go through the
+// store + diffView exactly as before; the only behavior deltas are the §5.11
+// mechanism swaps: restore confirm() -> confirmDestructive AlertDialog, and the
+// compare no-difference alert() -> sonner toast.
 
-// CHANGE_TYPES value -> display label. The matching `.type-<value>` class in
-// history.css colors the dot + badge; 'edit' has no rule there and falls back to
-// the neutral base style.
+// CHANGE_TYPES value -> display label.
 const TYPE_LABELS = {
   initial: 'Created',
   edit: 'Edit',
@@ -29,6 +36,18 @@ const TYPE_LABELS = {
   reorder: 'Reordered',
   add: 'Added',
   remove: 'Removed',
+};
+
+// CHANGE_TYPES value -> lucide marker icon (spec §5.2). 'edit' is also the
+// fallback for any unknown changeType.
+const TYPE_ICONS = {
+  initial: FileText,
+  edit: Pencil,
+  ai: Sparkles,
+  import: Upload,
+  reorder: ArrowUpDown,
+  add: Plus,
+  remove: Minus,
 };
 
 function formatTime(timestamp) {
@@ -69,10 +88,15 @@ export default function HistoryDialog() {
   const entries = open ? store.getHistoryEntries() : [];
   const currentIndex = open ? store.getHistoryIndex() : -1;
 
-  const handleRestore = (index) => {
-    if (confirm('Restore to this version? Your current changes will be saved in history.')) {
-      store.restoreToEntry(index); // fires historyChanged -> bump() re-renders
-    }
+  const handleRestore = async (index) => {
+    const ok = await confirmDestructive({
+      title: 'Restore to this version?',
+      description: 'Your current changes will be saved in history.',
+      actionLabel: 'Restore',
+      destructive: false,
+    });
+    if (!ok) return;
+    store.restoreToEntry(index); // fires historyChanged -> bump() re-renders
   };
 
   const handleCompare = (index) => {
@@ -82,7 +106,7 @@ export default function HistoryDialog() {
 
     const changes = diffResumeData(selectedData, currentData);
     if (changes.length === 0) {
-      alert('No differences found between these versions.');
+      toast.info('No differences found between these versions.');
       return;
     }
     const changeSet = {
@@ -107,71 +131,81 @@ export default function HistoryDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         showCloseButton={false}
-        className="flex max-h-[85vh] w-[90vw] max-w-[460px] flex-col gap-0 overflow-hidden p-0 glass-card"
+        className="flex max-h-[85vh] w-[90vw] max-w-[480px] flex-col gap-0 overflow-hidden p-0 glass-card"
       >
-        <DialogTitle className="sr-only">Version History</DialogTitle>
         <DialogDescription className="sr-only">Resume change history with restore and compare</DialogDescription>
 
-        <div className="history-panel-header shrink-0">
-          <h2>Version History</h2>
-          <button type="button" className="history-panel-close" title="Close" onClick={() => setOpen(false)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+        {/* Header */}
+        <div className="flex shrink-0 items-start justify-between border-b px-6 py-5">
+          <div>
+            <DialogTitle className="text-[17px] font-semibold tracking-tight">Version History</DialogTitle>
+            <p className="mt-1 text-[13px] text-muted-foreground">Restore or compare earlier versions.</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setOpen(false)}
+            className="-mr-1 -mt-0.5 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="history-panel-content min-h-0">
+        {/* Body */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {rows.length === 0 ? (
-            <div className="history-empty">
-              <FileText size={40} />
-              <p>No history yet</p>
-              <span>Changes will appear here as you edit</span>
+            <div className="flex flex-col items-center gap-1 py-14 text-center">
+              <FileText className="mb-3 h-10 w-10 text-muted-foreground/40" />
+              <p className="text-[15px] font-medium text-foreground">No history yet</p>
+              <span className="text-[13px] text-muted-foreground">Changes will appear here as you edit</span>
             </div>
           ) : (
-            <div className="history-timeline">
+            <div className="flex flex-col">
               {rows.map(({ entry, originalIndex }, rowIdx) => {
                 const isCurrent = originalIndex === currentIndex;
                 const isLast = rowIdx === rows.length - 1;
-                const typeClass = `type-${entry.changeType || 'edit'}`;
                 const label = TYPE_LABELS[entry.changeType] || 'Edit';
+                const Icon = TYPE_ICONS[entry.changeType] || Pencil;
                 return (
-                  <div key={originalIndex} className={cn('history-entry', isCurrent && 'current')}>
-                    <div className="history-entry-marker">
-                      <span className={cn('history-marker-dot', typeClass)} />
-                      {!isLast && <span className="history-marker-line" />}
-                    </div>
-                    <div className="history-entry-content">
-                      <div className="history-entry-header">
-                        <span className={cn('history-entry-type', typeClass)}>{label}</span>
-                        <span className="history-entry-time">{formatTime(entry.timestamp)}</span>
-                      </div>
-                      <p className="history-entry-description">{entry.description}</p>
-                      <div className="history-entry-actions">
-                        {isCurrent ? (
-                          <span className="history-current-label">
-                            <Check size={14} /> Current version
-                          </span>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className="history-action-btn history-restore-btn"
-                              onClick={() => handleRestore(originalIndex)}
-                            >
-                              <RotateCcw size={14} /> Restore
-                            </button>
-                            <button
-                              type="button"
-                              className="history-action-btn history-compare-btn"
-                              onClick={() => handleCompare(originalIndex)}
-                            >
-                              <Columns2 size={14} /> Compare
-                            </button>
-                          </>
+                  <div key={originalIndex} className="flex gap-3.5">
+                    {/* Rail: 30px circular marker + 1.5px line */}
+                    <div className="flex flex-col items-center">
+                      <span
+                        className={cn(
+                          'inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border bg-background',
+                          isCurrent
+                            ? 'border-primary bg-primary/[0.06] text-primary'
+                            : 'text-muted-foreground',
                         )}
+                      >
+                        <Icon className="h-[15px] w-[15px]" />
+                      </span>
+                      {!isLast && <span className="my-1 w-[1.5px] flex-1 bg-border" />}
+                    </div>
+
+                    {/* Body */}
+                    <div className={cn('flex-1', !isLast && 'pb-[18px]')}>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="rounded-md px-2 py-px text-[11.5px] font-semibold">
+                          {label}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">{formatTime(entry.timestamp)}</span>
                       </div>
+                      <p className="mt-1.5 text-[13.5px] leading-snug">{entry.description}</p>
+                      {isCurrent ? (
+                        <span className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-primary">
+                          <Check className="h-3.5 w-3.5" /> Current version
+                        </span>
+                      ) : (
+                        <div className="mt-2.5 flex gap-2">
+                          <Button variant="outline" size="sm" onClick={() => handleRestore(originalIndex)}>
+                            <RotateCcw className="h-3.5 w-3.5" /> Restore
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => handleCompare(originalIndex)}>
+                            <Columns2 className="h-3.5 w-3.5" /> Compare
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

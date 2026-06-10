@@ -159,15 +159,14 @@
   backdrop-filter: var(--glass-blur);
 }
 
-/* --- 8. Secondary pop-over panels (jobs / history / profile) -------------- */
+/* --- 8. Secondary pop-over panels (jobs / profile) ----------------------- */
 /* These appear OVER a scrim (unlike the always-present ambient drawers), so
    they read like modals: more opaque for their dense content + blur. */
 :root[data-tauri="true"] :is(
   .jd-panel,
   .jd-edit-modal,
   .jd-select-modal,
-  .profile-panel,
-  .history-panel
+  .profile-panel
 ) {
   background: color-mix(in srgb, var(--color-panel-bg) var(--glass-modal-pct), transparent);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -179,8 +178,7 @@
   .jd-panel-overlay,
   .jd-edit-modal-overlay,
   .jd-select-modal-overlay,
-  .profile-panel-overlay,
-  .history-panel-overlay
+  .profile-panel-overlay
 ) {
   background: rgba(0, 0, 0, 0.4);
 }
