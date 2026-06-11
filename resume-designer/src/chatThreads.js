@@ -11,6 +11,7 @@
 const STORAGE_KEY = 'resume-designer-chat-history'; // legacy single-thread history
 const THREADS_KEY = 'resume-designer-chat-threads';
 const MAX_PERSISTED = 50;
+const MAX_PERSISTED_REASONING = 8000; // chars; full reasoning stays in-memory only
 
 // Short random suffix so two threads created in the same millisecond can't collide.
 function randomSuffix() {
@@ -83,9 +84,26 @@ export function clearLegacyHistory() {
   }
 }
 
-// Trim a message list to the persisted tail.
+// Strip heavy/in-memory-only fields before persisting to quota-bound localStorage:
+// drop reasoning_details (can carry large encrypted blobs) and cap the reasoning
+// string. annotations + run are small and kept as-is. Full reasoning_details stay
+// on the live in-memory message so Anthropic continuity holds within the session.
+export function sanitizeForPersist(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.map((m) => {
+    if (!m || typeof m !== 'object') return m;
+    const { reasoningDetails, ...rest } = m;
+    void reasoningDetails;
+    if (typeof rest.reasoning === 'string' && rest.reasoning.length > MAX_PERSISTED_REASONING) {
+      rest.reasoning = `${rest.reasoning.slice(0, MAX_PERSISTED_REASONING)}…`;
+    }
+    return rest;
+  });
+}
+
+// Trim a message list to the persisted tail (and sanitize heavy fields).
 export function trimMessages(messages) {
-  return Array.isArray(messages) ? messages.slice(-MAX_PERSISTED) : [];
+  return sanitizeForPersist(Array.isArray(messages) ? messages.slice(-MAX_PERSISTED) : []);
 }
 
 /**

@@ -173,9 +173,9 @@ export function buildResumeFromInterview(answers) {
 /**
  * Generate a tailored resume from the saved profile for a target job.
  */
-export function generateResumeForJob(modelId, targetJob, reasoningEffort) {
+export function generateResumeForJob(modelId, targetJob, reasoningEffort, options = {}) {
   if (!modelId) throw new Error('No AI model configured');
-  return generateResumeFromProfileForJob(modelId, targetJob, { reasoningEffort });
+  return generateResumeFromProfileForJob(modelId, targetJob, { reasoningEffort, ...options });
 }
 
 /**

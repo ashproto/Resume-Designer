@@ -171,10 +171,12 @@ export default function ChatPanel() {
       <MessageList
         messages={chat.messages}
         thinking={chat.thinking}
+        streamingMessage={chat.streamingMessage}
         configured={chat.configured}
         onReviewChanges={chat.openDiffForMessage}
         onApply={chat.applyAction}
         onConfigure={openApiSettings}
+        onStop={chat.stop}
       />
 
       {chat.configured && (

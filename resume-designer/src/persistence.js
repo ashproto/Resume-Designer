@@ -22,7 +22,15 @@ const DEFAULT_STORAGE = {
     autoFallback: false,
     defaultModel: 'anthropic/claude-sonnet-4.6',
     customModels: [],
-    chatPanelWidth: 320
+    chatPanelWidth: 320,
+    chatReasoningEffort: 'medium',
+    chatWebSearch: false,
+    analysisModel: '',
+    analysisReasoning: 'medium',
+    tailorModel: '',
+    tailorReasoning: 'medium',
+    onboardingModel: '',
+    onboardingReasoning: 'medium'
   },
   userProfile: {
     // Contact information

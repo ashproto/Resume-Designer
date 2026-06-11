@@ -7,6 +7,7 @@ import { getSettings, saveSettings, getUserProfile, saveUserProfile } from './pe
 import { store } from './store.js';
 import { getActiveJobDescriptions } from './jobDescriptions.js';
 import { trackUsage } from './tokenTrackingService.js';
+import { createStreamAccumulator } from './aiStream.js';
 
 // OpenRouter — a single OpenAI-compatible endpoint fronting every provider.
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
@@ -617,7 +618,9 @@ IMPORTANT:
   
   const response = await callOpenRouter(validModelId, messages, {
     feature: 'generate-from-profile',
-    reasoningEffort: options.reasoningEffort
+    reasoningEffort: options.reasoningEffort,
+    hooks: options.hooks,
+    signal: options.signal,
   });
   
   // Parse the JSON response
@@ -862,119 +865,170 @@ function getResumeContext() {
   return context;
 }
 
-// Single OpenRouter call path — replaces the per-provider callAnthropic /
-// callOpenAI / callOpenAIResponses / callGemini (and the *WithSystem variants).
-//
-// Returns a string by default. When `structured` is true (the chat UI) and the
-// model emitted reasoning or web-search annotations, returns
-// { text, thinking, usedWebSearch } — preserving the contract callAnthropic()
-// previously had with chatPanel.
-async function callOpenRouter(modelId, messages, options = {}) {
-  const {
-    systemPrompt = SYSTEM_PROMPT,
-    reasoningEffort,
-    webSearch,
-    feature,
-    structured = false
-  } = options;
+// Streaming OpenRouter call path. Drives the pure accumulator and invokes live
+// hooks (onReasoning / onContent / onAnnotations) as deltas arrive. Returns the
+// final structured result. Side effects (addCustomModel, trackUsage) fire once.
+async function streamOpenRouter(modelId, messages, options = {}, hooks = {}) {
+  const { systemPrompt = SYSTEM_PROMPT, reasoningEffort, webSearch, feature, signal } = options;
 
   const apiKey = getApiKey();
-  if (!apiKey) {
-    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
-  }
+  if (!apiKey) throw new Error('No OpenRouter API key configured. Please add your key in settings.');
 
   const cfg = MODELS[modelId];
+  const reasoningOn = reasoningEffort && reasoningEffort !== 'none' && modelSupportsReasoning(modelId);
 
-  // OpenAI-shaped messages: the system prompt is just a leading system message
-  // (no more Anthropic `system` / Gemini `systemInstruction` special-casing).
   const apiMessages = [];
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
   for (const m of messages) {
-    apiMessages.push({
-      role: m.role === 'user' ? 'user' : 'assistant',
-      content: m.content
-    });
+    const msg = { role: m.role === 'user' ? 'user' : 'assistant', content: m.content };
+    // Anthropic thinking continuity: replay prior reasoning_details unmodified.
+    if (msg.role === 'assistant' && Array.isArray(m.reasoningDetails) && m.reasoningDetails.length) {
+      msg.reasoning_details = m.reasoningDetails;
+    }
+    apiMessages.push(msg);
   }
 
   const requestBody = {
     model: modelId,
     messages: apiMessages,
-    max_tokens: cfg?.maxTokens || 8192,
-    usage: { include: true } // ask OpenRouter to return real cost in `usage`
+    // Reasoning competes with the completion budget; give the answer headroom
+    // when thinking is on (OpenRouter clamps to the model's real max).
+    max_tokens: reasoningOn ? Math.max(cfg?.maxTokens || 8192, 16000) : (cfg?.maxTokens || 8192),
+    stream: true,
+    usage: { include: true },
   };
-
-  // Automatic model fallback (opt-in via settings): retry alternates on outage/429.
   if (getSettings().autoFallback) {
     const fallbacks = getFallbackModels(modelId);
     if (fallbacks.length) requestBody.models = [modelId, ...fallbacks];
   }
+  if (reasoningOn) requestBody.reasoning = { effort: reasoningEffort };
+  if (webSearch) requestBody.tools = [{ type: 'openrouter:web_search' }];
 
-  // Unified reasoning — replaces Anthropic thinking budgets AND OpenAI reasoning_effort.
-  // Only send reasoning when the model actually supports it (per the cached
-  // catalog). modelSupportsReasoning is optimistic for unknown slugs, so this
-  // never wrongly suppresses; it just avoids sending an effort to a model the
-  // catalog knows can't use it.
-  if (reasoningEffort && reasoningEffort !== 'none' && modelSupportsReasoning(modelId)) {
-    requestBody.reasoning = { effort: reasoningEffort };
+  let response;
+  try {
+    response = await fetch(OPENROUTER_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': OPENROUTER_REFERER,
+        'X-Title': OPENROUTER_TITLE,
+      },
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+  } catch (e) {
+    // Stop pressed before headers arrived: return a clean partial, not an error.
+    // The zero `run` keeps the result shape consistent so wrappers never NPE.
+    if (e && e.name === 'AbortError') {
+      return {
+        text: '', reasoning: null, reasoningDetails: [], annotations: [],
+        run: { model: modelId, reasoningTokens: 0, promptTokens: 0, completionTokens: 0, cost: 0, webSearch: false, finishReason: 'stopped' },
+        stopped: true,
+      };
+    }
+    throw e;
   }
-
-  // Unified web search via OpenRouter's server tool (replaces the deprecated
-  // `plugins:[{id:'web'}]` and the three per-provider tool shapes). Citations
-  // still arrive at choices[0].message.annotations.
-  if (webSearch) {
-    requestBody.tools = [{ type: 'openrouter:web_search' }];
-  }
-
-  const response = await fetch(OPENROUTER_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': OPENROUTER_REFERER,
-      'X-Title': OPENROUTER_TITLE
-    },
-    body: JSON.stringify(requestBody)
-  });
-
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
   }
 
-  const data = await response.json();
-  const message = data.choices?.[0]?.message || {};
-  const text = message.content || '';
+  const acc = createStreamAccumulator();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let stopped = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const events = acc.push(decoder.decode(value, { stream: true }));
+      for (const ev of events) {
+        if (ev.type === 'reasoning') hooks.onReasoning?.(ev.delta, ev.full);
+        else if (ev.type === 'content') hooks.onContent?.(ev.delta, ev.full);
+        else if (ev.type === 'annotations') hooks.onAnnotations?.(ev.annotations);
+      }
+    }
+  } catch (e) {
+    // Cancel (not just release) so the HTTP body/connection is torn down promptly
+    // on abort or a mid-stream error rather than lingering until GC.
+    try { reader.cancel(); } catch { /* best effort */ }
+    if (e && e.name === 'AbortError') stopped = true;
+    else throw e;
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released */ }
+  }
 
-  // A custom slug that just produced a successful response "works", so remember
-  // it — it'll reappear in the picker without re-typing (no-op for curated slugs).
+  const r = acc.result();
+  const usage = r.usage || {};
+  const usedModel = r.model || modelId;
+  const run = {
+    model: usedModel,
+    reasoningTokens: usage.completion_tokens_details?.reasoning_tokens || 0,
+    promptTokens: usage.prompt_tokens || 0,
+    completionTokens: usage.completion_tokens || 0,
+    cost: typeof usage.cost === 'number' ? usage.cost : 0,
+    webSearch: Array.isArray(r.annotations) && r.annotations.length > 0,
+    finishReason: r.finishReason,
+  };
+
+  // A custom slug that produced a response "works" — remember it (no-op for curated).
   addCustomModel(modelId);
-
-  // Track usage. Prefer OpenRouter's reported cost; provider is derived from the
-  // actual model used (fallback-aware) for the usage-panel breakdown.
-  if (data.usage) {
-    const usedModel = data.model || modelId;
+  if (r.usage) {
     trackUsage({
       provider: String(usedModel).split('/')[0] || 'openrouter',
       model: usedModel,
       feature: feature || 'chat',
-      inputTokens: data.usage.prompt_tokens || 0,
-      outputTokens: data.usage.completion_tokens || 0,
-      cost: typeof data.usage.cost === 'number' ? data.usage.cost : undefined
+      inputTokens: run.promptTokens,
+      outputTokens: run.completionTokens,
+      reasoningTokens: run.reasoningTokens,
+      cost: run.cost,
     });
   }
 
-  if (structured) {
-    const usedWebSearch = Array.isArray(message.annotations) && message.annotations.length > 0;
-    if (message.reasoning || usedWebSearch) {
-      return {
-        text: text || JSON.stringify(data.choices?.[0] || {}),
-        thinking: message.reasoning || null,
-        usedWebSearch
-      };
+  // Empty-content handling — never dump raw JSON (the old `text || JSON.stringify`).
+  if (!r.text && !stopped) {
+    if (r.finishReason === 'length') {
+      throw new Error('The response hit the token cap before finishing — lower the reasoning effort or choose a model with a higher limit, then try again.');
     }
+    throw new Error('The model returned an empty response. Please try again.');
   }
 
-  return text;
+  // Surface run metadata to callers that buffer the answer (the JSON flows) so
+  // they can show a token/cost readout without changing their return shape.
+  // Success-path only: aborts/empty responses return or throw above this point.
+  hooks.onRun?.(run);
+
+  return {
+    text: r.text,
+    reasoning: r.reasoning || null,
+    reasoningDetails: r.reasoningDetails,
+    annotations: r.annotations,
+    run,
+    stopped,
+  };
+}
+
+// Buffer-to-completion wrapper: every non-live caller routes here, so reasoning
+// capture, citations, token/cost tracking and the empty-content fix apply
+// uniformly. Returns a plain string by default; the structured object (used by
+// the chat UI) when options.structured. options.hooks/options.signal flow through
+// to streamOpenRouter for the live JSON flows.
+async function callOpenRouter(modelId, messages, options = {}) {
+  const res = await streamOpenRouter(modelId, messages, options, options.hooks || {});
+  if (options.structured) {
+    return {
+      text: res.text,
+      thinking: res.reasoning, // back-compat name retained for existing callers
+      reasoning: res.reasoning,
+      reasoningDetails: res.reasoningDetails,
+      annotations: res.annotations,
+      usedWebSearch: res.run.webSearch,
+      run: res.run,
+      stopped: res.stopped,
+    };
+  }
+  return res.text;
 }
 
 /**
@@ -988,30 +1042,31 @@ async function callOpenRouter(modelId, messages, options = {}) {
  * @returns {Promise<string>} AI response
  */
 export async function chat(modelId, messages, includeContext = true, options = {}) {
-  // Validate / migrate the model ID (custom slugs pass through).
   const validModelId = validateModelId(modelId);
-  if (!getApiKey()) {
-    throw new Error('No OpenRouter API key configured. Please add your key in settings.');
-  }
+  if (!getApiKey()) throw new Error('No OpenRouter API key configured. Please add your key in settings.');
 
-  // Inject resume context into the last user message if enabled
   let processedMessages = [...messages];
   if (includeContext && processedMessages.length > 0) {
     const context = getResumeContext();
-    const lastUserIndex = processedMessages.map(m => m.role).lastIndexOf('user');
+    const lastUserIndex = processedMessages.map((m) => m.role).lastIndexOf('user');
     if (lastUserIndex >= 0) {
       processedMessages[lastUserIndex] = {
         ...processedMessages[lastUserIndex],
-        content: `${context}\n\n---\n\nUser request: ${processedMessages[lastUserIndex].content}`
+        content: `${context}\n\n---\n\nUser request: ${processedMessages[lastUserIndex].content}`,
       };
     }
   }
 
-  // Single OpenRouter call. Returns a plain string by default; the chat UI opts
-  // into the structured { text, thinking, usedWebSearch } object via
-  // options.structured so it can render reasoning/web-search. Everything else
-  // (helpers, onboarding, JSON dispatchers) gets a string.
-  return callOpenRouter(validModelId, processedMessages, options);
+  const { hooks, ...rest } = options;
+  const res = await streamOpenRouter(validModelId, processedMessages, rest, hooks || {});
+  if (options.structured) {
+    return {
+      text: res.text, thinking: res.reasoning, reasoning: res.reasoning,
+      reasoningDetails: res.reasoningDetails, annotations: res.annotations,
+      usedWebSearch: res.run.webSearch, run: res.run, stopped: res.stopped,
+    };
+  }
+  return res.text;
 }
 
 // Helper functions for common operations
@@ -1064,7 +1119,7 @@ export async function improveSummary(modelId) {
  * @param {string} featureName - Optional feature name for tracking (defaults to 'generate')
  * @returns {Object} Object with changes and explanation
  */
-export async function generateResumeChanges(modelId, instruction, targetPath = null, additionalContext = null, featureName = 'generate') {
+export async function generateResumeChanges(modelId, instruction, targetPath = null, additionalContext = null, featureName = 'generate', options = {}) {
   // Validate and potentially migrate the model ID
   const validModelId = validateModelId(modelId);
   if (!getApiKey()) {
@@ -1109,7 +1164,10 @@ export async function generateResumeChanges(modelId, instruction, targetPath = n
   const messages = [{ role: 'user', content: prompt }];
   const response = await callOpenRouter(validModelId, messages, {
     feature: featureName,
-    systemPrompt: CHANGE_GENERATION_PROMPT
+    systemPrompt: CHANGE_GENERATION_PROMPT,
+    reasoningEffort: options.reasoningEffort,
+    hooks: options.hooks,
+    signal: options.signal,
   });
   
   // Parse the JSON response
@@ -1175,7 +1233,9 @@ export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {})
   const response = await callOpenRouter(validModelId, messages, {
     feature: 'analyze',
     reasoningEffort: options.reasoningEffort,
-    systemPrompt: JOB_ANALYSIS_PROMPT
+    systemPrompt: JOB_ANALYSIS_PROMPT,
+    hooks: options.hooks,
+    signal: options.signal,
   });
   
   try {
@@ -1189,23 +1249,6 @@ export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {})
     console.error('Failed to parse analysis response:', response);
     throw new Error('Failed to parse AI analysis. Please try again.');
   }
-}
-
-/**
- * Generate tailored resume content for a specific job
- * @param {string} modelId - Model to use
- * @param {Object} jobDescription - Job description object
- * @param {string} section - Section to tailor (e.g., "summary", "experience")
- * @returns {Object} Tailored changes
- */
-export async function tailorForJob(modelId, jobDescription, section = null) {
-  const instruction = section 
-    ? `Tailor the ${section} section specifically for this job. Make it highlight relevant skills and experience that match the job requirements.`
-    : `Tailor my entire resume for this job. Adjust the summary, highlight relevant experience, and ensure keywords from the job description are naturally incorporated.`;
-  
-  return generateResumeChanges(modelId, instruction, section, {
-    jobDescriptions: [jobDescription]
-  }, 'tailor');
 }
 
 /**

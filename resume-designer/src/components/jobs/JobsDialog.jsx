@@ -15,6 +15,8 @@ import { Segmented, SegmentedItem } from '@/components/ui/segmented';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { confirmDestructive } from '@/components/ui/confirm';
 import { cn } from '@/lib/utils';
+import { LiveReasoning } from '../chat/LiveReasoning.jsx';
+import { RunMeta } from '../chat/RunMeta.jsx';
 
 import {
   initJobDescriptions, getAllJobDescriptions, getActiveJobDescriptions,
@@ -25,7 +27,7 @@ import {
   analyzeAgainstJobs, generateResumeChanges, getConfiguredProviders,
   getAllModels, isConfigured, validateModelId, getDefaultModelId,
 } from '../../aiService.js';
-import { getSettings, saveVariantAnalysis, getVariantAnalysis } from '../../persistence.js';
+import { getSettings, saveSettings, saveVariantAnalysis, getVariantAnalysis } from '../../persistence.js';
 import { createChangeSet } from '../../diffEngine.js';
 import { showDiffView } from '../../diffView.js';
 import { store } from '../../store.js';
@@ -34,6 +36,7 @@ import { applyRecommendationToStore } from '../../jobRecommendations.js';
 import { JobCard } from './JobCard.jsx';
 import { AnalysisResults } from './AnalysisResults.jsx';
 import { JobSelectionDialog } from './JobSelectionDialog.jsx';
+import { TailorDialog } from './TailorDialog.jsx';
 import { JobEditDialog } from './JobEditDialog.jsx';
 
 const RECENT_JD_LIMIT = 5;
@@ -57,38 +60,20 @@ function getAvailableModels() {
 // above the Radix dialog (z-[2200]). The 3 cumulative steps light up in turn on
 // a 2s cycle while a request is in flight. Dark blur + accent spinner; restyled
 // from the old .jd-analysis-loading-overlay to genuine token classes.
-function AnalysisLoadingOverlay() {
-  const [step, setStep] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setStep((s) => (s + 1) % 3), 2000);
-    return () => clearInterval(id);
-  }, []);
-  const steps = [
-    'Extracting keywords from job description',
-    'Matching skills and experience',
-    'Generating recommendations',
-  ];
+// Full-screen overlay shown while an analyze/tailor run is in flight, portaled
+// above the Radix dialog (z-[2200]). The model's REAL reasoning streams into the
+// LiveReasoning panel as it works, replacing the old synthetic 3-step animation.
+function AnalysisLoadingOverlay({ reasoning, title, subtitle }) {
   return createPortal(
-    <div className="fixed inset-0 z-[2200] flex items-center justify-center bg-background/80 backdrop-blur-sm">
-      <div className="flex flex-col items-center gap-5 px-8 text-center">
+    <div className="fixed inset-0 z-[2200] flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm">
+      <div className="flex w-full max-w-md flex-col items-center gap-5 text-center">
         <Loader2 className="size-12 animate-spin text-primary" />
         <div className="space-y-1">
-          <p className="text-base font-semibold">Analyzing Resume Fit</p>
-          <p className="text-sm text-muted-foreground">Comparing your resume against job requirements…</p>
+          <p className="text-base font-semibold">{title}</p>
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
-        <div className="space-y-2">
-          {steps.map((text, i) => (
-            <div
-              key={text}
-              className={cn(
-                'flex items-center gap-2 text-sm transition-colors',
-                i <= step ? 'text-foreground' : 'text-muted-foreground/50',
-              )}
-            >
-              <span className={cn('size-2 rounded-full transition-colors', i <= step ? 'bg-primary' : 'bg-muted-foreground/30')} />
-              <span>{text}</span>
-            </div>
-          ))}
+        <div className="w-full text-left">
+          <LiveReasoning reasoning={reasoning} streaming defaultOpen />
         </div>
       </div>
     </div>,
@@ -123,6 +108,10 @@ export default function JobsDialog() {
   const [analysisResults, setAnalysisResults] = useState(null);
   const [appliedIndexes, setAppliedIndexes] = useState(() => new Set());
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [genReasoning, setGenReasoning] = useState('');
+  const [lastRun, setLastRun] = useState(null);
+  const [genOp, setGenOp] = useState('analyze');
+  const [tailorSelectionOpen, setTailorSelectionOpen] = useState(false);
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [showRecentOnly, setShowRecentOnly] = useState(true);
   const [selectionOpen, setSelectionOpen] = useState(false);
@@ -143,6 +132,7 @@ export default function JobsDialog() {
     const id = getCurrentId();
     setAnalysisResults(id ? getVariantAnalysis(id) : null);
     setAppliedIndexes(new Set());
+    setLastRun(null); // run metadata isn't persisted; only show it for fresh runs
   }, []);
 
   useEffect(() => { initJobDescriptions(); }, []);
@@ -250,10 +240,17 @@ export default function JobsDialog() {
 
   const runAnalysis = async (selectedJobs, modelId, reasoningEffort) => {
     const model = modelId || getSettings().defaultModel || getDefaultModelId();
+    saveSettings({ analysisModel: model, analysisReasoning: reasoningEffort || 'medium' });
+    setGenOp('analyze');
+    setGenReasoning('');
+    setLastRun(null);
     setIsAnalyzing(true);
     setAppliedIndexes(new Set());
     try {
-      const results = await analyzeAgainstJobs(model, selectedJobs, { reasoningEffort: reasoningEffort || 'medium' });
+      const results = await analyzeAgainstJobs(model, selectedJobs, {
+        reasoningEffort: reasoningEffort || 'medium',
+        hooks: { onReasoning: (_d, full) => setGenReasoning(full), onRun: (r) => setLastRun(r) },
+      });
       const id = getCurrentId();
       if (id && results) saveVariantAnalysis(id, results);
       setAnalysisResults(results);
@@ -265,15 +262,26 @@ export default function JobsDialog() {
     }
   };
 
-  const handleTailor = async () => {
+  const handleTailor = async (tailorModelId, tailorReasoningEffort) => {
     if (activeJDs.length === 0) { toast.error('Please activate at least one job description'); return; }
-    const modelId = getSettings().defaultModel || getDefaultModelId();
+    const model = tailorModelId || getSettings().tailorModel || getSettings().defaultModel || getDefaultModelId();
+    const reasoningEffort = tailorReasoningEffort || 'medium';
+    saveSettings({ tailorModel: model, tailorReasoning: reasoningEffort });
+    setGenOp('tailor');
+    setGenReasoning('');
+    setLastRun(null);
+    setIsAnalyzing(true);
     try {
       const result = await generateResumeChanges(
-        modelId,
+        model,
         'Tailor my entire resume for these target jobs. Optimize keywords, adjust the summary, and highlight relevant experience.',
         null,
         { jobDescriptions: activeJDs },
+        'tailor',
+        {
+          reasoningEffort,
+          hooks: { onReasoning: (_d, full) => setGenReasoning(full), onRun: (r) => setLastRun(r) },
+        },
       );
       if (result.changes && Object.keys(result.changes).length > 0) {
         const changeSet = createChangeSet(store.getData(), result.changes);
@@ -284,6 +292,8 @@ export default function JobsDialog() {
       }
     } catch (error) {
       toast.error(`Failed to generate changes: ${error.message}`);
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -298,7 +308,12 @@ export default function JobsDialog() {
     }
   };
 
-  const defaultModelId = validateModelId(getSettings().defaultModel) || getDefaultModelId();
+  // Seed the analyze dialog from the per-area remembered model/reasoning (falling
+  // back to the global default the first time), so the choice sticks per #2.
+  const defaultModelId = validateModelId(getSettings().analysisModel || getSettings().defaultModel) || getDefaultModelId();
+  const defaultAnalysisReasoning = getSettings().analysisReasoning || 'medium';
+  const defaultTailorModelId = validateModelId(getSettings().tailorModel || getSettings().defaultModel) || getDefaultModelId();
+  const defaultTailorReasoning = getSettings().tailorReasoning || 'medium';
 
   const countLabel = jobs.length > 0
     ? ` (${displayed.length}${showRecentOnly && jobs.length > RECENT_JD_LIMIT ? ` of ${jobs.length}` : ''})`
@@ -431,12 +446,12 @@ export default function JobsDialog() {
                   <Separator />
                   <section>
                     <SectionHeader title="Resume Analysis" />
-                    <div className="flex flex-wrap gap-2">
-                      <Button disabled={!configured} onClick={() => setSelectionOpen(true)}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button disabled={!configured || isAnalyzing} onClick={() => setSelectionOpen(true)}>
                         <Search className="h-4 w-4" />
-                        {isAnalyzing ? 'Analyzing…' : 'Analyze Resume Fit'}
+                        {isAnalyzing ? 'Working…' : 'Analyze Resume Fit'}
                       </Button>
-                      <Button variant="outline" disabled={!configured || activeJDs.length === 0} onClick={handleTailor}>
+                      <Button variant="outline" disabled={!configured || isAnalyzing || activeJDs.length === 0} onClick={() => setTailorSelectionOpen(true)}>
                         <Wand2 className="h-4 w-4" />
                         Tailor Resume
                       </Button>
@@ -445,7 +460,8 @@ export default function JobsDialog() {
                       <p className="mt-2 text-sm text-muted-foreground">Configure an API key in settings to use AI analysis.</p>
                     )}
                     {analysisResults && (
-                      <div className="mt-5">
+                      <div className="mt-5 space-y-3">
+                        {lastRun && <RunMeta run={lastRun} />}
                         <AnalysisResults results={analysisResults} appliedIndexes={appliedIndexes} onApply={applyRec} />
                       </div>
                     )}
@@ -463,7 +479,17 @@ export default function JobsDialog() {
         jobs={jobs}
         models={getAvailableModels()}
         defaultModelId={defaultModelId}
+        defaultReasoning={defaultAnalysisReasoning}
         onConfirm={runAnalysis}
+      />
+      <TailorDialog
+        open={tailorSelectionOpen}
+        onOpenChange={setTailorSelectionOpen}
+        models={getAvailableModels()}
+        defaultModelId={defaultTailorModelId}
+        defaultReasoning={defaultTailorReasoning}
+        activeCount={activeJDs.length}
+        onConfirm={handleTailor}
       />
       <JobEditDialog
         open={!!editingJd}
@@ -471,7 +497,15 @@ export default function JobsDialog() {
         jd={editingJd}
         onSave={saveEdit}
       />
-      {isAnalyzing && <AnalysisLoadingOverlay />}
+      {isAnalyzing && (
+        <AnalysisLoadingOverlay
+          reasoning={genReasoning}
+          title={genOp === 'tailor' ? 'Tailoring Your Resume' : 'Analyzing Resume Fit'}
+          subtitle={genOp === 'tailor'
+            ? 'Optimizing your resume for the target jobs…'
+            : 'Comparing your resume against job requirements…'}
+        />
+      )}
     </>
   );
 }

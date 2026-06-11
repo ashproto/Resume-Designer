@@ -16,6 +16,7 @@ import {
   Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { LiveReasoning } from '../chat/LiveReasoning.jsx';
 
 /**
  * Presentational step components for the onboarding wizard, composed from
@@ -541,6 +542,7 @@ export function JobInputStep({
   const [model, setModel] = useState(defaultModel);
   const [reasoning, setReasoning] = useState(defaultReasoning);
   const [generating, setGenerating] = useState(false);
+  const [liveReasoning, setLiveReasoning] = useState('');
   const [tick, setTick] = useState(0);
 
   // Re-evaluate reasoning support after the catalog loads (tick bump).
@@ -608,9 +610,13 @@ export function JobInputStep({
       toast.error('Please paste a job description');
       return;
     }
+    setLiveReasoning('');
     setGenerating(true);
     try {
-      await onGenerate({ title: title.trim(), company: company.trim(), description: d, model, reasoning });
+      await onGenerate({
+        title: title.trim(), company: company.trim(), description: d, model, reasoning,
+        hooks: { onReasoning: (_x, full) => setLiveReasoning(full) },
+      });
     } catch (e) {
       toast.error('Failed to generate resume: ' + e.message);
       setGenerating(false);
@@ -718,6 +724,11 @@ export function JobInputStep({
             </p>
           ))}
         </div>
+        {generating && (
+          <div className="mt-4">
+            <LiveReasoning reasoning={liveReasoning} streaming defaultOpen />
+          </div>
+        )}
       </StepBody>
       <StepFooter>
         <Button

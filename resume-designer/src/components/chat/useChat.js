@@ -57,15 +57,6 @@ export function getModelLabel(value) {
   return pretty || 'Custom Model';
 }
 
-function getModelDisplayName(modelId) {
-  for (const group of AI_MODELS) {
-    for (const opt of group.options) {
-      if (opt.value === modelId) return opt.label;
-    }
-  }
-  return String(modelId).split('/').pop();
-}
-
 function getInitialModel() {
   const settings = getSettings();
   if (settings.defaultModel) return validateModelId(settings.defaultModel);
@@ -142,8 +133,13 @@ export function useChat() {
   const [thinking, setThinking] = useStateRef(null);
   const [contextChips, setContextChips, chipsRef] = useStateRef([]);
   const [currentModel, setCurrentModelState, modelRef] = useStateRef(getInitialModel());
-  const [reasoningEffort, setReasoningEffortState, reasoningRef] = useStateRef('medium');
-  const [webSearchEnabled, setWebSearchState, webSearchRef] = useStateRef(false);
+  const [reasoningEffort, setReasoningEffortState, reasoningRef] = useStateRef(getSettings().chatReasoningEffort || 'medium');
+  const [webSearchEnabled, setWebSearchState, webSearchRef] = useStateRef(!!getSettings().chatWebSearch);
+  // Live streaming assistant turn (real reasoning + answer as they arrive),
+  // separate from the synthetic `thinking` steps the non-streamed flows still use.
+  const [streamingMessage, setStreamingMessage, streamingRef] = useStateRef(null);
+  const abortRef = useRef(null);
+  const flushRaf = useRef(0);
 
   const interviewModeRef = useRef(false);
   const interviewMsgsRef = useRef([]);
@@ -182,6 +178,23 @@ export function useChat() {
   const addMessage = (role, content, applyData = null) =>
     appendMessage({ id: uid(), role, content, applyData, timestamp: new Date().toISOString() });
 
+  // Commit a finished turn to the thread that was active when the flow STARTED.
+  // If the user switched threads mid-stream, persist into that original thread
+  // without disturbing the current view (prevents wrong-thread commits).
+  const commitToThread = (startThreadId, msg) => {
+    if (!startThreadId || currentThreadIdRef.current === startThreadId) {
+      appendMessage(msg);
+      return;
+    }
+    const next = threadsRef.current.map((t) =>
+      t.id === startThreadId
+        ? { ...t, messages: trimMessages([...(t.messages || []), msg]), updatedAt: new Date().toISOString() }
+        : t
+    );
+    setThreads(next);
+    persistThreads(next);
+  };
+
   // ── animated "thinking" process ────────────────────────────────────────
   const beginThinking = () => {
     setLoading(true);
@@ -204,47 +217,75 @@ export function useChat() {
       return { ...t, steps };
     });
 
+  // ── live streaming (real reasoning + answer) ─────────────────────────────
+  // Coalesce streamed deltas to one state write per animation frame so the
+  // Markdown render + DOMPurify re-sanitize runs at display rate, not per token.
+  const scheduleFlush = (patch) => {
+    const base = streamingRef.current || {
+      id: uid(), role: 'assistant', streaming: true, content: '', reasoning: '',
+      reasoningDetails: [], annotations: [], run: null, timestamp: new Date().toISOString(),
+    };
+    streamingRef.current = { ...base, ...patch(base) };
+    if (flushRaf.current) return;
+    flushRaf.current = requestAnimationFrame(() => {
+      flushRaf.current = 0;
+      setStreamingMessage(streamingRef.current);
+    });
+  };
+  const clearStreaming = () => {
+    if (flushRaf.current) { cancelAnimationFrame(flushRaf.current); flushRaf.current = 0; }
+    setStreamingMessage(null);
+    streamingRef.current = null;
+    abortRef.current = null;
+  };
+  const stop = () => { if (abortRef.current) abortRef.current.abort(); };
+
   // ── AI flows ───────────────────────────────────────────────────────────
   const getAIResponse = async (userMessage, hasExplicitContext = false) => {
     const modelId = modelRef.current;
-    beginThinking();
-    try {
-      addThinkingStep(`Sending to ${getModelDisplayName(modelId)}...`);
-      // Last 10 user/assistant turns; replace the final turn with the
-      // context-augmented version we actually want to send.
-      const history = messagesRef.current
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .slice(-10)
-        .map((m) => ({ role: m.role, content: m.content }));
-      if (history.length > 0) history[history.length - 1].content = userMessage;
+    const startThreadId = currentThreadIdRef.current;
+    setLoading(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    // Last 10 user/assistant turns; replace the final turn with the
+    // context-augmented version we actually want to send. reasoningDetails ride
+    // along on assistant turns for Anthropic thinking continuity.
+    const history = messagesRef.current
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .slice(-10)
+      .map((m) => ({ role: m.role, content: m.content, reasoningDetails: m.reasoningDetails }));
+    if (history.length > 0) history[history.length - 1].content = userMessage;
 
-      const options = {
+    setStreamingMessage({
+      id: uid(), role: 'assistant', streaming: true, content: '', reasoning: '',
+      reasoningDetails: [], annotations: [], run: null, timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const res = await chat(modelId, history, !hasExplicitContext, {
         reasoningEffort: reasoningRef.current,
         webSearch: webSearchRef.current,
+        signal: controller.signal,
         structured: true,
-      };
-      if (webSearchRef.current) completeThinkingStep('Searching the web...');
-
-      const response = await chat(modelId, history, !hasExplicitContext, options);
-
-      if (response && typeof response === 'object' && response.text) {
-        if (response.usedWebSearch) completeThinkingStep('Processed web search results');
-        if (response.thinking) completeThinkingStep('Applied reasoning');
-        completeThinkingStep('Response ready');
-        endThinking();
-        appendMessage({
-          id: uid(), role: 'assistant', content: response.text,
-          reasoning: response.thinking, timestamp: new Date().toISOString(),
-        });
-      } else {
-        completeThinkingStep('Response received');
-        endThinking();
-        addMessage('assistant', response);
-      }
+        hooks: {
+          onReasoning: (_d, full) => scheduleFlush(() => ({ reasoning: full })),
+          onContent: (_d, full) => scheduleFlush(() => ({ content: full })),
+          onAnnotations: (list) => scheduleFlush(() => ({ annotations: list })),
+        },
+      });
+      clearStreaming();
+      setLoading(false);
+      commitToThread(startThreadId, {
+        id: uid(), role: 'assistant',
+        content: res.stopped ? (res.text ? `${res.text}\n\n_(stopped)_` : '_(stopped)_') : res.text,
+        reasoning: res.reasoning, reasoningDetails: res.reasoningDetails,
+        annotations: res.annotations, run: res.run, timestamp: new Date().toISOString(),
+      });
       refreshCustomModels(); // chat() records any newly-used custom slug
     } catch (error) {
-      endThinking();
-      addMessage('error', error.message);
+      clearStreaming();
+      setLoading(false);
+      commitToThread(startThreadId, { id: uid(), role: 'error', content: error.message, timestamp: new Date().toISOString() });
     }
   };
 
@@ -293,37 +334,59 @@ export function useChat() {
   };
 
   const requestAIChanges = async (instruction, targetPath = null) => {
-    beginThinking();
+    const startThreadId = currentThreadIdRef.current;
+    setLoading(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    // Stream the model's reasoning live (the JSON answer is buffered and parsed
+    // into a diff when the stream completes).
+    setStreamingMessage({
+      id: uid(), role: 'assistant', streaming: true, content: '', reasoning: '',
+      reasoningDetails: [], annotations: [], run: null, timestamp: new Date().toISOString(),
+    });
+    let capturedRun = null;
+    let capturedReasoning = '';
     try {
-      addThinkingStep('Analyzing your request...');
-      await new Promise((r) => setTimeout(r, 300));
-      completeThinkingStep('Generating resume changes...');
-      const result = await generateResumeChanges(modelRef.current, instruction, targetPath);
+      const result = await generateResumeChanges(modelRef.current, instruction, targetPath, null, 'generate', {
+        reasoningEffort: reasoningRef.current,
+        signal: controller.signal,
+        hooks: {
+          onReasoning: (_d, full) => { capturedReasoning = full; scheduleFlush(() => ({ reasoning: full })); },
+          onRun: (r) => { capturedRun = r; },
+        },
+      });
+      clearStreaming();
+      setLoading(false);
 
       if (!result.changes || Object.keys(result.changes).length === 0) {
-        completeThinkingStep('No changes needed');
-        endThinking();
-        addMessage('assistant', result.explanation
-          || 'No changes were generated. The AI may need more specific instructions.');
+        commitToThread(startThreadId, {
+          id: uid(), role: 'assistant',
+          content: result.explanation || 'No changes were generated. The AI may need more specific instructions.',
+          reasoning: capturedReasoning || null, run: capturedRun,
+          timestamp: new Date().toISOString(),
+        });
         return;
       }
 
-      completeThinkingStep('Preparing diff view...');
       const changeSet = createChangeSet(store.getData(), result.changes);
       showInlineChanges(changeSet);
 
       const count = Object.keys(result.changes).length;
-      completeThinkingStep(`Generated ${count} change${count > 1 ? 's' : ''}`);
-      endThinking();
-      appendMessage({
+      commitToThread(startThreadId, {
         id: uid(), role: 'assistant',
         content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''} to your resume.`}\n\nChanges are highlighted on your resume. Use the buttons to apply or reject individual changes, or click "Review Changes" below for a detailed diff view.`,
+        reasoning: capturedReasoning || null, run: capturedRun,
         timestamp: new Date().toISOString(),
         pendingChanges: changeSet,
       });
     } catch (error) {
-      endThinking();
-      addMessage('error', error.message);
+      clearStreaming();
+      setLoading(false);
+      // A user Stop aborts the buffered JSON mid-stream → JSON.parse fails. Show a
+      // clean "(stopped)" turn instead of a misleading "not valid JSON" error.
+      commitToThread(startThreadId, controller.signal.aborted
+        ? { id: uid(), role: 'assistant', content: '_(stopped)_', timestamp: new Date().toISOString() }
+        : { id: uid(), role: 'error', content: error.message, timestamp: new Date().toISOString() });
     }
   };
 
@@ -554,6 +617,9 @@ Let's begin!`);
 
   // ── threads ────────────────────────────────────────────────────────────
   const switchThread = (threadId, save = true) => {
+    // Abandon any in-flight stream's live display; it still commits to its
+    // original thread via commitToThread (the captured start id).
+    if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
     if (save && currentThreadIdRef.current) persistCurrentThread(messagesRef.current);
     const thread = threadsRef.current.find((t) => t.id === threadId);
     if (thread) {
@@ -569,6 +635,7 @@ Let's begin!`);
     switchThread(t.id, true);
   };
   const deleteThread = (threadId) => {
+    if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
     const next = threadsRef.current.filter((t) => t.id !== threadId);
     if (next.length === threadsRef.current.length) return; // not found
     if (threadId === currentThreadIdRef.current) {
@@ -610,8 +677,12 @@ Let's begin!`);
     if (slug === modelRef.current) selectModel(getDefaultModelId() || FALLBACK_MODEL);
     refreshCustomModels();
   };
-  const setReasoning = (level) => setReasoningEffortState(level);
-  const toggleWebSearch = () => setWebSearchState(!webSearchRef.current);
+  const setReasoning = (level) => { setReasoningEffortState(level); saveSettings({ chatReasoningEffort: level }); };
+  const toggleWebSearch = () => {
+    const next = !webSearchRef.current;
+    setWebSearchState(next);
+    saveSettings({ chatWebSearch: next });
+  };
 
   // ── misc actions ───────────────────────────────────────────────────────
   const applyAction = (action, value) => {
@@ -657,11 +728,11 @@ Let's begin!`);
 
   return {
     // state
-    messages, threads, currentThreadId, loading, thinking, contextChips,
+    messages, threads, currentThreadId, loading, thinking, streamingMessage, contextChips,
     currentModel, reasoningEffort, webSearchEnabled,
     configured, configuredProviders, reasoningSupported, customModels,
     // actions
-    send, selectModel, applyCustomSlug, removeCustomModelEntry,
+    send, stop, selectModel, applyCustomSlug, removeCustomModelEntry,
     setReasoning, toggleWebSearch, addChip, openWithContext, removeChip, clearChips,
     newThread, switchThread, deleteThread, openDiffForMessage, applyAction,
     startInterview, refresh,

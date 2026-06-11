@@ -77,9 +77,10 @@ export default function OnboardingWizard() {
   // Re-render trigger when settings change (keeps API/model state fresh).
   const [, bumpSettings] = useState(0);
 
-  // Persisted across opens (component is never unmounted).
-  const jobGenModelRef = useRef(null);
-  const jobGenReasoningRef = useRef('medium');
+  // Persisted across opens (component is never unmounted) AND across restarts —
+  // seeded from the per-area remembered model/reasoning so the choice sticks.
+  const jobGenModelRef = useRef(getSettings().onboardingModel || null);
+  const jobGenReasoningRef = useRef(getSettings().onboardingReasoning || 'medium');
   const closeTimerRef = useRef(null);
 
   const doOpen = useCallback((options = {}) => {
@@ -204,13 +205,14 @@ export default function OnboardingWizard() {
     else setQuestion(question - 1);
   }, [question]);
 
-  const generateForJob = useCallback(async ({ title, company, description, model, reasoning }) => {
+  const generateForJob = useCallback(async ({ title, company, description, model, reasoning, hooks }) => {
     const job = { title: title || 'Target Role', company: company || 'Company', description };
     setTargetJob(job);
     setJobDescriptions([job]);
     jobGenModelRef.current = model;
     jobGenReasoningRef.current = reasoning;
-    const resume = await generateResumeForJob(model, job, reasoning);
+    saveSettings({ onboardingModel: model, onboardingReasoning: reasoning });
+    const resume = await generateResumeForJob(model, job, reasoning, { hooks });
     setParsedResume(resume);
     setStep(4);
   }, []);

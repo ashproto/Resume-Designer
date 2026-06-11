@@ -24,18 +24,18 @@ const REASONING_OPTIONS = [
   { value: 'high', label: 'High' },
 ];
 
-export function JobSelectionDialog({ open, onOpenChange, jobs, models, defaultModelId, onConfirm }) {
+export function JobSelectionDialog({ open, onOpenChange, jobs, models, defaultModelId, defaultReasoning = 'medium', onConfirm }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [modelId, setModelId] = useState(defaultModelId);
-  const [reasoning, setReasoning] = useState('medium');
+  const [reasoning, setReasoning] = useState(defaultReasoning);
 
   // Seed selection/model/reasoning when the dialog transitions to open.
   useEffect(() => {
     if (!open) return;
     setSelectedIds(new Set(jobs.filter((jd) => jd.isActive).map((jd) => jd.id)));
     setModelId(defaultModelId);
-    setReasoning('medium');
-  }, [open, jobs, defaultModelId]);
+    setReasoning(defaultReasoning);
+  }, [open, jobs, defaultModelId, defaultReasoning]);
 
   const toggle = (id) => {
     setSelectedIds((prev) => {
