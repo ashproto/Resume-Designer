@@ -23,7 +23,7 @@ import { store } from '../store.js';
 //     Reject (drops the card; closes when none remain), Applied badge swap;
 //   • A apply-next · R reject-next · Enter apply-all · Esc close (ignored while
 //     typing in an input/textarea), click-outside close, body scroll lock,
-//     empty state, and auto-close 500ms after every change is applied;
+//     empty state, and auto-close 500ms after every change is handled;
 //   • live green/red/amber stat badges from changeSet.getSummary() + "N applied".
 // Strings render as plain React children (auto-escaped) inside whitespace-pre-wrap
 // blocks — the vanilla escapeHtml + \n→<br> handling is no longer needed.
@@ -241,8 +241,20 @@ export default function DiffDialog() {
     };
   }, [open]);
 
-  // Apply one change to the store, mark it applied, fire the callback, and
-  // auto-close once everything is applied (500ms, as in the vanilla version).
+  // Auto-close 500ms after every change has been handled — applied or rejected —
+  // so "reject one, apply the rest" dismisses the dialog once nothing is left to
+  // review (and rejecting every card still closes). Centralizes the dismissal that
+  // applyChange / rejectChange used to schedule ad hoc.
+  useEffect(() => {
+    if (!open || !changeSet || changeSet.changes.length === 0) return undefined;
+    const allHandled = changeSet.changes.every((c) => applied.has(c.path) || rejected.has(c.path));
+    if (!allHandled) return undefined;
+    const t = setTimeout(() => setOpen(false), 500);
+    return () => clearTimeout(t);
+  }, [open, changeSet, applied, rejected]);
+
+  // Apply one change to the store, mark it applied, and fire the callback. The
+  // close-when-everything-is-handled effect above dismisses the dialog.
   const applyChange = useCallback(
     (path) => {
       const cs = changeSet;
@@ -267,27 +279,21 @@ export default function DiffDialog() {
 
         const next = new Set(prevApplied);
         next.add(path);
-        if (next.size === cs.changes.length) {
-          setTimeout(() => setOpen(false), 500);
-        }
         return next;
       });
     },
     [changeSet],
   );
 
-  // Reject = hide the card. When nothing visible remains, close.
+  // Reject = hide the card from the list. The close-when-everything-is-handled
+  // effect above dismisses the dialog once nothing is left to review.
   const rejectChange = useCallback(
     (path) => {
-      const cs = changeSet;
-      if (!cs) return;
+      if (!changeSet) return;
       setRejected((prevRejected) => {
         if (prevRejected.has(path)) return prevRejected;
         const next = new Set(prevRejected);
         next.add(path);
-        if (cs.changes.every((c) => next.has(c.path))) {
-          setTimeout(() => setOpen(false), 0);
-        }
         return next;
       });
     },
@@ -300,13 +306,16 @@ export default function DiffDialog() {
     [changeSet, applied, rejected],
   );
 
+  // Apply every change the user hasn't already applied or rejected. Skipping
+  // rejected paths is what makes "reject one, apply the rest" safe — a rejected
+  // card is never written to the resume by Apply All.
   const applyAll = useCallback(() => {
     const cs = changeSet;
     if (!cs) return;
     for (const change of cs.changes) {
-      if (!applied.has(change.path)) applyChange(change.path);
+      if (!applied.has(change.path) && !rejected.has(change.path)) applyChange(change.path);
     }
-  }, [changeSet, applied, applyChange]);
+  }, [changeSet, applied, rejected, applyChange]);
 
   // Keyboard shortcuts: A apply-next · R reject-next · Enter apply-all · Esc
   // close. Ignored while typing in an input/textarea. Esc is handled here (the
