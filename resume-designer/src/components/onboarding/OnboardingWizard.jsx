@@ -84,12 +84,16 @@ export default function OnboardingWizard() {
   const closeTimerRef = useRef(null);
 
   const doOpen = useCallback((options = {}) => {
+    // New-resume mode (the header "+") always skips the API-key step, even with no
+    // key configured. Step 0 has no cancel/skip affordance — the close X only shows
+    // in new-resume mode and ApiKeyStep won't advance without a key — so gating the
+    // skip on a configured key would strand a keyless existing user on the API-key
+    // screen with no way out or back to the start/import choices. First-run (no
+    // skipApiKeyStep) still shows step 0.
     const skipApiKeyStep = !!options.skipApiKeyStep;
-    const hasApiKeys = getConfiguredProviders().length > 0;
-    const shouldSkip = skipApiKeyStep && hasApiKeys;
 
-    setIsNewResumeMode(shouldSkip);
-    setStep(shouldSkip ? 1 : 0);
+    setIsNewResumeMode(skipApiKeyStep);
+    setStep(skipApiKeyStep ? 1 : 0);
     setMode(null);
     setParsedResume(null);
     setJobDescriptions([]);
