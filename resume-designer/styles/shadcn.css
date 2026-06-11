@@ -182,6 +182,17 @@
   backdrop-filter: var(--glass-blur);
 }
 
+/* Stacking — Radix floating content (select / dropdown / combobox / popover /
+   tooltip) portals to document.body, so it competes at the root layer with the
+   app's custom high-z overlays: the onboarding wizard (z-3000) and the jobs
+   analysis overlay (z-2200). Radix's default z-50 renders the dropdown BEHIND
+   them — e.g. the model picker inside the onboarding wizard was unreachable.
+   Lift the popper wrapper above every app overlay. (!important guarantees the
+   override regardless of where Radix sets the base z-index.) */
+[data-radix-popper-content-wrapper] {
+  z-index: 3100 !important;
+}
+
 /* Dialog + Sheet content = modal tier: frosted, a touch more opaque for their
    dense content (matches the vanilla `.modal` rule). [role="dialog"] is set by
    Radix Dialog/Sheet/AlertDialog/CommandDialog content; vanilla `.modal`s don't
