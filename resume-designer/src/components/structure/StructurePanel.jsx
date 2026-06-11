@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bold, ChevronDown, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, Plus, Trash2, X } from 'lucide-react';
 
 import { store, generateId, experienceSortValue } from '../../store.js';
 import { SortableList, SortableItem, DragHandle } from '../Sortable.jsx';
@@ -17,6 +17,9 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Segmented, SegmentedItem } from '@/components/ui/segmented';
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from '@/components/ui/select';
 import { confirmDestructive } from '@/components/ui/confirm';
 import { cn } from '@/lib/utils';
 
@@ -268,10 +271,12 @@ export default function StructurePanel() {
   const [collapsed, setCollapsed] = useState({});
   const [renameOpen, setRenameOpen] = useState(false); // "Custom Section…" title dialog
   const [customTitle, setCustomTitle] = useState('');
-  // Visual-only highlight for the experience "Sort by" segmented control (the
-  // sort itself is a one-shot reorder; this just reflects the last choice, with
-  // Date as the default active segment per the mockup).
-  const [sortMode, setSortMode] = useState('date');
+  // Experience "Sort by" mode: 'date' | 'relevance' | 'custom'. Date/relevance are
+  // one-shot reorders; 'custom' keeps the user's manual drag order. Persisted
+  // per-variant on the resume data (experienceSortMode) via updateSilent, so it
+  // survives reload/variant-switch without polluting undo history. Seeded from
+  // saved data on open + kept in sync via the store subscription below.
+  const [sortMode, setSortMode] = useState(() => store.getData()?.experienceSortMode || 'date');
   const tabContentRef = useRef(null);
   const scrollPos = useRef(0);
 
@@ -300,9 +305,13 @@ export default function StructurePanel() {
   // but never on a local text edit (localEdit gate).
   useEffect(() => {
     if (!open) return undefined;
+    // Seed the sort mode from the active variant's saved value when the panel opens.
+    setSortMode(store.getData()?.experienceSortMode || 'date');
     return store.subscribe((event) => {
       if (event === 'change' || event === 'dataLoaded') {
         if (localEdit) return;
+        // Keep the sort dropdown in sync with the data (variant switch, undo/redo).
+        setSortMode(store.getData()?.experienceSortMode || 'date');
         bump();
       }
     });
@@ -335,8 +344,12 @@ export default function StructurePanel() {
     setRenameOpen(false);
     setCustomTitle('');
   };
-  const sortExperience = (mode) => {
+  const applySort = (mode) => {
     setSortMode(mode);
+    // Persist the choice per-variant without history/remount (updateSilent).
+    store.updateSilent('experienceSortMode', mode);
+    // 'custom' keeps the user's manual order — nothing to reorder.
+    if (mode === 'custom') return;
     const experience = store.get('experience');
     if (!Array.isArray(experience) || experience.length < 2) return;
     const sorted = [...experience];
@@ -349,22 +362,12 @@ export default function StructurePanel() {
     store.update('experience', sorted);
   };
 
-  const handleBold = () => {
-    const field = document.activeElement;
-    if (!field?.matches?.('input[data-field], textarea[data-field]')) return;
-    const path = field.dataset.field;
-    if (!path) return;
-    const s = field.selectionStart ?? 0;
-    const e = field.selectionEnd ?? s;
-    const value = field.value || '';
-    const sel = value.slice(s, e);
-    const bolded = sel.startsWith('**') && sel.endsWith('**') && sel.length >= 4;
-    const replacement = bolded ? sel.slice(2, -2) : `**${sel}**`;
-    const next = value.slice(0, s) + replacement + value.slice(e);
-    field.value = next;
-    writeField(path, next);
-    field.focus();
-    field.setSelectionRange(s, s + replacement.length);
+  // A manual drag is an explicit custom arrangement: persist the new order AND
+  // flip the sort mode to 'custom' so it sticks (and the dropdown reflects it).
+  const reorderExperience = (from, to) => {
+    setSortMode('custom');
+    store.updateSilent('experienceSortMode', 'custom');
+    store.moveInArray('experience', from, to);
   };
 
   const sections = data.sections || [];
@@ -374,8 +377,11 @@ export default function StructurePanel() {
 
   return createPortal(
     <>
-      {/* Fixed top zone: 4-tab segmented switcher + bold toolbar (content scrolls). */}
-      <div className="shrink-0 space-y-2.5 border-b px-4 pb-3 pt-3.5">
+      {/* Fixed top zone: 4-tab segmented switcher (content scrolls). Text
+          formatting (bold/italic/underline/…) for the panel's markdown fields is
+          handled by the shared bottom toolbar, which formats the focused field
+          the same way it formats the résumé inline. */}
+      <div className="shrink-0 border-b px-4 pb-3 pt-3.5">
         <Segmented className="flex w-full">
           {Object.entries(TAB_OPTIONS).map(([key, { tabLabel, label }]) => (
             <SegmentedItem
@@ -389,17 +395,6 @@ export default function StructurePanel() {
             </SegmentedItem>
           ))}
         </Segmented>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline" size="icon" type="button" className="size-7"
-            title="Bold (Cmd/Ctrl+B)"
-            onMouseDown={(e) => e.preventDefault()} onClick={handleBold}
-          >
-            <Bold className="size-3.5" />
-          </Button>
-          <span className="text-xs text-muted-foreground">Format selected text</span>
-        </div>
       </div>
 
       {/* Tab content — keyed so content tabs remount on data change; design tab
@@ -493,14 +488,20 @@ export default function StructurePanel() {
               {experience.length > 1 && (
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-medium text-muted-foreground">Sort by</span>
-                  <Segmented size="xs">
-                    <SegmentedItem size="xs" active={sortMode === 'date'} title="Sort by date (most recent first)" onClick={() => sortExperience('date')}>Date</SegmentedItem>
-                    <SegmentedItem size="xs" active={sortMode === 'relevance'} title="Sort by relevance to the target role" onClick={() => sortExperience('relevance')}>Relevance</SegmentedItem>
-                  </Segmented>
+                  <Select value={sortMode} onValueChange={applySort}>
+                    <SelectTrigger className="h-7 w-[130px] text-xs" aria-label="Sort experience by">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="date">Date</SelectItem>
+                      <SelectItem value="relevance">Relevance</SelectItem>
+                      <SelectItem value="custom">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
               <SortableList className="space-y-2" ids={experience.map((e, i) => e.id || `exp-${i}`)}
-                onReorder={(from, to) => store.moveInArray('experience', from, to)}>
+                onReorder={reorderExperience}>
                 {experience.map((exp, i) => <ExperienceItem key={exp.id || `exp-${i}`} exp={exp} index={i} />)}
               </SortableList>
             </PanelSection>
@@ -530,7 +531,7 @@ export default function StructurePanel() {
           </>
         )}
 
-        {tab === 'design' && <DesignTab />}
+        {tab === 'design' && <DesignTab sectionProps={sectionProps} />}
       </div>
 
       {/* Custom section title dialog (replaces prompt()) */}

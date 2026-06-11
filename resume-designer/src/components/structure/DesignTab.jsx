@@ -483,7 +483,12 @@ function UnderlinePreview({ styleId, width, className }) {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function DesignTab() {
+// `sectionProps(id)` is supplied by StructurePanel and returns the controlled
+// `{ collapsed, onToggleCollapse }` for a section, backed by a `collapsed` map
+// that lives in the (never-unmounting) panel parent. DesignTab itself unmounts
+// when you switch away from the Design tab, so routing collapse through the
+// parent is what makes each section's collapsed state survive tab switches.
+export default function DesignTab({ sectionProps = () => ({}) }) {
   // Seed all design state from the services / persistence on mount.
   const initialSettings = getSettings();
   const [palette, setPalette] = useState(initialSettings.colorPalette || 'terracotta');
@@ -823,7 +828,7 @@ export default function DesignTab() {
   return (
     <>
       {/* ===== Color Theme ===== */}
-      <PanelSection title="Color Theme">
+      <PanelSection title="Color Theme" {...sectionProps('color-theme')}>
         {/* Palette swatches — mockup `.sw`: 34px, rounded-8, three-tone fill,
             selected = double-ring (inner bg ring + outer primary ring). */}
         <div className="grid grid-cols-6 gap-2">
@@ -884,7 +889,7 @@ export default function DesignTab() {
       </PanelSection>
 
       {/* ===== Header Style ===== */}
-      <PanelSection title="Header Style">
+      <PanelSection title="Header Style" {...sectionProps('header-style')}>
         {/* Solid vs styled mode */}
         <Segmented
           stretch
@@ -990,7 +995,7 @@ export default function DesignTab() {
       </PanelSection>
 
       {/* ===== Typography ===== */}
-      <PanelSection title="Typography">
+      <PanelSection title="Typography" {...sectionProps('typography')}>
         {/* Live font preview */}
         <div className="space-y-1 rounded-lg border bg-card p-3">
           <div className="text-sm font-medium" style={{ fontFamily: previewFonts.display }}>
@@ -1208,7 +1213,7 @@ export default function DesignTab() {
       </PanelSection>
 
       {/* ===== Layout ===== */}
-      <PanelSection title="Layout">
+      <PanelSection title="Layout" {...sectionProps('layout')}>
         <div className="grid grid-cols-2 gap-2">
           {LAYOUT_OPTIONS.map((opt) => (
             <button
@@ -1227,7 +1232,7 @@ export default function DesignTab() {
       </PanelSection>
 
       {/* ===== Spacing & Sizing ===== */}
-      <PanelSection title="Spacing & Sizing" headerExtra={spacingResetButton}>
+      <PanelSection title="Spacing & Sizing" headerExtra={spacingResetButton} {...sectionProps('spacing')}>
         {/* Spacing presets */}
         <Segmented
           stretch
@@ -1311,7 +1316,7 @@ export default function DesignTab() {
       </PanelSection>
 
       {/* ===== Accents ===== */}
-      <PanelSection title="Accents" headerExtra={accentResetButton}>
+      <PanelSection title="Accents" headerExtra={accentResetButton} {...sectionProps('accents')}>
         {/* Live accent preview */}
         <div className="space-y-2 rounded-lg border bg-card p-3">
           <div className="space-y-1">
@@ -1505,7 +1510,7 @@ export default function DesignTab() {
       </PanelSection>
 
       {/* ===== Profile Photo ===== */}
-      <PanelSection title="Profile Photo">
+      <PanelSection title="Profile Photo" {...sectionProps('photo')}>
         {photo.enabled && photo.imageData ? (
           <>
             {/* Photo preview + remove */}
