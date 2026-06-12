@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Plus, Copy, Pencil, Trash2, Upload, Download,
+  Plus, Copy, Pencil, Trash2, MoreHorizontal, Upload, Download,
   ChevronDown, Settings, FileDown, User, Briefcase, History, Menu, Check, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -205,13 +205,12 @@ export default function Header() {
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
-                  size="sm"
-                  className="h-[34px] px-2.5 text-[13.5px]"
+                  size="icon"
+                  className="size-8"
                   title="Resume actions"
                   aria-label="Resume actions"
                 >
-                  Actions
-                  <ChevronDown className="size-3 text-muted-foreground" />
+                  <MoreHorizontal className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="min-w-48">
