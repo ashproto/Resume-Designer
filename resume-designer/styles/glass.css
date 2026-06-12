@@ -120,7 +120,7 @@
 
 /* --- 5. Floating zoom / text-tools toolbar pill --------------------------- */
 :root[data-tauri="true"] .zoom-controls {
-  background: rgba(45, 42, 38, 0.5);
+  background: color-mix(in srgb, var(--color-panel-bg) var(--glass-menu-pct), transparent);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
 }
@@ -260,6 +260,6 @@
     background: var(--color-bg-dark) !important;
   }
   :root[data-tauri="true"] .zoom-controls {
-    background: rgba(45, 42, 38, 0.95);
+    background: var(--color-panel-bg);
   }
 }

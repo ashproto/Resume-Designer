@@ -47,6 +47,7 @@
   --color-text: #2d2a26;
   --color-text-muted: #6b6560;
   --color-text-light: #8a8580;
+  --color-icon: #4a463f; /* idle bottom-bar icon — darker than muted for legibility */
   --color-border: #d4cfc8;
   --color-border-light: #e8e4df;
   
@@ -55,6 +56,13 @@
   --color-panel-header: #f8f6f3;
   --color-input-bg: #ffffff;
   --color-hover-bg: rgba(0, 0, 0, 0.04);
+
+  /* Interactable-field surfaces — a distinct fill + hover lift + visible border
+     so inputs/selects/textareas read as clickable at rest. Opaque in all modes
+     (incl. glass) for legibility. */
+  --color-field-bg: #f0ebe4;
+  --color-field-bg-hover: #e8e2d9;
+  --color-field-border: #cbc4b9;
   
   /* Code/pre blocks */
   --color-code-bg: rgba(0, 0, 0, 0.05);
@@ -91,6 +99,7 @@
   --color-text: #e8e4df;
   --color-text-muted: #9a9590;
   --color-text-light: #7a7570;
+  --color-icon: #c2bdb6; /* idle bottom-bar icon — brighter than muted for legibility */
   --color-border: #3d3a36;
   --color-border-light: #2d2a26;
   
@@ -99,6 +108,11 @@
   --color-panel-header: #0d0c0c;
   --color-input-bg: #2d2a26;
   --color-hover-bg: rgba(255, 255, 255, 0.05);
+
+  /* Interactable-field surfaces (dark) — see light block. */
+  --color-field-bg: #2d2a26;
+  --color-field-bg-hover: #35322d;
+  --color-field-border: #4a463f;
   
   /* Code/pre blocks */
   --color-code-bg: rgba(255, 255, 255, 0.08);
@@ -133,6 +147,7 @@
     --color-text: #e8e4df;
     --color-text-muted: #9a9590;
     --color-text-light: #7a7570;
+  --color-icon: #c2bdb6; /* idle bottom-bar icon — brighter than muted for legibility */
     --color-border: #3d3a36;
     --color-border-light: #2d2a26;
     
@@ -141,6 +156,11 @@
     --color-panel-header: #0d0c0c;
     --color-input-bg: #2d2a26;
     --color-hover-bg: rgba(255, 255, 255, 0.05);
+
+  /* Interactable-field surfaces (dark) — see light block. */
+  --color-field-bg: #2d2a26;
+  --color-field-bg-hover: #35322d;
+  --color-field-border: #4a463f;
     
     /* Code/pre blocks */
     --color-code-bg: rgba(255, 255, 255, 0.08);
@@ -748,7 +768,7 @@ html[data-theme="dark"] .header-variant-select {
   background: transparent;
   border: none;
   border-radius: 7px;
-  color: var(--color-text-muted);
+  color: var(--color-icon);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
@@ -767,7 +787,7 @@ html[data-theme="dark"] .header-variant-select {
   padding: 0 7px;
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--color-icon);
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
