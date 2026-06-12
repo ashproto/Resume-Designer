@@ -12,4 +12,31 @@ import { initPrintMode } from './main.js';
 // variant data: on Tauri the data lives in per-key disk files, not
 // localStorage. readOnly means this window can never write app data — the
 // main window remains the single writer.
-initAppStorage({ readOnly: true }).then(() => initPrintMode());
+//
+// If the disk store can't be read, initAppStorage REJECTS in readOnly mode (it
+// does NOT silently fall back to localStorage — after adoption that store is
+// empty, so a fallback would render a blank/stale resume and let the main
+// window capture a wrong PDF). Catch it and emit `print-error` so the main
+// window's pdf.js rejects the export with a real message instead of timing out
+// or capturing the wrong resume. The label must match this print window's own
+// label, which pdf.js filters on (it spawned us with that label).
+initAppStorage({ readOnly: true })
+  .then(() => initPrintMode())
+  .catch(async (err) => {
+    console.error('[PrintEntry] read-only storage init failed — aborting export:', err);
+    try {
+      const [{ emit }, { getCurrentWindow }] = await Promise.all([
+        import('@tauri-apps/api/event'),
+        import('@tauri-apps/api/window'),
+      ]);
+      let label = '';
+      try { label = getCurrentWindow().label; } catch { /* unlabeled → pdf.js times out cleanly */ }
+      await emit('print-error', {
+        label,
+        error: 'Could not load your saved data from disk for the PDF export. '
+          + 'Free up disk space or check the app data folder, then try again.',
+      });
+    } catch (emitErr) {
+      console.error('[PrintEntry] failed to emit print-error:', emitErr);
+    }
+  });

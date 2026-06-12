@@ -265,20 +265,24 @@ export async function initAppStorage({ backend = null, readOnly: ro = false } = 
   try {
     loaded = await backendImpl.loadAll();
   } catch (err) {
-    // Disk unreadable: stay on passthrough localStorage rather than booting
-    // with an empty store (which would look like total data loss). readOnly
-    // stays set, so a print window in this state still never writes anywhere.
-    console.error('[appStorage] loadAll failed — staying on localStorage:', err);
+    console.error('[appStorage] loadAll failed:', err);
     backendImpl = null;
-    if (!readOnly) {
-      // Skipped for the print window: it has no Toaster and should not note
-      // user-facing errors.
-      showFailureToastOnce(
-        'Stored data could not be loaded from disk — running on a fallback '
-        + 'store, and changes made this session may not persist. Check the '
-        + 'app data folder, then restart.',
-      );
+    if (readOnly) {
+      // Print window: do NOT degrade to passthrough localStorage. After the
+      // one-time adoption the resume lives ONLY in the disk store (localStorage
+      // was emptied), so a fallback here would render an empty/stale resume and
+      // let the main window capture a wrong PDF. Re-throw so printEntry.js can
+      // emit `print-error` and abort the export instead of silently succeeding.
+      throw err;
     }
+    // Main window (the sole writer): degrade to passthrough localStorage rather
+    // than booting with an empty store (which would look like total data loss),
+    // and warn the user that this session's changes may not persist.
+    showFailureToastOnce(
+      'Stored data could not be loaded from disk — running on a fallback '
+      + 'store, and changes made this session may not persist. Check the '
+      + 'app data folder, then restart.',
+    );
     return;
   }
   cache = new Map(Object.entries(loaded));

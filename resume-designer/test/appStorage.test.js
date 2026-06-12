@@ -160,20 +160,31 @@ describe('cached mode (disk backend)', () => {
     expect(appStorage.getItem('resume-zoom')).toBe('2'); // cache still serves it
   });
 
-  it('honors readOnly in the passthrough fallback after a loadAll failure', async () => {
+  it('rejects in readOnly mode when disk data cannot load (print window aborts, never captures stale)', async () => {
     localStorage.setItem('resume-designer-data', '{"v":1}');
     const backend = makeBackend();
     backend.loadAll.mockRejectedValue(new Error('disk unreadable'));
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await initAppStorage({ backend, readOnly: true });
-    // Print window fell back to passthrough — it must still never write.
-    expect(() => appStorage.setItem('resume-zoom', '2')).not.toThrow();
-    expect(localStorage.getItem('resume-zoom')).toBeNull();
-    expect(() => appStorage.removeItem('resume-designer-data')).not.toThrow();
-    expect(() => appStorage.clear()).not.toThrow();
-    expect(localStorage.getItem('resume-designer-data')).toBe('{"v":1}');
-    // Reads still serve the print window.
+    // After adoption the print window's localStorage is empty/stale, so a
+    // passthrough fallback would render a wrong resume. initAppStorage must
+    // reject so printEntry emits print-error and the export fails loudly
+    // instead of capturing a blank/default PDF.
+    await expect(initAppStorage({ backend, readOnly: true })).rejects.toThrow('disk unreadable');
+    errSpy.mockRestore();
+  });
+
+  it('degrades to passthrough (no throw) when the MAIN window cannot load disk data', async () => {
+    localStorage.setItem('resume-designer-data', '{"v":1}');
+    const backend = makeBackend();
+    backend.loadAll.mockRejectedValue(new Error('disk unreadable'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // The main window is the sole writer: degrade to localStorage rather than
+    // booting empty (which would look like total data loss). Reads/writes still
+    // work — this graceful path must survive the readOnly-rejects change above.
+    await expect(initAppStorage({ backend })).resolves.toBeUndefined();
     expect(appStorage.getItem('resume-designer-data')).toBe('{"v":1}');
+    appStorage.setItem('resume-zoom', '2');
+    expect(localStorage.getItem('resume-zoom')).toBe('2');
     errSpy.mockRestore();
   });
 });
