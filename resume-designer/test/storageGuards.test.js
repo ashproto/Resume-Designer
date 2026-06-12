@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createVariant, duplicateVariant, loadVariant } from '../src/variantManager.js';
-import { saveVariant, getVariants, initPersistence } from '../src/persistence.js';
+import { saveVariant, getVariants } from '../src/persistence.js';
 import { store } from '../src/store.js';
 import { initJobDescriptions, addJobDescription, getAllJobDescriptions } from '../src/jobDescriptions.js';
 import { __resetStorageToastForTests } from '../src/storageToast.js';
