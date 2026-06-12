@@ -345,9 +345,19 @@ export function saveOnboardingResume({ parsedResume, mode, targetJob, jobDescrip
   const resumeData = buildResumeData(resume);
 
   // Save then load (sets current id, initializes persistence, notifies the React
-  // header, which re-renders its variant list automatically).
-  saveVariant(variantId, variantName, resumeData);
-  loadVariant(variantId);
+  // header, which re-renders its variant list automatically). saveVariant
+  // returns false when the localStorage write fails (quota exceeded), and
+  // loadVariant returns false when the variant isn't readable back — without
+  // this check the wizard would show "Your Resume is Ready!" while the resume
+  // silently never persisted (old resume on screen, nothing in the dropdown).
+  const saved = saveVariant(variantId, variantName, resumeData);
+  if (!saved || !loadVariant(variantId)) {
+    throw new Error(
+      "Could not save the new resume: the app's local storage is full. "
+      + 'Free up space by deleting resumes you no longer need, then try again. '
+      + 'You can back up everything first via Settings → Data → Export Backup.',
+    );
+  }
   return variantId;
 }
 

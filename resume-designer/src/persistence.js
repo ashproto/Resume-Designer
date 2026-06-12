@@ -69,7 +69,11 @@ export function loadFromStorage() {
   } catch (e) {
     console.error('Failed to load from localStorage:', e);
   }
-  return { ...DEFAULT_STORAGE };
+  // Deep clone — a shallow spread would hand callers references to
+  // DEFAULT_STORAGE's nested objects (variants/settings/userProfile), and a
+  // caller mutating its "loaded" copy (saveVariant does) would silently edit
+  // the module constant for the rest of the session.
+  return structuredClone(DEFAULT_STORAGE);
 }
 
 // Save all data to localStorage
@@ -118,7 +122,10 @@ export function saveVariant(id, name, data) {
     jobAnalysis: existingVariant?.jobAnalysis || null,
     analysisUpdatedAt: existingVariant?.analysisUpdatedAt || null
   };
-  saveToStorage(storage);
+  // Report whether the write actually landed. saveToStorage swallows
+  // QuotaExceededError (full localStorage), so without this signal a caller
+  // can't tell a saved variant from one that silently vanished.
+  return saveToStorage(storage);
 }
 
 // Generate a unique variant name based on the person's name

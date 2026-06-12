@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -247,7 +248,15 @@ export default function OnboardingWizard() {
   const reviewBack = useCallback(() => setStep(mode === 'job' ? 2 : 3), [mode]);
 
   const saveResume = useCallback(() => {
-    saveOnboardingResume({ parsedResume, mode, targetJob, jobDescriptions });
+    // saveOnboardingResume throws when the variant can't be persisted (full
+    // localStorage). Surface that and stay on the review step — advancing to
+    // the success screen would claim a resume that doesn't exist.
+    try {
+      saveOnboardingResume({ parsedResume, mode, targetJob, jobDescriptions });
+    } catch (err) {
+      toast.error(err.message);
+      return;
+    }
     setStep(5);
   }, [parsedResume, mode, targetJob, jobDescriptions]);
 
