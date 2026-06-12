@@ -117,7 +117,7 @@
     --destructive-foreground: #ffffff;
 
     --border: var(--color-border);
-    --input: var(--color-input-bg);
+    --input: var(--color-field-border);
     --ring: var(--color-accent);
 
     /* 10px. Drives the shadcn radius scale (lg=10, md=8, sm=6) to match the
@@ -165,8 +165,9 @@
    ========================================================================== */
 
 /* Tint — redefine the floating + card surface tokens translucent under the
-   shell. `--input` is already made translucent by glass.css (via
-   --color-input-bg), so inputs inherit it for free. */
+   shell. `--input` is now an opaque hairline border (--color-field-border) for
+   field legibility; field fills (--color-field-bg, set in main.css) are opaque
+   too, so inputs stay readable on frosted panels in every mode. */
 :root[data-tauri="true"] {
   --popover: color-mix(in srgb, var(--color-panel-bg) var(--glass-menu-pct), transparent);
   --card: color-mix(in srgb, var(--color-panel-bg) var(--glass-content-pct), transparent);

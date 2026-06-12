@@ -226,7 +226,7 @@ export function setAutoUpdateCheck(enabled) {
   return !!enabled;
 }
 
-export async function checkForUpdates(source = 'manual') {
+export async function checkForUpdates(source = 'manual', { notifyOnly = false } = {}) {
   if (!isTauri) {
     return {
       checking: false,
@@ -277,8 +277,17 @@ export async function checkForUpdates(source = 'manual') {
       source,
       version: update.version,
       currentVersion,
+      notifyOnly,
       message: `Version ${update.version} is available.`,
     });
+
+    // Background poll (notify-only): surface the toast and stop here — no
+    // download dialog. The user acts via the toast's "Update" action (which runs
+    // the manual flow) or Settings → Check for Updates.
+    if (notifyOnly) {
+      isCheckingForUpdates = false;
+      return { checking: true, available: true, version: update.version };
+    }
 
     const wantsDownload = await dialog.ask(
       `A new version (${update.version}) is available. Would you like to download it now?`,

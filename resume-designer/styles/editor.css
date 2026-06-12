@@ -217,7 +217,7 @@
 /* AI Chat Button and Menu on Hover */
 .editable-ai-container {
   position: fixed; /* Fixed positioning to avoid modifying editable element DOM */
-  z-index: 9999; /* High z-index to stay above highlighted elements */
+  z-index: 240; /* above resume content, below the app chrome (header z-300, panels, overlays) so it can't paint over them */
   padding: 4px; /* Extra padding for easier hover */
   pointer-events: none; /* Hidden by default */
   opacity: 0;
@@ -273,7 +273,7 @@
   transform: translateY(-4px);
   transition: opacity 0.15s ease, transform 0.15s ease;
   pointer-events: none;
-  z-index: 100000; /* Very high to ensure it's above everything */
+  z-index: 245; /* just above the button; still below the app chrome */
   user-select: none; /* Prevent text selection within menu */
 }
 

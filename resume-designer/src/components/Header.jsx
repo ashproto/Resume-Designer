@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Plus, Copy, Pencil, Trash2, MoreHorizontal, Wrench, Upload, Download,
+  Plus, Copy, Pencil, Trash2, MoreHorizontal, Upload, Download,
   ChevronDown, Settings, FileDown, User, Briefcase, History, Menu, Check, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -139,23 +139,25 @@ export default function Header() {
   // the mobile hamburger. Delete is flagged `danger` and runs handleDelete, which
   // owns the confirm AlertDialog + the last-variant guard.
   const variantActions = [
-    { key: 'new', label: 'New Resume', Icon: Plus, run: newVariant },
     { key: 'duplicate', label: 'Duplicate', Icon: Copy, run: duplicateVariant },
     { key: 'rename', label: 'Rename', Icon: Pencil, run: openRename },
     { key: 'delete', label: 'Delete', Icon: Trash2, run: handleDelete, danger: true },
   ];
+  // `short` is the visible header-button label (collapses to icon-only when
+  // narrow); `label` is the full name used for the tooltip + the mobile menu.
   const toolItems = [
-    { key: 'profile', label: 'User Profile', Icon: User, run: () => window.openUserProfilePanel?.() },
-    { key: 'jobs', label: 'Job Descriptions', Icon: Briefcase, run: () => window.openJobDescriptionPanel?.() },
-    { key: 'history', label: 'Version History', Icon: History, run: () => window.openHistoryPanel?.() },
+    { key: 'profile', label: 'User Profile', short: 'Profile', Icon: User, run: () => window.openUserProfilePanel?.() },
+    { key: 'jobs', label: 'Job Descriptions', short: 'Jobs', Icon: Briefcase, run: () => window.openJobDescriptionPanel?.() },
+    { key: 'history', label: 'Version History', short: 'History', Icon: History, run: () => window.openHistoryPanel?.() },
   ];
 
   return createPortal(
     <>
-      {/* LEFT ZONE — brand + variant selector + (wide) variant icon actions.
-          A single flex child so the skeleton bar's `justify-content:space-between`
-          pins it to the start. `min-w-0` lets the variant name ellipsize. */}
-      <div data-no-drag className="flex min-w-0 items-center gap-3.5">
+      {/* LEFT ZONE — brand only. `flex-1` (matched by the right zone's flex-1)
+          makes the CENTER zone sit at the header's center. Draggable (no
+          interactive children) so the window keeps drag area now that the variant
+          group occupies the middle. */}
+      <div className="flex min-w-0 flex-1 items-center">
         {/* Brand: terracotta rounded-square mark + Geist 600 wordmark.
             Geometry pinned to mockup: 24px mark, rounded-[7px], 14.5px wordmark. */}
         <div className="flex shrink-0 items-center gap-2.5">
@@ -166,8 +168,24 @@ export default function Header() {
             Resume Designer
           </span>
         </div>
+      </div>
 
-        <div className="flex min-w-0 items-center gap-1.5">
+      {/* CENTER ZONE — New + variant selector + actions kebab, centered between
+          the two flex-1 side zones. */}
+      <div data-no-drag className="flex min-w-0 items-center gap-1.5">
+          {/* New resume — promoted out of the actions menu to a header button,
+              left of the selector. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            title="New resume"
+            aria-label="New resume"
+            onClick={newVariant}
+          >
+            <Plus className="size-4" />
+          </Button>
+
           {/* Variant selector — outline combobox-style trigger → standard menu. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -195,84 +213,61 @@ export default function Header() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Expanded variant actions — ghost icon buttons, only >1400px. */}
-          <div className="hidden items-center gap-0.5 min-[1401px]:flex">
-            {variantActions.map(({ key, label, Icon, run, danger }) => (
-              <Button
-                key={key}
-                variant="ghost"
-                size="icon"
-                className={cn('size-8', danger && 'hover:text-destructive')}
-                title={label}
-                aria-label={label}
-                onClick={run}
-              >
-                <Icon className="size-4" />
-              </Button>
-            ))}
-          </div>
-
-          {/* Collapsed variant actions — kebab menu, only 769px–1400px (at/below
-              768px the hamburger takes over; above 1400px the expanded icons do). */}
-          <div className="hidden min-[769px]:max-[1400px]:flex">
+          {/* Resume/file actions — one "Actions" dropdown next to the selector:
+              variant CRUD + import/export. Hidden ≤768px, where the hamburger
+              takes over. */}
+          <div className="hidden min-[769px]:flex">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="size-8" title="Resume actions" aria-label="Resume actions">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  title="Resume actions"
+                  aria-label="Resume actions"
+                >
                   <MoreHorizontal className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
+              <DropdownMenuContent align="start" className="min-w-48">
                 <VariantMenuItems actions={variantActions} />
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={pickImport}>
+                  <Upload className="size-4" /> Import…
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => exportCurrentVariant('json')}>
+                  <Download className="size-4" /> Export as JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => exportCurrentVariant('md')}>
+                  <Download className="size-4" /> Export as Markdown
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </div>
       </div>
 
-      {/* RIGHT ZONE — tools / import / export / settings / PDF + mobile menu.
-          The second flex child, pinned to the end by `space-between`. */}
-      <div data-no-drag className="flex shrink-0 items-center gap-1.5 max-[900px]:gap-1">
+      {/* RIGHT ZONE — tools / settings / PDF + mobile menu. `flex-1` + justify-end
+          (matched by the left zone's flex-1) right-aligns these and centers the
+          middle zone. */}
+      <div data-no-drag className="flex flex-1 items-center justify-end gap-1.5 max-[900px]:gap-1">
         {/* Desktop actions — hidden ≤768px; tighter gaps ≤900px. */}
         <div className="flex items-center gap-1.5 max-[900px]:gap-0.5 max-[768px]:hidden">
-          {/* Tools */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-[34px] text-[13.5px]" title="Tools" aria-label="Tools">
-                <Wrench className="size-4" />
-                <span className="max-[1200px]:hidden">Tools</span>
-                <ChevronDown className="size-3 text-muted-foreground max-[1200px]:hidden" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {toolItems.map(({ key, label, Icon, run }) => (
-                <DropdownMenuItem key={key} onSelect={run}>
-                  <Icon className="size-4" />
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Import */}
-          <Button variant="ghost" size="sm" className="h-[34px] text-[13.5px]" title="Import resume" aria-label="Import resume" onClick={pickImport}>
-            <Upload className="size-4" />
-            <span className="max-[1050px]:hidden">Import</span>
-          </Button>
-
-          {/* Export */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-[34px] text-[13.5px]" title="Export resume" aria-label="Export resume">
-                <Download className="size-4" />
-                <span className="max-[1050px]:hidden">Export</span>
-                <ChevronDown className="size-3 text-muted-foreground max-[1050px]:hidden" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => exportCurrentVariant('json')}>Export as JSON</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => exportCurrentVariant('md')}>Export as Markdown</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Tools, promoted to regular header buttons (icon + short label;
+              labels collapse to icon-only ≤1100px, full name kept as tooltip). */}
+          {toolItems.map(({ key, label, short, Icon, run }) => (
+            <Button
+              key={key}
+              variant="ghost"
+              size="sm"
+              className="h-[34px] text-[13.5px]"
+              title={label}
+              aria-label={label}
+              onClick={run}
+            >
+              <Icon className="size-4" />
+              <span className="max-[1100px]:hidden">{short}</span>
+            </Button>
+          ))}
         </div>
 
         {/* Settings gear — always visible at every breakpoint (like PDF). */}

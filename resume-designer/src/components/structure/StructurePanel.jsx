@@ -46,11 +46,11 @@ const TAB_OPTIONS = {
 };
 
 const SECTION_TEMPLATES = {
-  skills: { title: 'Skills', type: 'skills', content: ['Skill 1', 'Skill 2', 'Skill 3'] },
+  skills: { title: 'Skills', type: 'list', content: ['Skill 1', 'Skill 2', 'Skill 3'] },
   highlights: { title: 'Highlights', type: 'list', content: ['- Key achievement 1', '- Key achievement 2'] },
-  languages: { title: 'Languages', type: 'skills', content: ['English (Native)', 'Spanish (Conversational)'] },
+  languages: { title: 'Languages', type: 'list', content: ['English (Native)', 'Spanish (Conversational)'] },
   certifications: { title: 'Certifications', type: 'list', content: ['Certification Name — Year'] },
-  interests: { title: 'Interests', type: 'skills', content: ['Interest 1', 'Interest 2'] },
+  interests: { title: 'Interests', type: 'list', content: ['Interest 1', 'Interest 2'] },
 };
 
 // --- tools are stored as a ' • '-joined string, not an array ---
@@ -176,7 +176,7 @@ function SectionItem({ section, index }) {
             <SegmentedItem
               key={t} size="xs"
               active={type === t}
-              onClick={() => writeField(`sections[${index}].type`, t)}
+              onClick={() => store.update(`sections[${index}].type`, t)}
             >
               {label}
             </SegmentedItem>
@@ -374,6 +374,7 @@ export default function StructurePanel() {
   const experience = data.experience || [];
   const education = data.education || [];
   const tools = normalizeTools(data.tools);
+  const toolsDisplay = data.toolsDisplay === 'skills' ? 'skills' : 'list';
 
   return createPortal(
     <>
@@ -444,6 +445,22 @@ export default function StructurePanel() {
             </PanelSection>
 
             <PanelSection title="Tools" {...sectionProps('tools')}>
+              {tools.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Display</span>
+                  <Segmented size="xs">
+                    {[['list', 'Bulleted'], ['skills', 'Inline Tags']].map(([t, label]) => (
+                      <SegmentedItem
+                        key={t} size="xs"
+                        active={toolsDisplay === t}
+                        onClick={() => store.update('toolsDisplay', t)}
+                      >
+                        {label}
+                      </SegmentedItem>
+                    ))}
+                  </Segmented>
+                </div>
+              )}
               <SortableList className="space-y-1.5" ids={tools.map((_, i) => `tool-${i}`)}
                 onReorder={(from, to) => {
                   const items = normalizeTools(store.get('tools'));

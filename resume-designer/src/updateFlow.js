@@ -15,12 +15,18 @@
  */
 
 import { toast } from 'sonner';
-import { isElectron, checkForUpdates, onUpdateStatus } from './native.js';
+import { isElectron, checkForUpdates, onUpdateStatus, getAutoUpdateCheck } from './native.js';
 
 const UPDATE_TOAST_ID = 'rd-update-status';
 
 let initialized = false;
 let manualUpdateCheckActive = false;
+
+// Background update polling: re-check every 30 min while the app is open and
+// surface one toast per new version (deduped). Notify-only — no download dialog.
+const POLL_INTERVAL_MS = 30 * 60 * 1000;
+let pollTimer = null;
+let lastBackgroundAvailableVersion = null;
 
 // --- busy state (drives the Settings "Check for Updates" button) -------------
 let busy = false;
@@ -48,9 +54,13 @@ function setBusy(value) {
  * 4.5s — matching the old behavior. Reusing one id means a "Checking…" toast
  * becomes the "Up to date" toast in place rather than stacking.
  */
-function showUpdateToast(message, tone = 'info', persistent = false) {
+function showUpdateToast(message, tone = 'info', persistent = false, action = null) {
   if (!isElectron || !message) return;
-  const opts = { id: UPDATE_TOAST_ID, duration: persistent ? Infinity : 4500 };
+  const opts = {
+    id: UPDATE_TOAST_ID,
+    duration: persistent ? Infinity : 4500,
+    ...(action ? { action } : {}),
+  };
   switch (tone) {
     case 'success':
       toast.success(message, opts);
@@ -74,6 +84,18 @@ export function initUpdateFlow() {
   if (!isElectron || initialized) return;
   initialized = true;
   onUpdateStatus((payload = {}) => handleUpdateStatus(payload));
+  startBackgroundPolling();
+}
+
+// Poll for updates every 30 minutes while the app is open. Notify-only (the
+// "available" handler shows one actionable toast per version); respects the
+// Settings auto-update toggle live, and never runs in dev.
+function startBackgroundPolling() {
+  if (pollTimer || import.meta.env.DEV) return;
+  pollTimer = setInterval(() => {
+    if (!getAutoUpdateCheck()) return;
+    checkForUpdates('background', { notifyOnly: true }).catch(() => {});
+  }, POLL_INTERVAL_MS);
 }
 
 /**
@@ -131,14 +153,31 @@ function handleUpdateStatus(payload) {
       setBusy(false);
       break;
 
-    case 'available':
-      showUpdateToast(
-        payload.message || `Update${version} is available. Choose Download in the dialog to continue.`,
-        'info'
-      );
+    case 'available': {
+      if (payload.notifyOnly === true) {
+        // Background poll: one actionable toast per new version, no nagging.
+        if (payload.version && payload.version === lastBackgroundAvailableVersion) {
+          manualUpdateCheckActive = false;
+          setBusy(false);
+          break;
+        }
+        lastBackgroundAvailableVersion = payload.version || null;
+        showUpdateToast(
+          payload.message || `Update${version} is available.`,
+          'info',
+          true,
+          { label: 'Update', onClick: () => triggerManualUpdateCheck() }
+        );
+      } else {
+        showUpdateToast(
+          payload.message || `Update${version} is available. Choose Download in the dialog to continue.`,
+          'info'
+        );
+      }
       manualUpdateCheckActive = false;
       setBusy(false);
       break;
+    }
 
     case 'download-started':
       setBusy(true);
