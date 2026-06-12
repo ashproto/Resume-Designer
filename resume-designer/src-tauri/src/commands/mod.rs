@@ -27,6 +27,10 @@ mod pdf_windows;
 // command function, so a plain `pub use` re-export wouldn't be enough.
 pub mod migration;
 
+// Per-key disk storage backing the renderer's persistence (replaces
+// webview localStorage). Not platform-gated: every build needs it.
+pub mod storage;
+
 // Desktop-only: runtime update-channel selection (stable/beta) for the updater.
 // `tauri-plugin-updater` is itself a cfg(desktop) dependency.
 #[cfg(desktop)]
