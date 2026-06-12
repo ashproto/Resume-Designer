@@ -3,6 +3,8 @@
  * Handles granular spacing and sizing controls for the resume
  */
 
+import { appStorage } from './appStorage.js';
+
 // Default spacing settings
 const DEFAULT_SPACING = {
   pageMargins: {
@@ -20,7 +22,7 @@ const DEFAULT_SPACING = {
 
 // Get current spacing settings
 export function getSpacingSettings() {
-  const stored = localStorage.getItem('resume-spacing-settings');
+  const stored = appStorage.getItem('resume-spacing-settings');
   if (stored) {
     try {
       return { ...DEFAULT_SPACING, ...JSON.parse(stored) };
@@ -33,7 +35,7 @@ export function getSpacingSettings() {
 
 // Save spacing settings
 export function saveSpacingSettings(settings) {
-  localStorage.setItem('resume-spacing-settings', JSON.stringify(settings));
+  appStorage.setItem('resume-spacing-settings', JSON.stringify(settings));
 }
 
 /**
@@ -86,7 +88,7 @@ export function applySpacingSettings(settings) {
  * Reset spacing to defaults
  */
 export function resetSpacingSettings() {
-  localStorage.removeItem('resume-spacing-settings');
+  appStorage.removeItem('resume-spacing-settings');
   applySpacingSettings(DEFAULT_SPACING);
   return DEFAULT_SPACING;
 }

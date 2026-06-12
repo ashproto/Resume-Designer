@@ -4,6 +4,8 @@
  * Supports: Preset font pairings, Google Fonts, and System fonts
  */
 
+import { appStorage } from './appStorage.js';
+
 // Preset font pairings - curated combinations that work well together
 export const FONT_PAIRINGS = {
   'classic-elegant': {
@@ -363,7 +365,7 @@ export function isFontAvailable(fontFamily) {
  * @returns {Object}
  */
 export function getCurrentFontSettings() {
-  const stored = localStorage.getItem('resume-font-settings');
+  const stored = appStorage.getItem('resume-font-settings');
   if (stored) {
     try {
       return JSON.parse(stored);
@@ -384,7 +386,7 @@ export function getCurrentFontSettings() {
  * @param {Object} settings
  */
 export function saveFontSettings(settings) {
-  localStorage.setItem('resume-font-settings', JSON.stringify(settings));
+  appStorage.setItem('resume-font-settings', JSON.stringify(settings));
 }
 
 /**

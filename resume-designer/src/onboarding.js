@@ -13,11 +13,12 @@
  *   - components/SettingsDialog → window.showOnboardingWizard()  ("Replay welcome")
  *
  * shouldShowOnboarding / completeOnboarding / resetOnboarding stay here as pure
- * flag logic (no DOM) — they read variants + a localStorage key and are imported
+ * flag logic (no DOM) — they read variants + an appStorage key and are imported
  * directly by the boot code and the wizard component. The wizard's AI/parse/save
  * logic lives in src/onboardingLogic.js.
  */
 import { getVariants } from './persistence.js';
+import { appStorage } from './appStorage.js';
 
 const ONBOARDING_KEY = 'resume-designer-onboarding-complete';
 
@@ -33,7 +34,7 @@ export function shouldShowOnboarding() {
   if (variantList.length === 0) return true;
 
   // Honor the "completed" flag.
-  if (localStorage.getItem(ONBOARDING_KEY) === 'true') return false;
+  if (appStorage.getItem(ONBOARDING_KEY) === 'true') return false;
 
   // Show if only built-in variants exist (no user-created ones).
   return variantList.every((v) => v.builtIn);
@@ -41,12 +42,12 @@ export function shouldShowOnboarding() {
 
 /** Mark onboarding as complete. */
 export function completeOnboarding() {
-  localStorage.setItem(ONBOARDING_KEY, 'true');
+  appStorage.setItem(ONBOARDING_KEY, 'true');
 }
 
 /** Reset onboarding (for testing). */
 export function resetOnboarding() {
-  localStorage.removeItem(ONBOARDING_KEY);
+  appStorage.removeItem(ONBOARDING_KEY);
 }
 
 /**

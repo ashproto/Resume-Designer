@@ -8,6 +8,7 @@ import { store } from './store.js';
 import { getActiveJobDescriptions } from './jobDescriptions.js';
 import { trackUsage } from './tokenTrackingService.js';
 import { createStreamAccumulator } from './aiStream.js';
+import { appStorage } from './appStorage.js';
 
 // OpenRouter — a single OpenAI-compatible endpoint fronting every provider.
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
@@ -273,7 +274,7 @@ export function getAvailableModelIds() {
 }
 
 // ---- Live model catalog (OpenRouter GET /models) ----------------------------
-// Public endpoint (no auth). Cached in-memory + localStorage (reduced fields
+// Public endpoint (no auth). Cached in-memory + appStorage (reduced fields
 // only, for quota) with a 24h TTL. Powers per-model reasoning detection and
 // custom-slug awareness. NEVER throws: the picker must keep working offline from
 // the built-in shortlist + the user's cached custom slugs.
@@ -286,7 +287,7 @@ let catalogInflight = null;
 function readCatalogCache() {
   if (catalogMemo) return catalogMemo;
   try {
-    const parsed = JSON.parse(localStorage.getItem(CATALOG_STORAGE_KEY) || 'null');
+    const parsed = JSON.parse(appStorage.getItem(CATALOG_STORAGE_KEY) || 'null');
     if (parsed && parsed.models && typeof parsed.fetchedAt === 'number') {
       catalogMemo = parsed;
       return parsed;
@@ -317,7 +318,7 @@ export async function fetchModelCatalog(force = false) {
       }
       const fresh = { fetchedAt: Date.now(), models };
       catalogMemo = fresh;
-      try { localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(fresh)); } catch (_) { /* quota */ }
+      try { appStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(fresh)); } catch (_) { /* quota */ }
       return fresh;
     } catch (e) {
       console.warn('[aiService] model catalog fetch failed:', (e && e.message) || e);

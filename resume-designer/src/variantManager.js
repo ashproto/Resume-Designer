@@ -89,7 +89,13 @@ export function initVariants(onVariantChange) {
   currentVariantId = getCurrentVariantId();
 
   if (currentVariantId) {
-    loadVariant(currentVariantId);
+    if (!loadVariant(currentVariantId)) {
+      // Dangling pointer: the persisted current id references a variant that
+      // no longer exists, so loadVariant bailed before its notify(). Publish
+      // the real list anyway so the header recovers instead of keeping the
+      // stale pre-init (empty) snapshot.
+      notify();
+    }
   } else {
     // No persisted selection yet; still publish an initial snapshot so any
     // already-mounted subscriber renders the (possibly empty) list.

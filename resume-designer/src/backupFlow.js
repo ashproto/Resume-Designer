@@ -148,7 +148,7 @@ function showImportSuccessAndReload(message) {
 }
 
 /**
- * Export every owned localStorage key into a single JSON file. No success
+ * Export every owned storage key into a single JSON file. No success
  * alert — the browser download bar / native save dialog is feedback enough.
  */
 export function exportFullBackupWithFeedback() {
@@ -162,7 +162,7 @@ export function exportFullBackupWithFeedback() {
 }
 
 /**
- * Restore every owned localStorage key from a JSON envelope produced by Export
+ * Restore every owned storage key from a JSON envelope produced by Export
  * Full Backup or the legacy Electron migration. Parses FIRST (so the
  * destructive confirm can show the key count), flushes pending debounced
  * writers, then runs the writes SYNCHRONOUSLY before reload.

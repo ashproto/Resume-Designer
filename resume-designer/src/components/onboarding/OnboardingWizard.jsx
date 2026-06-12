@@ -256,7 +256,7 @@ export default function OnboardingWizard() {
 
   const saveResume = useCallback(() => {
     // saveOnboardingResume throws when the variant can't be persisted (full
-    // localStorage). Surface that and stay on the review step — advancing to
+    // storage). Surface that and stay on the review step — advancing to
     // the success screen would claim a resume that doesn't exist.
     try {
       saveOnboardingResume({ parsedResume, mode, targetJob, jobDescriptions });

@@ -3,6 +3,8 @@
  * Handles light/dark mode switching with system preference support
  */
 
+import { appStorage } from './appStorage.js';
+
 const STORAGE_KEY = 'resume-designer-theme';
 const THEMES = ['light', 'dark', 'system'];
 
@@ -13,7 +15,7 @@ let currentTheme = 'system';
  */
 export function initTheme() {
   // Load saved preference
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = appStorage.getItem(STORAGE_KEY);
   if (saved && THEMES.includes(saved)) {
     currentTheme = saved;
   }
@@ -57,7 +59,7 @@ export function setTheme(theme) {
   if (!THEMES.includes(theme)) return;
   
   currentTheme = theme;
-  localStorage.setItem(STORAGE_KEY, theme);
+  appStorage.setItem(STORAGE_KEY, theme);
   applyTheme(theme);
   updateThemeUI();
 }

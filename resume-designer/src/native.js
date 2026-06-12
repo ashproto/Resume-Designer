@@ -7,6 +7,13 @@
  * of the renderer keeps working unchanged.
  */
 
+// Deliberate exception to this module's no-static-app-imports style: the
+// update-channel / auto-update-check getters below are synchronous, so the
+// lazy dynamic-import pattern used for the Tauri plugins can't apply.
+// appStorage is tiny and has zero static app imports, so this cannot form a
+// cycle (appStorage itself dodges importing native.js for the same reason).
+import { appStorage } from './appStorage.js';
+
 // Detect Tauri without statically importing tauri APIs at the web entry
 // (so `npm run dev` outside Tauri doesn't blow up at import time).
 // Per Tauri 2.5 release notes (v2.tauri.app/release/@tauri-apps/api/v2.5.0),
@@ -157,14 +164,14 @@ export function onUpdateProgress(callback) {
   if (typeof callback === 'function') updateProgressListeners.push(callback);
 }
 
-// Update channel: 'stable' (default) or 'beta'. Persisted in localStorage so
+// Update channel: 'stable' (default) or 'beta'. Persisted via appStorage so
 // the choice survives restarts; it's an owned key (see persistence.js) so it
 // rides along in backup/restore. The actual endpoint switch happens in the
 // Rust `check_update_on_channel` command — the JS just supplies the channel.
 const UPDATE_CHANNEL_KEY = 'resume-designer-update-channel';
 export function getUpdateChannel() {
   try {
-    return localStorage.getItem(UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable';
+    return appStorage.getItem(UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable';
   } catch {
     return 'stable';
   }
@@ -172,7 +179,7 @@ export function getUpdateChannel() {
 export function setUpdateChannel(channel) {
   const normalized = channel === 'beta' ? 'beta' : 'stable';
   try {
-    localStorage.setItem(UPDATE_CHANNEL_KEY, normalized);
+    appStorage.setItem(UPDATE_CHANNEL_KEY, normalized);
   } catch {
     /* ignore storage errors — falls back to the default on next read */
   }
@@ -188,7 +195,7 @@ export function setUpdateChannel(channel) {
  */
 async function seedUpdateChannelFromBuild() {
   try {
-    if (localStorage.getItem(UPDATE_CHANNEL_KEY) !== null) return;
+    if (appStorage.getItem(UPDATE_CHANNEL_KEY) !== null) return;
     const { version } = await getAppInfo();
     if (typeof version === 'string' && version.includes('-')) {
       setUpdateChannel('beta');
@@ -205,14 +212,14 @@ async function seedUpdateChannelFromBuild() {
 const AUTO_UPDATE_CHECK_KEY = 'resume-designer-auto-update-check';
 export function getAutoUpdateCheck() {
   try {
-    return localStorage.getItem(AUTO_UPDATE_CHECK_KEY) !== 'false';
+    return appStorage.getItem(AUTO_UPDATE_CHECK_KEY) !== 'false';
   } catch {
     return true;
   }
 }
 export function setAutoUpdateCheck(enabled) {
   try {
-    localStorage.setItem(AUTO_UPDATE_CHECK_KEY, enabled ? 'true' : 'false');
+    appStorage.setItem(AUTO_UPDATE_CHECK_KEY, enabled ? 'true' : 'false');
   } catch {
     /* ignore storage errors — falls back to the default on next read */
   }

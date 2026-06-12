@@ -42,6 +42,18 @@ let drainScheduled = false;
 let chain = Promise.resolve();
 let failureToastShown = false;
 
+// Readiness signal for the React chrome. App.jsx gates every storage-reading
+// child on this so their mount-time facade reads can never execute before
+// initAppStorage() has picked a mode — on a post-adoption Tauri boot a pre-init
+// read hits an EMPTY passthrough localStorage and looks like total data loss.
+// Resolved exactly once, in initAppStorage()'s finally, so EVERY exit path
+// (browser early-return, cached success, loadAll-failure fallback, adoption
+// success/abort) flips it. Deliberately NOT reset by __resetAppStorageForTests:
+// re-resolving a settled promise is a no-op, and tests never await this.
+let resolveStorageReady;
+const storageReadyPromise = new Promise((resolve) => { resolveStorageReady = resolve; });
+export function whenStorageReady() { return storageReadyPromise; }
+
 function tauriBackend() {
   return {
     async loadAll() {
@@ -196,8 +208,19 @@ export const appStorage = {
  * Pick the backend and load the boot snapshot. Browser → stays passthrough.
  * Tauri (or an injected test backend) → cached mode + one-time adoption of
  * localStorage `resume-*` keys when the disk store is empty.
+ *
+ * Always resolves the whenStorageReady() signal on return — the finally covers
+ * every exit path of the inner impl, so the React gate can never deadlock.
  */
-export async function initAppStorage({ backend = null, readOnly: ro = false } = {}) {
+export async function initAppStorage(opts = {}) {
+  try {
+    await doInitAppStorage(opts);
+  } finally {
+    resolveStorageReady();
+  }
+}
+
+async function doInitAppStorage({ backend = null, readOnly: ro = false } = {}) {
   if (!backend && !IS_TAURI) return; // browser/jsdom: passthrough forever
 
   backendImpl = backend || tauriBackend();

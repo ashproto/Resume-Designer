@@ -13,6 +13,7 @@ import ProfileDialog from './components/profile/ProfileDialog.jsx';
 import JobsDialog from './components/jobs/JobsDialog.jsx';
 import OnboardingWizard from './components/onboarding/OnboardingWizard.jsx';
 import { init } from './main.js';
+import { whenStorageReady } from './appStorage.js';
 
 // Single-root migration shell.
 //
@@ -40,8 +41,19 @@ export default function App() {
   // skeleton, so it can't mount until that injection has run. Gate it on
   // `ready`, flipped true the moment the skeleton is in the DOM.
   const [ready, setReady] = useState(false);
+  // Storage gate: every child that reads appStorage at mount waits for
+  // initAppStorage() (init()'s FIRST await) to finish. Without this, child
+  // mount effects run before init()'s first await and their facade reads hit
+  // the pre-init passthrough — on a post-adoption Tauri boot that's an EMPTY
+  // localStorage, which read as "no data" and could even persist that
+  // emptiness back over the real disk store.
+  const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
+    // Subscribe BEFORE firing init() and OUTSIDE the didBoot guard: the
+    // promise is module-level and resolve-once, so a late subscriber (e.g. a
+    // theoretical remount) still fires immediately.
+    whenStorageReady().then(() => setStorageReady(true));
     if (didBoot) return;
     didBoot = true;
     const host = shellRef.current;
@@ -60,19 +72,28 @@ export default function App() {
     init().catch((err) => console.error('[App] init failed:', err));
   }, []);
 
+  // Gating shape: the skeleton <div> is the entire static layout (panels,
+  // toggles, #resume host), so withholding the components below causes zero
+  // layout shift — Header/StructurePanel/ChatPanel PORTAL into skeleton hosts
+  // that keep their own size/position, and the dialogs render nothing while
+  // closed (Radix portals). Toaster/ConfirmHost stay unconditional: they read
+  // no storage, and the Toaster must exist for initAppStorage()'s own failure
+  // toasts. The 300ms first-run onboarding check is safe: storageReady
+  // resolves at init()'s FIRST await, several awaits before that timer is even
+  // scheduled, so OnboardingWizard is mounted long before it fires.
   return (
     <>
       <div ref={shellRef} style={{ display: 'contents' }} />
-      {ready && <Header />}
-      {ready && <StructurePanel />}
-      {ready && <ChatPanel />}
-      <SettingsDialog />
-      <HistoryDialog />
-      <ProfileDialog />
-      <JobsDialog />
-      <OnboardingWizard />
-      <DiffDialog />
-      <PdfDialog />
+      {ready && storageReady && <Header />}
+      {ready && storageReady && <StructurePanel />}
+      {ready && storageReady && <ChatPanel />}
+      {storageReady && <SettingsDialog />}
+      {storageReady && <HistoryDialog />}
+      {storageReady && <ProfileDialog />}
+      {storageReady && <JobsDialog />}
+      {storageReady && <OnboardingWizard />}
+      {storageReady && <DiffDialog />}
+      {storageReady && <PdfDialog />}
       <Toaster />
       <ConfirmHost />
     </>

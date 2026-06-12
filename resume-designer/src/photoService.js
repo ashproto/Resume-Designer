@@ -3,6 +3,8 @@
  * Handles profile photo upload, placement, and styling
  */
 
+import { appStorage } from './appStorage.js';
+
 // Photo placement options
 export const PHOTO_PLACEMENTS = {
   'header': { name: 'Header', description: 'In the header area' },
@@ -41,7 +43,7 @@ const DEFAULT_PHOTO = {
 
 // Get current photo settings
 export function getPhotoSettings() {
-  const stored = localStorage.getItem('resume-photo-settings');
+  const stored = appStorage.getItem('resume-photo-settings');
   if (stored) {
     try {
       return { ...DEFAULT_PHOTO, ...JSON.parse(stored) };
@@ -54,7 +56,7 @@ export function getPhotoSettings() {
 
 // Save photo settings
 export function savePhotoSettings(settings) {
-  localStorage.setItem('resume-photo-settings', JSON.stringify(settings));
+  appStorage.setItem('resume-photo-settings', JSON.stringify(settings));
 }
 
 /**

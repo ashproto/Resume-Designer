@@ -3,6 +3,8 @@
  * Handles customization of decorative elements like underlines, bullets, and borders
  */
 
+import { appStorage } from './appStorage.js';
+
 // Underline style options
 export const UNDERLINE_STYLES = {
   'solid': { name: 'Solid', css: 'solid' },
@@ -52,7 +54,7 @@ const DEFAULT_ACCENT = {
 
 // Get current accent settings
 export function getAccentSettings() {
-  const stored = localStorage.getItem('resume-accent-settings');
+  const stored = appStorage.getItem('resume-accent-settings');
   if (stored) {
     try {
       return { ...DEFAULT_ACCENT, ...JSON.parse(stored) };
@@ -65,7 +67,7 @@ export function getAccentSettings() {
 
 // Save accent settings
 export function saveAccentSettings(settings) {
-  localStorage.setItem('resume-accent-settings', JSON.stringify(settings));
+  appStorage.setItem('resume-accent-settings', JSON.stringify(settings));
 }
 
 /**
@@ -115,7 +117,7 @@ export function applyAccentSettings(settings) {
  * Reset accent settings to defaults
  */
 export function resetAccentSettings() {
-  localStorage.removeItem('resume-accent-settings');
+  appStorage.removeItem('resume-accent-settings');
   applyAccentSettings(DEFAULT_ACCENT);
   return DEFAULT_ACCENT;
 }

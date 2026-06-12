@@ -1,9 +1,10 @@
 /**
  * Job Descriptions Module
- * CRUD operations for job descriptions with localStorage persistence
+ * CRUD operations for job descriptions with appStorage persistence
  */
 
 import { randomSuffix } from './store.js';
+import { appStorage } from './appStorage.js';
 
 const STORAGE_KEY = 'resume-designer-job-descriptions';
 
@@ -11,11 +12,11 @@ const STORAGE_KEY = 'resume-designer-job-descriptions';
 let jobDescriptions = [];
 
 /**
- * Initialize job descriptions from localStorage
+ * Initialize job descriptions from storage
  */
 export function initJobDescriptions() {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = appStorage.getItem(STORAGE_KEY);
     if (stored) {
       jobDescriptions = JSON.parse(stored);
     }
@@ -27,11 +28,11 @@ export function initJobDescriptions() {
 }
 
 /**
- * Save job descriptions to localStorage
+ * Save job descriptions to storage
  */
 function save() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(jobDescriptions));
+    appStorage.setItem(STORAGE_KEY, JSON.stringify(jobDescriptions));
   } catch (e) {
     console.error('Failed to save job descriptions:', e);
   }
