@@ -130,6 +130,27 @@ describe('cached mode (disk backend)', () => {
     errSpy.mockRestore();
   });
 
+  it('retries a recovered key on the next flush — no false durable while a prior write is unpersisted', async () => {
+    const backend = makeBackend();
+    backend.write.mockRejectedValue(new Error('disk full')); // both attempts fail
+    await initAppStorage({ backend });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    appStorage.setItem('resume-designer-data', '{"v":1}');
+    // Disk full → not durable, and the value never reached disk.
+    await expect(appStorage.flush()).resolves.toBe(false);
+    expect(backend.files.has('resume-designer-data')).toBe(false);
+
+    // Disk frees up (restore the real file-writing impl, not mockResolvedValue
+    // which would resolve without persisting). With NO new edit, the next flush
+    // must retry the still-dirty failed key and only report durable once it
+    // actually lands — otherwise the print/reload/relaunch paths would proceed
+    // on a `true` that never hit disk.
+    backend.write.mockImplementation(async (key, value) => { backend.files.set(key, value); });
+    await expect(appStorage.flush()).resolves.toBe(true);
+    expect(backend.files.get('resume-designer-data')).toBe('{"v":1}');
+    errSpy.mockRestore();
+  });
+
   it('readOnly mode never writes to the backend', async () => {
     const backend = makeBackend({ 'resume-designer-data': '{}' });
     await initAppStorage({ backend, readOnly: true });

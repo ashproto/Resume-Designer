@@ -344,26 +344,49 @@ export async function checkForUpdates(source = 'manual') {
       { title: 'Update Ready', okLabel: 'Restart Now', cancelLabel: 'Later' }
     );
     if (wantsRestart) {
-      emitStatus({
-        status: 'installing',
-        source,
-        version: update.version,
-        message: 'Restarting to install update...',
-      });
-      // Relaunch is an in-app process exit like window close: drain any
-      // debounced edit and the storage write-behind queue first so the
-      // updated app never boots on a stale last value. Dynamic imports keep
-      // this module static-import-free (both are already in the module cache).
+      // Relaunch is an in-app process exit, but unlike a plain quit the updated
+      // app immediately boots BACK from disk — so an edit still only in the
+      // write-behind cache would be lost to a stale on-disk value. Drain the
+      // debounced edit + the queue FIRST and gate the relaunch on durability,
+      // exactly as the PDF/backup-import paths do. Dynamic imports keep this
+      // module static-import-free (both are already in the module cache).
+      let durable = true;
       try {
         const [{ store }, { appStorage }] = await Promise.all([
           import('./store.js'),
           import('./appStorage.js'),
         ]);
         try { store.saveNow(); } catch { /* nothing pending */ }
-        await appStorage.flush();
+        durable = await appStorage.flush();
       } catch (e) {
         console.warn('[Update] pre-relaunch flush failed:', e);
+        durable = false;
       }
+      if (!durable) {
+        // The last change could not be written to disk (disk full /
+        // permissions). Relaunching now would boot the updated app from stale
+        // files and silently drop it. Hold the restart — the update is already
+        // downloaded and installs on the next launch anyway — and tell the user
+        // to free space first. (appStorage already fired the generic failure
+        // toast.)
+        emitStatus({
+          status: 'error',
+          source,
+          version: update.version,
+          message:
+            'Update downloaded, but your latest change could not be saved to disk, '
+            + 'so the restart was held off to avoid losing it. Free up disk space, '
+            + 'then restart the app to finish installing.',
+        });
+        isCheckingForUpdates = false;
+        return { checking: false, error: 'flush-not-durable' };
+      }
+      emitStatus({
+        status: 'installing',
+        source,
+        version: update.version,
+        message: 'Restarting to install update...',
+      });
       // Mirror Electron's 10s watchdog: if relaunch doesn't actually start,
       // surface guidance instead of hanging silently.
       const guard = setTimeout(() => {

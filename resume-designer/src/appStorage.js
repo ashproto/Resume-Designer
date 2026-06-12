@@ -142,9 +142,21 @@ function drain() {
           if (op === 'delete') await backendImpl.delete(key);
           else if (cache.has(key)) await backendImpl.write(key, cache.get(key));
         } catch (err2) {
-          // Keep the value in cache (session keeps working); a later set of
-          // the same key re-dirties and retries. Don't re-queue here — a
-          // permanently full disk would loop forever.
+          // The write failed twice. Keep the value in cache (the session keeps
+          // working) AND re-mark the key dirty so the NEXT drain/flush retries
+          // it. Without re-queueing, a failed write is dropped from `dirty`
+          // forever: once the disk frees up, a later flush() finds no dirty
+          // work and reports durable === true while the cache value never
+          // reached disk — so the print/reload/relaunch paths would proceed
+          // against stale files (the exact durability signal flush() exists to
+          // give). Guards: don't clobber a newer op already queued for this key
+          // (a later delete/write wins), and skip a stale write whose value has
+          // since left the cache. Deliberately DON'T scheduleDrain() here — a
+          // permanently full disk must not busy-loop; the retry rides the next
+          // user-triggered drain or the next flush() (which drains first).
+          if (!dirty.has(key) && (op === 'delete' || cache.has(key))) {
+            dirty.set(key, op);
+          }
           reportWriteFailure(key, err2);
         }
       }
