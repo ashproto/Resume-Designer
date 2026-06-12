@@ -343,6 +343,20 @@ export async function checkForUpdates(source = 'manual') {
         version: update.version,
         message: 'Restarting to install update...',
       });
+      // Relaunch is an in-app process exit like window close: drain any
+      // debounced edit and the storage write-behind queue first so the
+      // updated app never boots on a stale last value. Dynamic imports keep
+      // this module static-import-free (both are already in the module cache).
+      try {
+        const [{ store }, { appStorage }] = await Promise.all([
+          import('./store.js'),
+          import('./appStorage.js'),
+        ]);
+        try { store.saveNow(); } catch { /* nothing pending */ }
+        await appStorage.flush();
+      } catch (e) {
+        console.warn('[Update] pre-relaunch flush failed:', e);
+      }
       // Mirror Electron's 10s watchdog: if relaunch doesn't actually start,
       // surface guidance instead of hanging silently.
       const guard = setTimeout(() => {

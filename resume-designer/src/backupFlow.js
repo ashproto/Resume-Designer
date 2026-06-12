@@ -10,6 +10,7 @@
 
 import { exportFullBackup, importFullBackupFromEnvelope } from './persistence.js';
 import { store } from './store.js';
+import { appStorage } from './appStorage.js';
 import { flushPendingProfileSave } from './userProfilePanel.js';
 
 /**
@@ -126,9 +127,10 @@ function showImportSuccessAndReload(message) {
   requestAnimationFrame(() => overlay.classList.add('show'));
   setTimeout(() => okBtn.focus(), 50);
 
-  const proceed = () => {
+  const proceed = async () => {
     overlay.remove();
     document.removeEventListener('keydown', keyHandler);
+    await appStorage.flush(); // imported envelope keys must hit disk before reload
     reloadWithOverlay('Loading your imported data…');
   };
 

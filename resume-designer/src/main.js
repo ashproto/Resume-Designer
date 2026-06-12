@@ -4,7 +4,8 @@
  */
 
 import { store } from './store.js';
-import { 
+import { appStorage, initAppStorage } from './appStorage.js';
+import {
   renderResume, 
   renderResumeStacked,
   renderResumeStackedVertical,
@@ -20,7 +21,6 @@ import {
 import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
 import { initVariants } from './variantManager.js';
-import { initUpdateFlow } from './updateFlow.js';
 import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initDiffView } from './diffView.js';
 import { initInlineChanges } from './inlineChanges.js';
@@ -274,11 +274,17 @@ function showMigrationToast(probe, result = null) {
 
 // Initialize the application
 export async function init() {
+  // FIRST: bring up the storage facade. On Tauri this loads the per-key disk
+  // store into memory (and one-time adopts any legacy localStorage data); in
+  // the browser it stays a localStorage passthrough. EVERYTHING below —
+  // legacy migration, settings, theme, store — reads through it.
+  await initAppStorage();
+
   // Print-mode is now a separate framework-free entry (print.html /
   // src/printEntry.js calls initPrintMode() directly), so the main window
   // never short-circuits here.
 
-  // FIRST thing: see if there's legacy Electron
+  // Then: see if there's legacy Electron
   // data to pull in. Must happen before getSettings() / store
   // initialization below, since those read from the localStorage we're
   // about to populate.
@@ -316,6 +322,28 @@ export async function init() {
       true
     );
 
+    // Flush pending disk writes when the window is closing or backgrounded.
+    // The write-behind queue otherwise drains within ~1 tick, but "quit
+    // immediately after an edit" must never lose the last write.
+    try {
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      const win = getCurrentWebviewWindow();
+      await win.onCloseRequested(async () => {
+        try { store.saveNow(); } catch { /* nothing pending */ }
+        await appStorage.flush();
+      });
+    } catch (e) {
+      console.warn('[Storage] close-flush hook unavailable:', e);
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'hidden') return;
+      // Capture a mid-debounce edit too — backgrounding (Cmd+H, minimize) is
+      // often the last event before an OS-level quit, which bypasses
+      // onCloseRequested entirely.
+      try { store.saveNow(); } catch { /* nothing pending */ }
+      appStorage.flush();
+    });
+
     // Make the header bar act as the window's drag region (overlay titlebar).
     // Uses the manual startDragging() handler instead of data-tauri-drag-region,
     // which is unreliable in Tauri v2 (#9901). Fire-and-forget: it resolves the
@@ -351,8 +379,13 @@ export async function init() {
   // (src/components/Header.jsx) that subscribes to this module; main.js only
   // wires the variant-change callback (re-render + job-panel re-sync). Register
   // the updater->toast bridge here too, BEFORE startupUpdateCheck() below, so it
-  // catches startup status events.
+  // catches startup status events. The bridge is loaded lazily because
+  // updateFlow.js statically imports sonner (which pulls React) and main.js is
+  // shared with the React-free print entry (printEntry.js -> initPrintMode);
+  // a static import here would drag react/sonner into the print window's
+  // static chunk graph. init() only runs in the main window.
   initVariants(handleVariantChange);
+  const { initUpdateFlow } = await import('./updateFlow.js');
   initUpdateFlow();
 
   // Initialize inline editor
@@ -405,8 +438,11 @@ export async function init() {
   // In desktop builds, expose a function to reset onboarding for debugging.
   if (isTauri) {
     window.resetForTesting = () => {
-      localStorage.clear();
-      location.reload();
+      appStorage.clear();
+      appStorage.flush().finally(() => {
+        localStorage.clear();
+        location.reload();
+      });
     };
     console.log('[Main] Desktop build detected, resetForTesting() available');
   }
