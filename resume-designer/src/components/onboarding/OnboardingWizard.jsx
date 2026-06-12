@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 
-import { completeOnboarding } from '../../onboarding.js';
+import { completeOnboarding, shouldShowOnboarding } from '../../onboarding.js';
 import {
   INTERVIEW_QUESTIONS,
   validateOpenRouterKey,
@@ -65,6 +65,7 @@ export default function OnboardingWizard() {
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState(null); // 'new' | 'import' | 'job'
   const [isNewResumeMode, setIsNewResumeMode] = useState(false);
+  const [canDismiss, setCanDismiss] = useState(false);
 
   // Cross-step data.
   const [parsedResume, setParsedResume] = useState(null);
@@ -86,12 +87,18 @@ export default function OnboardingWizard() {
 
   const doOpen = useCallback((options = {}) => {
     // New-resume mode (the header "+") always skips the API-key step, even with no
-    // key configured. Step 0 has no cancel/skip affordance — the close X only shows
-    // in new-resume mode and ApiKeyStep won't advance without a key — so gating the
-    // skip on a configured key would strand a keyless existing user on the API-key
-    // screen with no way out or back to the start/import choices. First-run (no
-    // skipApiKeyStep) still shows step 0.
+    // key configured. Step 0 has no cancel/skip affordance and ApiKeyStep won't
+    // advance without a key, so gating the skip on a configured key would strand a
+    // keyless existing user on the API-key screen. First-run (no skipApiKeyStep)
+    // still shows step 0.
     const skipApiKeyStep = !!options.skipApiKeyStep;
+
+    // The close X shows whenever this is NOT a genuine first run: new-resume mode,
+    // or any reopen once the app already has user data (Settings → Replay welcome
+    // guide). Without it, a keyless user replaying the guide is trapped on the
+    // API-key step — no skip, no cancel, only a reload. Snapshot at open so the
+    // affordance doesn't pop in mid-wizard (completeOnboarding fires at the end).
+    setCanDismiss(skipApiKeyStep || !shouldShowOnboarding());
 
     setIsNewResumeMode(skipApiKeyStep);
     setStep(skipApiKeyStep ? 1 : 0);
@@ -395,7 +402,7 @@ export default function OnboardingWizard() {
               Step {displayStep} of {totalSteps}
             </span>
             <span className="flex-1" />
-            {isNewResumeMode && (
+            {canDismiss && (
               <Button
                 variant="ghost"
                 size="icon"
