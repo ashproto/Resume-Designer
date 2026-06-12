@@ -139,7 +139,6 @@ export default function Header() {
   // the mobile hamburger. Delete is flagged `danger` and runs handleDelete, which
   // owns the confirm AlertDialog + the last-variant guard.
   const variantActions = [
-    { key: 'new', label: 'New Resume', Icon: Plus, run: newVariant },
     { key: 'duplicate', label: 'Duplicate', Icon: Copy, run: duplicateVariant },
     { key: 'rename', label: 'Rename', Icon: Pencil, run: openRename },
     { key: 'delete', label: 'Delete', Icon: Trash2, run: handleDelete, danger: true },
@@ -154,10 +153,11 @@ export default function Header() {
 
   return createPortal(
     <>
-      {/* LEFT ZONE — brand + variant selector + (wide) variant icon actions.
-          A single flex child so the skeleton bar's `justify-content:space-between`
-          pins it to the start. `min-w-0` lets the variant name ellipsize. */}
-      <div data-no-drag className="flex min-w-0 items-center gap-3.5">
+      {/* LEFT ZONE — brand only. `flex-1` (matched by the right zone's flex-1)
+          makes the CENTER zone sit at the header's center. Draggable (no
+          interactive children) so the window keeps drag area now that the variant
+          group occupies the middle. */}
+      <div className="flex min-w-0 flex-1 items-center">
         {/* Brand: terracotta rounded-square mark + Geist 600 wordmark.
             Geometry pinned to mockup: 24px mark, rounded-[7px], 14.5px wordmark. */}
         <div className="flex shrink-0 items-center gap-2.5">
@@ -168,8 +168,24 @@ export default function Header() {
             Resume Designer
           </span>
         </div>
+      </div>
 
-        <div className="flex min-w-0 items-center gap-1.5">
+      {/* CENTER ZONE — New + variant selector + actions kebab, centered between
+          the two flex-1 side zones. */}
+      <div data-no-drag className="flex min-w-0 items-center gap-1.5">
+          {/* New resume — promoted out of the actions menu to a header button,
+              left of the selector. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            title="New resume"
+            aria-label="New resume"
+            onClick={newVariant}
+          >
+            <Plus className="size-4" />
+          </Button>
+
           {/* Variant selector — outline combobox-style trigger → standard menu. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -228,12 +244,12 @@ export default function Header() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </div>
       </div>
 
-      {/* RIGHT ZONE — tools / import / export / settings / PDF + mobile menu.
-          The second flex child, pinned to the end by `space-between`. */}
-      <div data-no-drag className="flex shrink-0 items-center gap-1.5 max-[900px]:gap-1">
+      {/* RIGHT ZONE — tools / settings / PDF + mobile menu. `flex-1` + justify-end
+          (matched by the left zone's flex-1) right-aligns these and centers the
+          middle zone. */}
+      <div data-no-drag className="flex flex-1 items-center justify-end gap-1.5 max-[900px]:gap-1">
         {/* Desktop actions — hidden ≤768px; tighter gaps ≤900px. */}
         <div className="flex items-center gap-1.5 max-[900px]:gap-0.5 max-[768px]:hidden">
           {/* Tools, promoted to regular header buttons (icon + short label;
