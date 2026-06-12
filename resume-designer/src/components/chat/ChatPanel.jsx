@@ -185,6 +185,7 @@ export default function ChatPanel() {
           onRemoveChip={chat.removeChip}
           onClearChips={chat.clearChips}
           onSend={chat.send}
+          loading={chat.loading}
           currentModel={chat.currentModel}
           configured={chat.configured}
           customModels={chat.customModels}
