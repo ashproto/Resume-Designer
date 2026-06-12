@@ -7,6 +7,7 @@ import { store, generateId } from './store.js';
 import { parseResume } from './parser.js';
 import { isTauri } from './native.js';
 import { appStorage } from './appStorage.js';
+import { storageErrorToast } from './storageToast.js';
 
 const STORAGE_KEY = 'resume-designer-data';
 export const SETTINGS_UPDATED_EVENT = 'resume-designer-settings-updated';
@@ -270,7 +271,19 @@ export function initPersistence(variantId) {
       const storage = loadFromStorage();
       const variant = storage.variants[variantId];
       if (variant) {
-        saveVariant(variantId, variant.name, data);
+        // The debounced auto-save is the path that persists ongoing EDITS.
+        // When the write fails (browser passthrough at storage quota), the
+        // user must hear about it once — otherwise everything typed from now
+        // on silently evaporates on quit/reload.
+        const ok = saveVariant(variantId, variant.name, data);
+        if (!ok) {
+          storageErrorToast(
+            'Storage is full — your recent edits are NOT being saved. Free up '
+            + 'space (delete resumes you no longer need) or export a backup now '
+            + 'via Settings → Data → Export Backup.',
+            { once: true },
+          );
+        }
       }
     }
   });

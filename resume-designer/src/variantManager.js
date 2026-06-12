@@ -14,6 +14,7 @@
  */
 
 import { store, generateId, EMPTY_RESUME } from './store.js';
+import { storageErrorToast } from './storageToast.js';
 import {
   getVariants,
   getCurrentVariantId,
@@ -139,8 +140,19 @@ export function createVariant(name, data = null) {
   const id = generateId('variant');
   const variantData = data || JSON.parse(JSON.stringify(EMPTY_RESUME));
 
-  saveVariant(id, name, variantData);
-  loadVariant(id); // notifies (snapshot includes the new variant + selection)
+  // saveVariant reports whether the write landed (false on the browser
+  // passthrough's storage quota) and loadVariant returns false when the
+  // variant isn't readable back. Without this guard the header's
+  // "+ / Duplicate / Import" actions silently did nothing at quota — same
+  // bug class as the onboarding wizard's fake success screen.
+  if (!saveVariant(id, name, variantData) || !loadVariant(id)) {
+    storageErrorToast(
+      "Could not save the new resume: the app's local storage is full. "
+      + 'Delete resumes you no longer need and try again — you can export a '
+      + 'backup first via Settings → Data → Export Backup.',
+    );
+    return null;
+  }
 
   return id;
 }
@@ -201,8 +213,9 @@ export async function importVariant(file) {
   try {
     const data = await importFile(file);
     const name = file.name.replace(/\.(json|md|markdown)$/i, '');
-    createVariant(name, data);
-    return true;
+    // createVariant returns null when the variant couldn't be persisted
+    // (it already surfaced the storage error to the user).
+    return createVariant(name, data) !== null;
   } catch (err) {
     alert('Import failed: ' + err.message);
     return false;

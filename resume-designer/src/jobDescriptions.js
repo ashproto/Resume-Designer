@@ -5,6 +5,7 @@
 
 import { randomSuffix } from './store.js';
 import { appStorage } from './appStorage.js';
+import { storageErrorToast } from './storageToast.js';
 
 const STORAGE_KEY = 'resume-designer-job-descriptions';
 
@@ -35,6 +36,13 @@ function save() {
     appStorage.setItem(STORAGE_KEY, JSON.stringify(jobDescriptions));
   } catch (e) {
     console.error('Failed to save job descriptions:', e);
+    // Browser passthrough at storage quota: the in-memory list still holds
+    // the JD, but it won't survive a reload — say so instead of vanishing it.
+    storageErrorToast(
+      'Could not save your job descriptions — storage is full. Free up space '
+      + '(delete resumes you no longer need) and try again.',
+      { once: true },
+    );
   }
 }
 
