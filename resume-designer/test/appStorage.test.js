@@ -33,10 +33,11 @@ describe('passthrough mode (browser / no init)', () => {
     expect(localStorage.getItem('resume-zoom')).toBeNull();
   });
 
-  it('lists keys and flushes as a no-op', async () => {
+  it('lists keys and reports a durable (true) flush as a no-op', async () => {
     localStorage.setItem('resume-designer-data', '{}');
     expect(appStorage.keys()).toContain('resume-designer-data');
-    await expect(appStorage.flush()).resolves.toBeUndefined();
+    // Passthrough is synchronous, so flush() always reports durable.
+    await expect(appStorage.flush()).resolves.toBe(true);
   });
 });
 
@@ -103,6 +104,29 @@ describe('cached mode (disk backend)', () => {
     expect(errSpy).toHaveBeenCalled();
     // The session keeps working from cache even though disk failed.
     expect(appStorage.getItem('resume-designer-data')).toBe('{"keep":"me"}');
+    errSpy.mockRestore();
+  });
+
+  it('flush() reports true when writes reach disk', async () => {
+    const backend = makeBackend();
+    await initAppStorage({ backend });
+    appStorage.setItem('resume-zoom', '1.5');
+    await expect(appStorage.flush()).resolves.toBe(true);
+  });
+
+  it('flush() reports false when a write permanently fails (durability barrier)', async () => {
+    const backend = makeBackend();
+    backend.write.mockRejectedValue(new Error('disk full')); // both attempts fail
+    await initAppStorage({ backend });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    appStorage.setItem('resume-designer-data', '{"v":1}');
+    // The durability signal callers (backup reload, PDF print) rely on:
+    // resolves false → don't reload/render against stale disk.
+    await expect(appStorage.flush()).resolves.toBe(false);
+    // A later flush with no new failures is durable again.
+    backend.write.mockResolvedValue(undefined);
+    appStorage.setItem('resume-zoom', '2');
+    await expect(appStorage.flush()).resolves.toBe(true);
     errSpy.mockRestore();
   });
 

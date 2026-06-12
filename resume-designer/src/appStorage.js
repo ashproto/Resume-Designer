@@ -41,6 +41,11 @@ let dirty = new Map(); // key -> 'write' | 'delete'
 let drainScheduled = false;
 let chain = Promise.resolve();
 let failureToastShown = false;
+// Monotonic count of permanently-failed disk writes (after retry). flush()
+// compares this before/after awaiting the write chain to tell durability
+// callers (backup-restore reload, PDF print window) whether their data
+// actually reached disk — see flush().
+let writeFailures = 0;
 
 // Readiness signal for the React chrome. App.jsx gates every storage-reading
 // child on this so their mount-time facade reads can never execute before the
@@ -102,6 +107,7 @@ function showFailureToastOnce(message) {
 }
 
 function reportWriteFailure(key, err) {
+  writeFailures += 1;
   console.error(`[appStorage] disk write failed for "${key}":`, err);
   showFailureToastOnce(
     'Some changes could not be saved to disk — check free disk space. '
@@ -208,11 +214,22 @@ export const appStorage = {
     return [...cache.keys()];
   },
 
-  /** Resolve once every pending disk write has settled. No-op in passthrough. */
+  /**
+   * Wait for every pending disk write to settle, then report DURABILITY:
+   * resolves `true` if all awaited writes reached disk, `false` if any failed
+   * (disk full / permissions — the value stays in the in-memory cache and the
+   * failure toast fires, but it is NOT on disk). Callers that act on disk
+   * state from outside this cache — the backup-restore reload (boots from
+   * disk) and PDF export (a separate read-only print webview reads only disk)
+   * — MUST check this and not proceed against stale files on `false`.
+   * Passthrough (browser localStorage) is synchronous, so it is always durable.
+   */
   async flush() {
-    if (mode === 'passthrough') return;
+    if (mode === 'passthrough') return true;
+    const before = writeFailures;
     if (dirty.size) drain();
     await chain;
+    return writeFailures === before;
   },
 };
 
@@ -311,4 +328,5 @@ export function __resetAppStorageForTests() {
   drainScheduled = false;
   chain = Promise.resolve();
   failureToastShown = false;
+  writeFailures = 0;
 }

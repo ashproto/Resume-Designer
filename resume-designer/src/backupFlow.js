@@ -130,7 +130,21 @@ function showImportSuccessAndReload(message) {
   const proceed = async () => {
     overlay.remove();
     document.removeEventListener('keydown', keyHandler);
-    await appStorage.flush(); // imported envelope keys must hit disk before reload
+    // The imported keys must hit disk BEFORE we reload — reload boots from
+    // disk, so reloading after a failed flush would drop the import (and the
+    // Replace path already cleared the old files). flush() reports durability;
+    // on failure, stay put so the in-memory imported data keeps showing, and
+    // tell the user (the generic storage-failure toast has already fired too).
+    const durable = await appStorage.flush();
+    if (!durable) {
+      alert(
+        'Your backup was imported, but it could NOT be saved to disk — your '
+        + 'disk may be full. Don\'t close the app yet: free up space, then use '
+        + 'Settings → Data → Export Backup to save a copy, or try the import '
+        + 'again. (Reloading now would lose the imported data.)'
+      );
+      return;
+    }
     reloadWithOverlay('Loading your imported data…');
   };
 

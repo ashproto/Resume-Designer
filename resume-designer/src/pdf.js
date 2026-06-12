@@ -153,8 +153,19 @@ async function generatePdfNative(_resumeEl, filename) {
   }
 
   // saveNow() wrote through appStorage's in-memory cache; make sure the disk
-  // write has landed before the print window boots and loads from disk.
-  await appStorage.flush();
+  // write has landed before the print window boots. The print window is a
+  // SEPARATE webview that reads ONLY disk — it can't see this window's cache —
+  // so a non-durable flush (disk full / permissions) would silently capture
+  // stale data. flush() reports durability; abort with a clear message rather
+  // than hand back a stale PDF. handleDownloadPdf's catch surfaces this and
+  // its finally restores the button.
+  const durable = await appStorage.flush();
+  if (!durable) {
+    throw new Error(
+      'Your latest changes could not be saved to disk, so the PDF would not '
+      + 'include them. Free up disk space and try again.'
+    );
+  }
 
   // 1. Save path (main window's dialog, fully visible / no chrome change).
   //    The Rust side stashes the chosen path in a server-side slot that
