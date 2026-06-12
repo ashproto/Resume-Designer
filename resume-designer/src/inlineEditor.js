@@ -7,6 +7,7 @@ import { store } from './store.js';
 import { openChatWithContext, addContextChip } from './chatPanel.js';
 import { getPendingChange, applyInlineChange, rejectInlineChange, getCurrentChangeSet, getOriginalContent } from './inlineChanges.js';
 import { showDiffView } from './diffView.js';
+import { appStorage } from './appStorage.js';
 
 let isInitialized = false;
 let activeElement = null;
@@ -26,8 +27,8 @@ export function initInlineEditor() {
   if (isInitialized) return;
   isInitialized = true;
   
-  // Check localStorage for hint dismissal
-  hintDismissed = localStorage.getItem(HINT_DISMISSED_KEY) === 'true';
+  // Check storage for hint dismissal
+  hintDismissed = appStorage.getItem(HINT_DISMISSED_KEY) === 'true';
   
   const resumeContainer = document.getElementById('resume');
   if (!resumeContainer) return;
@@ -649,7 +650,7 @@ function setupHintDismissal() {
 // Dismiss the hint permanently
 function dismissHintPermanently() {
   hintDismissed = true;
-  localStorage.setItem(HINT_DISMISSED_KEY, 'true');
+  appStorage.setItem(HINT_DISMISSED_KEY, 'true');
   updateHintVisibility();
 }
 

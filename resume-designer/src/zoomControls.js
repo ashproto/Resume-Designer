@@ -3,6 +3,8 @@
  * Handles resume preview zoom in/out and fit-to-view functionality
  */
 
+import { appStorage } from './appStorage.js';
+
 let currentZoom = 1;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2;
@@ -18,7 +20,7 @@ export function initZoomControls() {
   if (!zoomIn || !zoomOut || !zoomFit || !zoomReset) return;
   
   // Load saved zoom level
-  const savedZoom = localStorage.getItem('resume-zoom');
+  const savedZoom = appStorage.getItem('resume-zoom');
   if (savedZoom) {
     currentZoom = parseFloat(savedZoom);
     applyZoom();
@@ -141,9 +143,9 @@ function updateButtonStates() {
   }
 }
 
-// Save zoom level to localStorage
+// Save zoom level to storage
 function saveZoom() {
-  localStorage.setItem('resume-zoom', currentZoom.toString());
+  appStorage.setItem('resume-zoom', currentZoom.toString());
 }
 
 // Get current zoom level (for external use)

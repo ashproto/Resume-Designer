@@ -12,6 +12,7 @@
 import { isElectron, pickPdfSavePath, capturePdfFromWindow } from './native.js';
 import { getCurrentId, getVariantList } from './variantManager.js';
 import { store } from './store.js';
+import { appStorage } from './appStorage.js';
 
 let html2pdfModule = null;
 
@@ -139,16 +140,31 @@ async function handleDownloadPdf(customFilename) {
  * measures its own copy. Kept in the signature for symmetry with html2pdf.
  */
 async function generatePdfNative(_resumeEl, filename) {
-  // 0. Flush any pending in-memory edits to localStorage BEFORE the print
+  // 0. Flush any pending in-memory edits to storage BEFORE the print
   //    window opens. The store's auto-save is debounced (~SAVE_DEBOUNCE_MS),
   //    so a user who types and immediately clicks "Download PDF" can have
   //    their latest characters still sitting in memory while the print window
-  //    boots from localStorage and renders stale data. `store.saveNow()`
+  //    boots from persisted storage and renders stale data. `store.saveNow()`
   //    runs the persistence callback synchronously, eliminating that race.
   try {
     store.saveNow();
   } catch (e) {
-    console.warn('PDF Export: store.saveNow() failed; continuing with whatever is in localStorage:', e);
+    console.warn('PDF Export: store.saveNow() failed; continuing with whatever is persisted:', e);
+  }
+
+  // saveNow() wrote through appStorage's in-memory cache; make sure the disk
+  // write has landed before the print window boots. The print window is a
+  // SEPARATE webview that reads ONLY disk — it can't see this window's cache —
+  // so a non-durable flush (disk full / permissions) would silently capture
+  // stale data. flush() reports durability; abort with a clear message rather
+  // than hand back a stale PDF. handleDownloadPdf's catch surfaces this and
+  // its finally restores the button.
+  const durable = await appStorage.flush();
+  if (!durable) {
+    throw new Error(
+      'Your latest changes could not be saved to disk, so the PDF would not '
+      + 'include them. Free up disk space and try again.'
+    );
   }
 
   // 1. Save path (main window's dialog, fully visible / no chrome change).

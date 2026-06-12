@@ -77,8 +77,8 @@ Your key is stored locally on your device and is sent only to OpenRouter to make
 
 ## Privacy & data
 
-- **Local-first:** résumés, profile, and settings live in your browser/app local storage on your device.
-- **No account, no backend, no analytics.** Network use is limited to three things: the AI requests you make to OpenRouter; the desktop app's automatic update check on launch (GitHub Releases); and **web fonts for the résumé document** — the built-in typography pairings load from Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`) at launch. The app's own UI fonts (Geist) are bundled and make no request. (The desktop update check runs regardless; the browser build checks for neither updates nor telemetry.)
+- **Local-first:** résumés, profile, and settings live on your device — the desktop app stores them as plain files under its application-support folder; the browser build uses browser local storage.
+- **No account, no backend, no analytics.** Network use is limited to three things: the AI requests you make to OpenRouter; the desktop app's automatic update check on launch (GitHub Releases); and **web fonts for the résumé document** — a Google-Fonts typography pairing loads from `fonts.googleapis.com` / `fonts.gstatic.com` only while it's the selected style. Choose a **system-font pairing** in Settings and the app makes zero font requests; its own UI fonts (Geist) are always bundled. (The desktop update check runs regardless; the browser build checks for neither updates nor telemetry.)
 - Export a full **JSON backup** any time, and import it on another machine.
 
 ## Run from source

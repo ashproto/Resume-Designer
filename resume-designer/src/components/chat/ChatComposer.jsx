@@ -47,7 +47,7 @@ const CHIP_ICONS = {
  * ref) so typing never round-trips through React state — fast and caret-safe.
  */
 export function ChatComposer({
-  contextChips, onRemoveChip, onClearChips, onSend,
+  contextChips, onRemoveChip, onClearChips, onSend, loading,
   currentModel, configured, customModels,
   onSelectModel, onApplyCustomSlug, onRemoveCustom, onConfigure,
   reasoningEffort, reasoningSupported, onSetReasoning,
@@ -68,7 +68,12 @@ export function ChatComposer({
   const submit = () => {
     const ta = inputRef.current;
     const text = ta?.value.trim();
-    if (!text) return;
+    // Bail BEFORE clearing when there's nothing to send OR a run is already in
+    // flight: useChat.send() ignores concurrent calls (loadingRef guard), so
+    // clearing here would silently discard a draft the user typed while the
+    // assistant was still streaming. Leave the text in place — they can send
+    // it once the current run finishes (or after pressing Stop).
+    if (!text || loading) return;
     onSend(text);
     if (ta) { ta.value = ''; ta.style.height = 'auto'; }
     setSlashItems(null);
@@ -149,10 +154,10 @@ export function ChatComposer({
       )}
 
       <div className="flex flex-wrap gap-1.5 max-[1024px]:hidden">
-        <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" onClick={() => onSend('/feedback')}>
+        <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" disabled={loading} onClick={() => onSend('/feedback')}>
           Get Feedback
         </Button>
-        <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" onClick={() => onSend('/improve summary')}>
+        <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" disabled={loading} onClick={() => onSend('/improve summary')}>
           Improve Summary
         </Button>
       </div>
@@ -265,8 +270,9 @@ export function ChatComposer({
           <Button
             size="icon"
             className="ml-auto size-[30px] rounded-lg"
-            title="Send message"
+            title={loading ? 'Waiting for the current response…' : 'Send message'}
             aria-label="Send message"
+            disabled={loading}
             onClick={submit}
           >
             <Send className="size-4" />

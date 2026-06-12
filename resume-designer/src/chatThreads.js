@@ -2,11 +2,13 @@
  * Chat thread persistence — framework-agnostic helpers extracted from the former
  * chatPanel.js so the React `useChat` hook (and unit tests) can own thread state
  * without the panel's heavy import graph. Pure functions over plain thread
- * objects + localStorage; no module-level mutable state.
+ * objects + appStorage; no module-level mutable state.
  *
  * Thread shape: { id, name, messages, createdAt, updatedAt }
  * Only the last 50 messages of a thread are persisted (see MAX_PERSISTED).
  */
+
+import { appStorage } from './appStorage.js';
 
 const STORAGE_KEY = 'resume-designer-chat-history'; // legacy single-thread history
 const THREADS_KEY = 'resume-designer-chat-threads';
@@ -42,17 +44,20 @@ export function makeThread(name = 'New Chat', initialMessages = []) {
  */
 export function loadThreads() {
   try {
-    const saved = localStorage.getItem(THREADS_KEY);
+    const saved = appStorage.getItem(THREADS_KEY);
     let threads = saved ? JSON.parse(saved) : [];
     if (!Array.isArray(threads)) threads = [];
 
     if (threads.length === 0) {
-      // Migrate any old single-thread history into a fresh thread.
-      const oldHistory = localStorage.getItem(STORAGE_KEY);
+      // Migrate any old single-thread history into a fresh thread — in memory
+      // only. An empty/initial READ must never WRITE: if this path ever ran
+      // against the wrong store (e.g. a pre-init passthrough on Tauri), a
+      // persist here would clobber the real saved threads with an empty one.
+      // The first real user action persists via the useChat callers.
+      const oldHistory = appStorage.getItem(STORAGE_KEY);
       const oldMessages = oldHistory ? JSON.parse(oldHistory) : [];
       const thread = makeThread('New Chat', Array.isArray(oldMessages) ? oldMessages : []);
       threads = [thread];
-      persistThreads(threads);
       return { threads, currentThreadId: thread.id };
     }
 
@@ -69,7 +74,7 @@ export function loadThreads() {
 
 export function persistThreads(threads) {
   try {
-    localStorage.setItem(THREADS_KEY, JSON.stringify(threads));
+    appStorage.setItem(THREADS_KEY, JSON.stringify(threads));
   } catch (e) {
     console.error('Failed to save threads:', e);
   }
@@ -78,13 +83,13 @@ export function persistThreads(threads) {
 // Clear the legacy single-thread history key (used by /clear).
 export function clearLegacyHistory() {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    appStorage.removeItem(STORAGE_KEY);
   } catch {
     /* ignore */
   }
 }
 
-// Strip heavy/in-memory-only fields before persisting to quota-bound localStorage:
+// Strip heavy/in-memory-only fields before persisting to storage (quota-bound in the browser):
 // drop reasoning_details (can carry large encrypted blobs) and cap the reasoning
 // string. annotations + run are small and kept as-is. Full reasoning_details stay
 // on the live in-memory message so Anthropic continuity holds within the session.

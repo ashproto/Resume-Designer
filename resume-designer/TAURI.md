@@ -201,6 +201,29 @@ Currently **not** signed. Users will see a Microsoft Defender SmartScreen warnin
 - **macOS 12.3 (Monterey) or later.** `bundle.macOS.minimumSystemVersion` is set to `12.3` in `tauri.conf.json`, so older versions cannot install the app. (PDF export uses `WKWebView.createPDF(configuration:completionHandler:)`, which Apple shipped in macOS 11; the bundle floor is set higher.)
 - **Windows 10 1809 or later** (WebView2 runtime required; Windows 11 ships it preinstalled).
 
+## Data storage
+
+Desktop builds persist all app data as **one file per key** under
+`<app_data_dir>/storage/` (macOS:
+`~/Library/Application Support/com.resumedesigner.app/storage/`). File name =
+storage key (e.g. `resume-designer-data`), content = the raw string value.
+Writes are atomic (temp file + fsync + rename) via the Rust `storage_*`
+commands in `src-tauri/src/commands/storage.rs`; the JS side goes through
+`src/appStorage.js`, which serves reads from an in-memory cache and
+write-behinds changes, flushing on window close, before PDF capture, before
+backup-import reloads, and before the updater's relaunch.
+
+On the first launch after upgrading, any existing webview-localStorage data
+(`resume-*` keys) is adopted onto disk once and removed from localStorage.
+Browser builds keep using localStorage (the facade passes through), which is
+why the old ~5MB-quota guards in `persistence.js` still exist.
+
+Known limitation: macOS **Cmd+Q** terminates through the default menu's
+`terminate:` selector, which bypasses the window's close-requested hook — an
+edit made within the store's 500 ms save debounce of a Cmd+Q can lose that
+last keystroke (the previous on-disk value survives; files can never be torn).
+Closing the window with the red button always flushes completely.
+
 ## Content Security Policy
 
 The desktop CSP lives in [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json) under

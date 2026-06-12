@@ -14,6 +14,7 @@
  */
 
 import { store, generateId, EMPTY_RESUME } from './store.js';
+import { storageErrorToast } from './storageToast.js';
 import {
   getVariants,
   getCurrentVariantId,
@@ -36,8 +37,16 @@ let onVariantChangeCallback = null;
 // cache `snapshot` and only recompute it inside notify() (on a real change).
 // Returning getVariants() directly would deep-read storage every render and the
 // fresh object identity would loop the store (the same trap useResumeStore hit).
+//
+// The initial snapshot is LAZY (computed on first access, not at import time):
+// module evaluation happens before init() runs initAppStorage(), so an
+// import-time computeSnapshot() would read the pre-adoption passthrough — on
+// Tauri that's an empty localStorage, i.e. a wrong (empty) first paint. Note
+// App.jsx fires init() from its mount effect without gating render on it, so
+// the first Header render can still beat initAppStorage(); initVariants() →
+// notify() recomputes once boot completes, exactly as it always has.
 const subscribers = new Set();
-let snapshot = computeSnapshot();
+let snapshot = null;
 
 function computeSnapshot() {
   return { currentId: currentVariantId, list: getVariantList() };
@@ -54,6 +63,7 @@ export function subscribeVariants(callback) {
 }
 
 export function getVariantsSnapshot() {
+  if (!snapshot) snapshot = computeSnapshot();
   return snapshot;
 }
 
@@ -80,7 +90,13 @@ export function initVariants(onVariantChange) {
   currentVariantId = getCurrentVariantId();
 
   if (currentVariantId) {
-    loadVariant(currentVariantId);
+    if (!loadVariant(currentVariantId)) {
+      // Dangling pointer: the persisted current id references a variant that
+      // no longer exists, so loadVariant bailed before its notify(). Publish
+      // the real list anyway so the header recovers instead of keeping the
+      // stale pre-init (empty) snapshot.
+      notify();
+    }
   } else {
     // No persisted selection yet; still publish an initial snapshot so any
     // already-mounted subscriber renders the (possibly empty) list.
@@ -124,8 +140,19 @@ export function createVariant(name, data = null) {
   const id = generateId('variant');
   const variantData = data || JSON.parse(JSON.stringify(EMPTY_RESUME));
 
-  saveVariant(id, name, variantData);
-  loadVariant(id); // notifies (snapshot includes the new variant + selection)
+  // saveVariant reports whether the write landed (false on the browser
+  // passthrough's storage quota) and loadVariant returns false when the
+  // variant isn't readable back. Without this guard the header's
+  // "+ / Duplicate / Import" actions silently did nothing at quota — same
+  // bug class as the onboarding wizard's fake success screen.
+  if (!saveVariant(id, name, variantData) || !loadVariant(id)) {
+    storageErrorToast(
+      "Could not save the new resume: the app's local storage is full. "
+      + 'Delete resumes you no longer need and try again — you can export a '
+      + 'backup first via Settings → Data → Export Backup.',
+    );
+    return null;
+  }
 
   return id;
 }
@@ -186,8 +213,9 @@ export async function importVariant(file) {
   try {
     const data = await importFile(file);
     const name = file.name.replace(/\.(json|md|markdown)$/i, '');
-    createVariant(name, data);
-    return true;
+    // createVariant returns null when the variant couldn't be persisted
+    // (it already surfaced the storage error to the user).
+    return createVariant(name, data) !== null;
   } catch (err) {
     alert('Import failed: ' + err.message);
     return false;

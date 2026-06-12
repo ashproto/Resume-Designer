@@ -4,6 +4,7 @@
  */
 
 import { randomSuffix } from './store.js';
+import { appStorage } from './appStorage.js';
 
 const STORAGE_KEY = 'resume-designer-token-usage';
 
@@ -32,11 +33,11 @@ function generateEventId() {
 }
 
 /**
- * Load usage data from localStorage
+ * Load usage data from storage
  */
 export function loadUsageData() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = appStorage.getItem(STORAGE_KEY);
     if (raw) {
       const data = JSON.parse(raw);
       // Ensure structure is valid
@@ -52,11 +53,11 @@ export function loadUsageData() {
 }
 
 /**
- * Save usage data to localStorage
+ * Save usage data to storage
  */
 function saveUsageData(data) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    appStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     return true;
   } catch (e) {
     console.error('[TokenTracking] Failed to save usage data:', e);

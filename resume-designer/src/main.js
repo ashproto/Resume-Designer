@@ -4,7 +4,8 @@
  */
 
 import { store } from './store.js';
-import { 
+import { appStorage, initAppStorage, markStorageReady } from './appStorage.js';
+import {
   renderResume, 
   renderResumeStacked,
   renderResumeStackedVertical,
@@ -20,7 +21,6 @@ import {
 import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
 import { initVariants } from './variantManager.js';
-import { initUpdateFlow } from './updateFlow.js';
 import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initDiffView } from './diffView.js';
 import { initInlineChanges } from './inlineChanges.js';
@@ -46,6 +46,7 @@ import {
 } from './native.js';
 import { initTheme } from './theme.js';
 import { openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
+import { initJobDescriptions } from './jobDescriptions.js';
 import { openUserProfilePanel } from './userProfilePanel.js';
 import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
@@ -155,7 +156,7 @@ let currentPalette = 'terracotta';
 let currentLayout = 'sidebar';
 let customColor = '#c45c3e';
 
-// localStorage flag set by `maybeAutoMigrateLegacyData` to remember
+// appStorage flag set by `maybeAutoMigrateLegacyData` to remember
 // whether we've already tried (regardless of outcome). Lives outside
 // the `resume-designer-*` backup-owned keyspace so it's NOT wiped when
 // the user runs Import Backup — that way reimporting a legacy backup
@@ -169,7 +170,7 @@ const ELECTRON_MIGRATION_FLAG = 'resume-designer-electron-migration-attempted';
  *   1. Only runs in Tauri (web has no backend command to probe).
  *   2. Only runs ONCE — sets `ELECTRON_MIGRATION_FLAG` regardless of
  *      outcome (found / not-found / error).
- *   3. Only runs when current Tauri localStorage has no
+ *   3. Only runs when the current store (appStorage) has no
  *      `resume-designer-data` — so a user who's already created
  *      content in the new build won't have it overwritten.
  *
@@ -178,30 +179,30 @@ const ELECTRON_MIGRATION_FLAG = 'resume-designer-electron-migration-attempted';
  * their data via Tools → Import Backup if they have a JSON elsewhere.
  *
  * MUST run before `getSettings()` / store init below, otherwise those
- * read empty localStorage and the just-imported data won't be picked
+ * read an empty store and the just-imported data won't be picked
  * up until the next launch.
  */
 async function maybeAutoMigrateLegacyData() {
   if (!isTauri) return;
-  if (localStorage.getItem(ELECTRON_MIGRATION_FLAG)) return;
-  if (localStorage.getItem('resume-designer-data')) {
+  if (appStorage.getItem(ELECTRON_MIGRATION_FLAG)) return;
+  if (appStorage.getItem('resume-designer-data')) {
     // User already has Tauri-side data; don't touch it. Set the flag
     // so we stop probing on every launch from here on out.
-    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-has-data');
+    appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-has-data');
     return;
   }
 
   try {
     const probe = await probeLegacyElectronData();
     if (!probe?.found) {
-      localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-no-legacy');
+      appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-no-legacy');
       return;
     }
     console.log('[migration] Legacy Electron data found:', probe);
 
     const envelope = await importLegacyElectronData();
     const result = importFullBackupFromEnvelope(envelope);
-    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'imported');
+    appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'imported');
     console.log(
       `[migration] Imported ${result.keysImported} keys from legacy Electron data` +
       ` (removed ${result.removedExistingKeys} pre-existing keys` +
@@ -219,7 +220,7 @@ async function maybeAutoMigrateLegacyData() {
     setTimeout(() => showMigrationToast(probe, result), 800);
   } catch (err) {
     console.warn('[migration] Auto-import failed; continuing with empty store:', err);
-    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'failed');
+    appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'failed');
     // Silent fail — user can still use Tools → Import Backup manually
     // if they have a JSON backup from elsewhere.
   }
@@ -274,15 +275,28 @@ function showMigrationToast(probe, result = null) {
 
 // Initialize the application
 export async function init() {
-  // Print-mode is now a separate framework-free entry (print.html /
-  // src/printEntry.js calls initPrintMode() directly), so the main window
-  // never short-circuits here.
+  // FIRST: bring up the storage facade, THEN pull in any legacy Electron
+  // data — and only after BOTH settle, open the React mount gate. On the
+  // first Tauri boot after an Electron install the facade comes up empty and
+  // maybeAutoMigrateLegacyData() is what populates it; a component mounted in
+  // between (ChatPanel was the proven case) snapshots the emptiness and its
+  // next save overwrites the migrated data. The finally keeps the gate
+  // deadlock-proof: both steps swallow their own failures internally, and
+  // even an unexpected throw still opens the gate on whatever state we have.
+  //
+  // (Print-mode is a separate framework-free entry — print.html /
+  // src/printEntry.js — so the main window never short-circuits here.)
+  try {
+    await initAppStorage();
+    await maybeAutoMigrateLegacyData();
+  } finally {
+    markStorageReady();
+  }
 
-  // FIRST thing: see if there's legacy Electron
-  // data to pull in. Must happen before getSettings() / store
-  // initialization below, since those read from the localStorage we're
-  // about to populate.
-  await maybeAutoMigrateLegacyData();
+  // Seed the job-descriptions module cache from the now-initialized store,
+  // regardless of when JobsDialog mounts. The dialog's own mount effect calls
+  // this again — that second call is a harmless re-read of the same store.
+  initJobDescriptions();
 
   // Tag the html element so CSS can apply desktop-only chrome (traffic light
   // padding on macOS, etc.). Keep the legacy `electron` / `electron-mac`
@@ -315,6 +329,40 @@ export async function init() {
       },
       true
     );
+
+    // Flush pending disk writes when the window is closing or backgrounded.
+    // The write-behind queue otherwise drains within ~1 tick, but "quit
+    // immediately after an edit" must never lose the last write.
+    try {
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      const win = getCurrentWebviewWindow();
+      await win.onCloseRequested(async (event) => {
+        // preventDefault() the close, drain the last edit to disk, THEN close
+        // explicitly. The onCloseRequested wrapper already awaits this handler
+        // before its own destroy(), and Tauri defers the native close until the
+        // handler resolves — so the flush completes before the window goes
+        // regardless. Doing it via preventDefault()+destroy() is the documented
+        // Tauri contract, so the "flush before close" ordering no longer relies
+        // on that wrapper internal. destroy() forces the close WITHOUT
+        // re-emitting close-requested, so there is no re-entrancy. The flush is
+        // best-effort: on a full disk we still close (trapping the user in an
+        // un-quittable window is worse, and the failure toast already fired).
+        event.preventDefault();
+        try { store.saveNow(); } catch { /* nothing pending */ }
+        try { await appStorage.flush(); } catch (flushErr) { console.warn('[Storage] close-flush failed:', flushErr); }
+        await win.destroy();
+      });
+    } catch (e) {
+      console.warn('[Storage] close-flush hook unavailable:', e);
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'hidden') return;
+      // Capture a mid-debounce edit too — backgrounding (Cmd+H, minimize) is
+      // often the last event before an OS-level quit, which bypasses
+      // onCloseRequested entirely.
+      try { store.saveNow(); } catch { /* nothing pending */ }
+      appStorage.flush();
+    });
 
     // Make the header bar act as the window's drag region (overlay titlebar).
     // Uses the manual startDragging() handler instead of data-tauri-drag-region,
@@ -351,8 +399,13 @@ export async function init() {
   // (src/components/Header.jsx) that subscribes to this module; main.js only
   // wires the variant-change callback (re-render + job-panel re-sync). Register
   // the updater->toast bridge here too, BEFORE startupUpdateCheck() below, so it
-  // catches startup status events.
+  // catches startup status events. The bridge is loaded lazily because
+  // updateFlow.js statically imports sonner (which pulls React) and main.js is
+  // shared with the React-free print entry (printEntry.js -> initPrintMode);
+  // a static import here would drag react/sonner into the print window's
+  // static chunk graph. init() only runs in the main window.
   initVariants(handleVariantChange);
+  const { initUpdateFlow } = await import('./updateFlow.js');
   initUpdateFlow();
 
   // Initialize inline editor
@@ -405,8 +458,11 @@ export async function init() {
   // In desktop builds, expose a function to reset onboarding for debugging.
   if (isTauri) {
     window.resetForTesting = () => {
-      localStorage.clear();
-      location.reload();
+      appStorage.clear();
+      appStorage.flush().finally(() => {
+        localStorage.clear();
+        location.reload();
+      });
     };
     console.log('[Main] Desktop build detected, resetForTesting() available');
   }
@@ -464,6 +520,11 @@ export async function init() {
 
   // Render initial resume
   renderCurrentResume();
+
+  // Defense in depth: boot is fully done — re-broadcast the chat config state
+  // once so any chat UI that somehow captured pre-init storage state (in an
+  // unforeseen mount order) re-reads and heals. Harmless no-op otherwise.
+  refreshChatPanel();
 }
 
 /**
@@ -540,7 +601,7 @@ export async function initPrintMode() {
 
     // Load the currently active variant's data into the store so the
     // renderer can read it. skipSave=true because this is a read-only
-    // render — we don't want to mutate localStorage from the print window.
+    // render — we don't want to mutate stored data from the print window.
     const variantId = getCurrentVariantId();
     const variants = getVariants();
     const variant = variantId ? variants[variantId] : null;

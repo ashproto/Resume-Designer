@@ -29,6 +29,10 @@ pub fn run() {
             commands::capture_pdf_from_window,
             commands::migration::probe_legacy_electron_data,
             commands::migration::import_legacy_electron_data,
+            commands::storage::storage_load_all,
+            commands::storage::storage_write,
+            commands::storage::storage_delete,
+            commands::storage::storage_clear,
             #[cfg(desktop)]
             commands::updater::check_update_on_channel,
             #[cfg(desktop)]

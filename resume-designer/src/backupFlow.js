@@ -10,6 +10,7 @@
 
 import { exportFullBackup, importFullBackupFromEnvelope } from './persistence.js';
 import { store } from './store.js';
+import { appStorage } from './appStorage.js';
 import { flushPendingProfileSave } from './userProfilePanel.js';
 
 /**
@@ -126,9 +127,24 @@ function showImportSuccessAndReload(message) {
   requestAnimationFrame(() => overlay.classList.add('show'));
   setTimeout(() => okBtn.focus(), 50);
 
-  const proceed = () => {
+  const proceed = async () => {
     overlay.remove();
     document.removeEventListener('keydown', keyHandler);
+    // The imported keys must hit disk BEFORE we reload — reload boots from
+    // disk, so reloading after a failed flush would drop the import (and the
+    // Replace path already cleared the old files). flush() reports durability;
+    // on failure, stay put so the in-memory imported data keeps showing, and
+    // tell the user (the generic storage-failure toast has already fired too).
+    const durable = await appStorage.flush();
+    if (!durable) {
+      alert(
+        'Your backup was imported, but it could NOT be saved to disk — your '
+        + 'disk may be full. Don\'t close the app yet: free up space, then use '
+        + 'Settings → Data → Export Backup to save a copy, or try the import '
+        + 'again. (Reloading now would lose the imported data.)'
+      );
+      return;
+    }
     reloadWithOverlay('Loading your imported data…');
   };
 
@@ -146,7 +162,7 @@ function showImportSuccessAndReload(message) {
 }
 
 /**
- * Export every owned localStorage key into a single JSON file. No success
+ * Export every owned storage key into a single JSON file. No success
  * alert — the browser download bar / native save dialog is feedback enough.
  */
 export function exportFullBackupWithFeedback() {
@@ -160,7 +176,7 @@ export function exportFullBackupWithFeedback() {
 }
 
 /**
- * Restore every owned localStorage key from a JSON envelope produced by Export
+ * Restore every owned storage key from a JSON envelope produced by Export
  * Full Backup or the legacy Electron migration. Parses FIRST (so the
  * destructive confirm can show the key count), flushes pending debounced
  * writers, then runs the writes SYNCHRONOUSLY before reload.

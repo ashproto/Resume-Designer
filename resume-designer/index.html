@@ -34,9 +34,11 @@
       }
     })();
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <!-- Resume-document fonts (incl. the default Cormorant Garamond + DM Sans
+       pairing) load DYNAMICALLY via fontService.initFontService() — never
+       statically here — so a system-font pairing makes zero Google Fonts
+       requests (the README's privacy section promises this). Chrome UI fonts
+       (Geist) are bundled via @fontsource. -->
   <link rel="stylesheet" href="/styles/main.css">
   <link rel="stylesheet" href="/styles/resume.css">
   <link rel="stylesheet" href="/styles/editor.css">

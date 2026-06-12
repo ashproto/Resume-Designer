@@ -346,7 +346,7 @@ export function saveOnboardingResume({ parsedResume, mode, targetJob, jobDescrip
 
   // Save then load (sets current id, initializes persistence, notifies the React
   // header, which re-renders its variant list automatically). saveVariant
-  // returns false when the localStorage write fails (quota exceeded), and
+  // returns false when the storage write fails (quota exceeded in the browser), and
   // loadVariant returns false when the variant isn't readable back — without
   // this check the wizard would show "Your Resume is Ready!" while the resume
   // silently never persisted (old resume on screen, nothing in the dropdown).
