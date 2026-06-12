@@ -43,16 +43,28 @@ let chain = Promise.resolve();
 let failureToastShown = false;
 
 // Readiness signal for the React chrome. App.jsx gates every storage-reading
-// child on this so their mount-time facade reads can never execute before
-// initAppStorage() has picked a mode — on a post-adoption Tauri boot a pre-init
-// read hits an EMPTY passthrough localStorage and looks like total data loss.
-// Resolved exactly once, in initAppStorage()'s finally, so EVERY exit path
-// (browser early-return, cached success, loadAll-failure fallback, adoption
-// success/abort) flips it. Deliberately NOT reset by __resetAppStorageForTests:
-// re-resolving a settled promise is a no-op, and tests never await this.
+// child on this so their mount-time facade reads can never execute before the
+// BOOT DATA is in place — that means initAppStorage() has picked a mode AND
+// the legacy Electron migration (which runs after it in init() and populates
+// the store on a first post-Electron boot) has settled. A pre-init read hits
+// an EMPTY passthrough localStorage and looks like total data loss; a
+// pre-migration mount snapshots emptiness and its next save overwrites the
+// migrated data (ChatPanel's thread list was the proven case).
+// Resolved exactly once, by main.js init() via markStorageReady() in a
+// finally spanning both steps. Deliberately NOT reset by
+// __resetAppStorageForTests: re-resolving a settled promise is a no-op.
 let resolveStorageReady;
 const storageReadyPromise = new Promise((resolve) => { resolveStorageReady = resolve; });
 export function whenStorageReady() { return storageReadyPromise; }
+
+/**
+ * Open the React mount gate (App.jsx awaits whenStorageReady()). Called by
+ * main.js init() AFTER BOTH initAppStorage() and maybeAutoMigrateLegacyData()
+ * settle — NOT by initAppStorage itself. Re-resolving a settled promise is a
+ * no-op, so calling this from a finally is always safe. The print window
+ * never calls it: nothing in its framework-free graph awaits the gate.
+ */
+export function markStorageReady() { resolveStorageReady(); }
 
 function tauriBackend() {
   return {
@@ -209,18 +221,12 @@ export const appStorage = {
  * Tauri (or an injected test backend) → cached mode + one-time adoption of
  * localStorage `resume-*` keys when the disk store is empty.
  *
- * Always resolves the whenStorageReady() signal on return — the finally covers
- * every exit path of the inner impl, so the React gate can never deadlock.
+ * Does NOT open the whenStorageReady() gate — the legacy Electron migration
+ * still runs after this in init() and populates the store on a first
+ * post-Electron boot, so main.js calls markStorageReady() only once BOTH have
+ * settled (in a finally spanning the two, so the gate still can't deadlock).
  */
-export async function initAppStorage(opts = {}) {
-  try {
-    await doInitAppStorage(opts);
-  } finally {
-    resolveStorageReady();
-  }
-}
-
-async function doInitAppStorage({ backend = null, readOnly: ro = false } = {}) {
+export async function initAppStorage({ backend = null, readOnly: ro = false } = {}) {
   if (!backend && !IS_TAURI) return; // browser/jsdom: passthrough forever
 
   backendImpl = backend || tauriBackend();

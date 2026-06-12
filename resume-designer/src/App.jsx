@@ -41,12 +41,13 @@ export default function App() {
   // skeleton, so it can't mount until that injection has run. Gate it on
   // `ready`, flipped true the moment the skeleton is in the DOM.
   const [ready, setReady] = useState(false);
-  // Storage gate: every child that reads appStorage at mount waits for
-  // initAppStorage() (init()'s FIRST await) to finish. Without this, child
-  // mount effects run before init()'s first await and their facade reads hit
-  // the pre-init passthrough — on a post-adoption Tauri boot that's an EMPTY
-  // localStorage, which read as "no data" and could even persist that
-  // emptiness back over the real disk store.
+  // Storage gate: every child that reads appStorage at mount waits for the
+  // BOOT DATA — init() opens the gate (markStorageReady) only after BOTH
+  // initAppStorage() AND maybeAutoMigrateLegacyData() settle. Mounting before
+  // the facade picked a mode read the pre-init passthrough (empty localStorage
+  // on a post-adoption Tauri boot); mounting before the legacy Electron import
+  // landed had ChatPanel snapshot an empty thread list whose next save
+  // overwrote the migrated chat history.
   const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
@@ -78,9 +79,9 @@ export default function App() {
   // that keep their own size/position, and the dialogs render nothing while
   // closed (Radix portals). Toaster/ConfirmHost stay unconditional: they read
   // no storage, and the Toaster must exist for initAppStorage()'s own failure
-  // toasts. The 300ms first-run onboarding check is safe: storageReady
-  // resolves at init()'s FIRST await, several awaits before that timer is even
-  // scheduled, so OnboardingWizard is mounted long before it fires.
+  // toasts. The 300ms first-run onboarding check is safe: init() opens the
+  // gate right after the migration await — well before that timer is even
+  // scheduled — so OnboardingWizard is mounted long before it fires.
   return (
     <>
       <div ref={shellRef} style={{ display: 'contents' }} />

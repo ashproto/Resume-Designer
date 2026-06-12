@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   appStorage,
   initAppStorage,
+  whenStorageReady,
+  markStorageReady,
   __resetAppStorageForTests,
 } from '../src/appStorage.js';
 
@@ -220,5 +222,26 @@ describe('boot migration (localStorage → disk adoption)', () => {
     await initAppStorage({ backend, readOnly: true });
     expect(backend.write).not.toHaveBeenCalled();
     expect(localStorage.getItem('resume-designer-data')).toBe('{"v":1}');
+  });
+});
+
+describe('storage-ready mount gate', () => {
+  it('stays closed after initAppStorage and opens only via markStorageReady', async () => {
+    // The React gate must cover the legacy Electron migration that init()
+    // runs AFTER initAppStorage — were the facade to open it itself, chat
+    // (etc.) would mount against a pre-migration empty store and its next
+    // save would overwrite the migrated data. So initAppStorage must NOT
+    // resolve the gate; only main.js's post-migration markStorageReady does.
+    let opened = false;
+    whenStorageReady().then(() => { opened = true; });
+
+    await initAppStorage({ backend: makeBackend() });
+    await Promise.resolve(); // flush microtasks
+    await Promise.resolve();
+    expect(opened).toBe(false);
+
+    markStorageReady();
+    await Promise.resolve();
+    expect(opened).toBe(true);
   });
 });

@@ -4,7 +4,7 @@
  */
 
 import { store } from './store.js';
-import { appStorage, initAppStorage } from './appStorage.js';
+import { appStorage, initAppStorage, markStorageReady } from './appStorage.js';
 import {
   renderResume, 
   renderResumeStacked,
@@ -275,21 +275,23 @@ function showMigrationToast(probe, result = null) {
 
 // Initialize the application
 export async function init() {
-  // FIRST: bring up the storage facade. On Tauri this loads the per-key disk
-  // store into memory (and one-time adopts any legacy localStorage data); in
-  // the browser it stays a localStorage passthrough. EVERYTHING below —
-  // legacy migration, settings, theme, store — reads through it.
-  await initAppStorage();
-
-  // Print-mode is now a separate framework-free entry (print.html /
-  // src/printEntry.js calls initPrintMode() directly), so the main window
-  // never short-circuits here.
-
-  // Then: see if there's legacy Electron
-  // data to pull in. Must happen before getSettings() / store
-  // initialization below, since those read from the store we're
-  // about to populate.
-  await maybeAutoMigrateLegacyData();
+  // FIRST: bring up the storage facade, THEN pull in any legacy Electron
+  // data — and only after BOTH settle, open the React mount gate. On the
+  // first Tauri boot after an Electron install the facade comes up empty and
+  // maybeAutoMigrateLegacyData() is what populates it; a component mounted in
+  // between (ChatPanel was the proven case) snapshots the emptiness and its
+  // next save overwrites the migrated data. The finally keeps the gate
+  // deadlock-proof: both steps swallow their own failures internally, and
+  // even an unexpected throw still opens the gate on whatever state we have.
+  //
+  // (Print-mode is a separate framework-free entry — print.html /
+  // src/printEntry.js — so the main window never short-circuits here.)
+  try {
+    await initAppStorage();
+    await maybeAutoMigrateLegacyData();
+  } finally {
+    markStorageReady();
+  }
 
   // Seed the job-descriptions module cache from the now-initialized store,
   // regardless of when JobsDialog mounts. The dialog's own mount effect calls
