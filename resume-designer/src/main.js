@@ -336,9 +336,21 @@ export async function init() {
     try {
       const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
       const win = getCurrentWebviewWindow();
-      await win.onCloseRequested(async () => {
+      await win.onCloseRequested(async (event) => {
+        // preventDefault() the close, drain the last edit to disk, THEN close
+        // explicitly. The onCloseRequested wrapper already awaits this handler
+        // before its own destroy(), and Tauri defers the native close until the
+        // handler resolves — so the flush completes before the window goes
+        // regardless. Doing it via preventDefault()+destroy() is the documented
+        // Tauri contract, so the "flush before close" ordering no longer relies
+        // on that wrapper internal. destroy() forces the close WITHOUT
+        // re-emitting close-requested, so there is no re-entrancy. The flush is
+        // best-effort: on a full disk we still close (trapping the user in an
+        // un-quittable window is worse, and the failure toast already fired).
+        event.preventDefault();
         try { store.saveNow(); } catch { /* nothing pending */ }
-        await appStorage.flush();
+        try { await appStorage.flush(); } catch (flushErr) { console.warn('[Storage] close-flush failed:', flushErr); }
+        await win.destroy();
       });
     } catch (e) {
       console.warn('[Storage] close-flush hook unavailable:', e);
