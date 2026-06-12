@@ -1,11 +1,12 @@
 /**
  * Persistence Layer
- * Handles localStorage auto-save and JSON/Markdown export/import
+ * Handles appStorage auto-save and JSON/Markdown export/import
  */
 
 import { store, generateId } from './store.js';
 import { parseResume } from './parser.js';
 import { isTauri } from './native.js';
+import { appStorage } from './appStorage.js';
 
 const STORAGE_KEY = 'resume-designer-data';
 export const SETTINGS_UPDATED_EVENT = 'resume-designer-settings-updated';
@@ -59,15 +60,15 @@ const DEFAULT_STORAGE = {
   }
 };
 
-// Load all data from localStorage
+// Load all data from storage
 export function loadFromStorage() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = appStorage.getItem(STORAGE_KEY);
     if (raw) {
       return JSON.parse(raw);
     }
   } catch (e) {
-    console.error('Failed to load from localStorage:', e);
+    console.error('Failed to load from storage:', e);
   }
   // Deep clone — a shallow spread would hand callers references to
   // DEFAULT_STORAGE's nested objects (variants/settings/userProfile), and a
@@ -76,13 +77,16 @@ export function loadFromStorage() {
   return structuredClone(DEFAULT_STORAGE);
 }
 
-// Save all data to localStorage
+// Save all data to storage. The try/catch matters in the browser passthrough,
+// where appStorage.setItem is a direct localStorage write that can still throw
+// QuotaExceededError; in cached (Tauri) mode setItem never throws — disk
+// failures surface asynchronously via the facade's own toast.
 export function saveToStorage(data) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    appStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     return true;
   } catch (e) {
-    console.error('Failed to save to localStorage:', e);
+    console.error('Failed to save to storage:', e);
     return false;
   }
 }
@@ -286,7 +290,7 @@ export function exportAsMarkdown(data, filename) {
 
 // ===== Full backup / restore =====
 //
-// Snapshots EVERY localStorage key the app owns (variants, history,
+// Snapshots EVERY appStorage key the app owns (variants, history,
 // settings, chat, job descriptions) into a single JSON envelope. The
 // envelope format is shared with `scripts/migrate-from-electron.mjs` so
 // a JSON produced from the old Electron LevelDB is also importable here.
@@ -345,9 +349,11 @@ function isQuotaExceededError(e) {
 }
 
 /**
- * Write a localStorage key with graceful fallback for history keys
- * specifically. Returns true on success, false if the write was
+ * Write a key through appStorage with graceful fallback for history
+ * keys specifically. Returns true on success, false if the write was
  * skipped because we hit the storage quota AND it was a history key.
+ * (Quota throws only happen in the browser passthrough; cached/Tauri
+ * writes never throw here.)
  *
  * History (undo/redo per variant) can be 100s of KB to multiple MB
  * for users with long edit sessions. WKWebView's per-origin
@@ -364,7 +370,7 @@ function isQuotaExceededError(e) {
  */
 function writeOwnedKeyOrSkip(key, value) {
   try {
-    localStorage.setItem(key, value);
+    appStorage.setItem(key, value);
     return true;
   } catch (e) {
     if (isQuotaExceededError(e) && key.startsWith(BACKUP_HISTORY_PREFIX)) {
@@ -377,25 +383,20 @@ function writeOwnedKeyOrSkip(key, value) {
   }
 }
 
-// Iterate localStorage and return all owned keys. We snapshot first
-// because mutating localStorage during iteration can shift indices.
+// Return all owned keys. appStorage.keys() already hands back a
+// snapshot array, so mutating storage while looping over it is safe.
 function collectOwnedKeys() {
-  const keys = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && isOwnedKey(k)) keys.push(k);
-  }
-  return keys;
+  return appStorage.keys().filter((k) => k && isOwnedKey(k));
 }
 
 /**
- * Write a JSON file containing every owned localStorage key/value.
+ * Write a JSON file containing every owned storage key/value.
  * Returns { keysExported, filename } for the caller to surface in UI.
  */
 export function exportFullBackup(filename) {
   const keys = {};
   for (const k of collectOwnedKeys()) {
-    const v = localStorage.getItem(k);
+    const v = appStorage.getItem(k);
     if (v !== null) keys[k] = v;
   }
   const backup = {
@@ -411,14 +412,14 @@ export function exportFullBackup(filename) {
 }
 
 /**
- * Replace all owned localStorage keys with the contents of an already-
+ * Replace all owned storage keys with the contents of an already-
  * parsed backup envelope. Auto-migration (which receives the envelope
  * directly from a Rust command) and the file-based importer below both
  * funnel through here.
  *
  * Returns { keysImported, removedExistingKeys }. The caller is
  * responsible for prompting/confirming and for ensuring the in-memory
- * store re-reads from localStorage (via reload, or by running this
+ * store re-reads from storage (via reload, or by running this
  * BEFORE the store first reads).
  */
 export function importFullBackupFromEnvelope(parsed) {
@@ -428,8 +429,8 @@ export function importFullBackupFromEnvelope(parsed) {
       'Not a Resume Designer backup envelope (missing "backupFormat: 1").'
     );
   }
-  // Every value must be a string — that's what `localStorage.setItem`
-  // accepts. Catching this here gives a clear error instead of a silent
+  // Every value must be a string — that's what `appStorage.setItem`
+  // stores. Catching this here gives a clear error instead of a silent
   // String() coercion that could corrupt JSON-parseable payloads.
   for (const [k, v] of Object.entries(parsed.keys)) {
     if (typeof v !== 'string') {
@@ -440,7 +441,7 @@ export function importFullBackupFromEnvelope(parsed) {
   // Clean slate: remove every existing owned key so the imported state
   // is the canonical post-import state (no orphan keys from prior use).
   const removed = collectOwnedKeys();
-  for (const k of removed) localStorage.removeItem(k);
+  for (const k of removed) appStorage.removeItem(k);
 
   // Two-pass write to handle the localStorage quota safely:
   //
@@ -465,7 +466,7 @@ export function importFullBackupFromEnvelope(parsed) {
   // Only write keys this app actually owns. A legitimate backup (produced by
   // exportFullBackup) contains owned keys only; any other key in an imported
   // file is corrupt or hostile, so we skip it rather than writing arbitrary
-  // localStorage entries for this origin.
+  // storage entries for this origin.
   const allEntries = Object.entries(parsed.keys);
   const entries = allEntries.filter(([k]) => isOwnedKey(k));
   if (entries.length !== allEntries.length) {
@@ -477,7 +478,7 @@ export function importFullBackupFromEnvelope(parsed) {
   const history = entries.filter(([k]) => k.startsWith(BACKUP_HISTORY_PREFIX));
 
   for (const [k, v] of nonHistory) {
-    localStorage.setItem(k, v);
+    appStorage.setItem(k, v);
   }
   let historySkipped = 0;
   for (const [k, v] of history) {
@@ -492,7 +493,7 @@ export function importFullBackupFromEnvelope(parsed) {
 }
 
 /**
- * Replace all owned localStorage keys with the contents of a backup JSON
+ * Replace all owned storage keys with the contents of a backup JSON
  * file (Tools → Import Backup). Thin wrapper around
  * `importFullBackupFromEnvelope` that handles file-read + JSON-parse
  * with a distinct error message so the UI can distinguish "not JSON"
@@ -511,7 +512,7 @@ export async function importFullBackup(file) {
 
 /**
  * Non-destructive variant of envelope import: UNION the incoming
- * envelope into whatever is already in localStorage. Used by the
+ * envelope into whatever is already in storage. Used by the
  * "Import from previous Electron version… → Merge" menu flow so a
  * user who already has Tauri-side data doesn't lose it when pulling
  * old variants in from the legacy LevelDB.
@@ -576,7 +577,7 @@ export function importFullBackupMerge(parsed) {
   });
 
   for (const [key, incomingValue] of sortedEntries) {
-    const existingValue = localStorage.getItem(key);
+    const existingValue = appStorage.getItem(key);
 
     if (key === 'resume-designer-data') {
       // Merge the data blob: variants union (current wins on
@@ -587,7 +588,7 @@ export function importFullBackupMerge(parsed) {
 
       if (!existingValue) {
         // No current data — just adopt the incoming wholesale.
-        localStorage.setItem(key, incomingValue);
+        appStorage.setItem(key, incomingValue);
         variantsAdded += Object.keys(incomingData?.variants || {}).length;
         continue;
       }
@@ -611,7 +612,7 @@ export function importFullBackupMerge(parsed) {
                                           //   userProfile, settings, etc.
         variants: mergedVariants,
       };
-      localStorage.setItem(key, JSON.stringify(merged));
+      appStorage.setItem(key, JSON.stringify(merged));
     } else if (key === 'resume-designer-job-descriptions') {
       // Union job descriptions, dedupe by id. Handles both array and
       // legacy-object shapes (older Electron snapshots used objects).
@@ -628,7 +629,7 @@ export function importFullBackupMerge(parsed) {
         // (uses .find / .unshift / .filter / spread on the parsed
         // value); writing the raw incoming object would crash the
         // next time the user opened the Job Descriptions panel.
-        localStorage.setItem(key, JSON.stringify(incomingArr));
+        appStorage.setItem(key, JSON.stringify(incomingArr));
         jobDescriptionsAdded += incomingArr.length;
         continue;
       }
@@ -645,7 +646,7 @@ export function importFullBackupMerge(parsed) {
 
       // Always emit as array (current canonical shape).
       const merged = [...existingArr, ...toAdd];
-      localStorage.setItem(key, JSON.stringify(merged));
+      appStorage.setItem(key, JSON.stringify(merged));
     } else {
       // All other owned keys (history, theme, settings, chat threads,
       // etc.): current wins. Only write incoming if no current value.
@@ -660,7 +661,7 @@ export function importFullBackupMerge(parsed) {
             historySkipped++;
           }
         } else {
-          localStorage.setItem(key, incomingValue);
+          appStorage.setItem(key, incomingValue);
           settingsKeysAdded++;
         }
       }

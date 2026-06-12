@@ -3,6 +3,8 @@
  * Handles state updates, change events, and coordinates with persistence
  */
 
+import { appStorage } from './appStorage.js';
+
 // Cryptographically-secure random suffix (replaces Math.random; getRandomValues
 // has no secure-context requirement, so it works in the Tauri custom-scheme
 // webview and the browser build alike).
@@ -191,7 +193,7 @@ function createStore() {
     // Update a field by path WITHOUT recording history or emitting a change.
     // Use for transient UI-only state (e.g. an accordion's collapsed/expanded
     // flag): it persists on the next debounced save — so the value DOES land in
-    // localStorage and exported backups — but must NOT pollute undo history or
+    // appStorage and exported backups — but must NOT pollute undo history or
     // trigger a re-render (a re-render here would defeat the DOM-class toggle the
     // caller just performed). (#9)
     updateSilent(path, value) {
@@ -244,28 +246,29 @@ function createStore() {
       this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
     },
     
-    // Save history to localStorage
+    // Save history to storage (quota throws survive the browser passthrough,
+    // hence the try/catch; cached mode never throws here)
     saveHistory() {
       if (!currentVariantId) return;
-      
+
       try {
         const historyData = {
           history: history,
           historyIndex: historyIndex
         };
-        localStorage.setItem(
-          HISTORY_KEY_PREFIX + currentVariantId, 
+        appStorage.setItem(
+          HISTORY_KEY_PREFIX + currentVariantId,
           JSON.stringify(historyData)
         );
       } catch (e) {
         console.warn('Failed to save history:', e);
       }
     },
-    
-    // Load history from localStorage
+
+    // Load history from storage
     loadHistory(variantId) {
       try {
-        const saved = localStorage.getItem(HISTORY_KEY_PREFIX + variantId);
+        const saved = appStorage.getItem(HISTORY_KEY_PREFIX + variantId);
         if (saved) {
           const historyData = JSON.parse(saved);
           if (historyData.history && Array.isArray(historyData.history)) {
