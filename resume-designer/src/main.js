@@ -19,10 +19,12 @@ import {
 } from './renderer.js';
 import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
-import { initStructurePanel, setDesignSettings } from './structurePanel.js';
-import { initHeaderBar } from './headerBar.js';
-import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
-import { initSettingsModal, loadApiKeysToModal } from './settingsModal.js';
+import { initVariants } from './variantManager.js';
+import { initUpdateFlow } from './updateFlow.js';
+import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
+import { initDiffView } from './diffView.js';
+import { initInlineChanges } from './inlineChanges.js';
+import { initSettingsModal } from './settingsModal.js';
 import { initZoomControls } from './zoomControls.js';
 import { initWindowDrag } from './tauriDrag.js';
 import {
@@ -43,9 +45,8 @@ import {
   importLegacyElectronData,
 } from './native.js';
 import { initTheme } from './theme.js';
-import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
-import { initHistoryPanel, openHistoryPanel } from './historyPanel.js';
-import { initUserProfilePanel, openUserProfilePanel } from './userProfilePanel.js';
+import { openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
+import { openUserProfilePanel } from './userProfilePanel.js';
 import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
 import { initHeaderStyleService, applyHeaderStyle, getHeaderStyleSettings } from './headerStyleService.js';
@@ -272,19 +273,12 @@ function showMigrationToast(probe, result = null) {
 }
 
 // Initialize the application
-async function init() {
-  // Print-mode short-circuit: when this window was opened by pdf.js's hidden
-  // PDF-export window (URL `?print=1`), skip ALL the app chrome init and run
-  // a minimal render-only flow that emits a `print-ready` event when the
-  // resume is laid out and ready for capture. See initPrintMode below.
-  if (typeof location !== 'undefined') {
-    const params = new URLSearchParams(location.search);
-    if (params.get('print') === '1') {
-      return initPrintMode();
-    }
-  }
+export async function init() {
+  // Print-mode is now a separate framework-free entry (print.html /
+  // src/printEntry.js calls initPrintMode() directly), so the main window
+  // never short-circuits here.
 
-  // FIRST thing after print-mode check: see if there's legacy Electron
+  // FIRST thing: see if there's legacy Electron
   // data to pull in. Must happen before getSettings() / store
   // initialization below, since those read from the localStorage we're
   // about to populate.
@@ -353,39 +347,48 @@ async function init() {
   // Initialize photo service
   initPhotoService();
   
-  // Initialize header bar (includes variant management)
-  initHeaderBar(handleVariantChange);
+  // Initialize variant management. The header VIEW is now a React component
+  // (src/components/Header.jsx) that subscribes to this module; main.js only
+  // wires the variant-change callback (re-render + job-panel re-sync). Register
+  // the updater->toast bridge here too, BEFORE startupUpdateCheck() below, so it
+  // catches startup status events.
+  initVariants(handleVariantChange);
+  initUpdateFlow();
 
   // Initialize inline editor
   initInlineEditor();
   
-  // Initialize structure panel with design change callback
-  initStructurePanel(handleStructureChange, handleDesignChange);
-  
-  // Sync design settings to structure panel
-  setDesignSettings(currentPalette, currentLayout, customColor);
-  
+  // The structure panel is now a React component (src/components/structure/
+  // StructurePanel.jsx): it edits the resume directly through the store (the
+  // resume re-renders via the store subscription set up below) and dispatches
+  // rd:design-change for the palette/layout/custom-color changes main.js owns.
+  window.addEventListener('rd:design-change', (e) => handleDesignChange(e.detail));
+
   // Initialize PDF export
   initPdfExport();
   
-  // Initialize chat panel
-  initChatPanel(handleChatApply);
+  // Chat panel is now React (components/chat/ChatPanel.jsx). main.js still owns
+  // the diff/inline-change hosts it drives and wires them with the resume
+  // re-render callback (both apply through the store, which re-renders anyway).
+  initDiffView(handleChatApply);
+  initInlineChanges();
   
   // Initialize zoom controls
   initZoomControls();
   
-  // Initialize job description panel
-  initJobDescriptionPanel();
+  // Job descriptions panel is now React (components/jobs/JobsDialog.jsx), opened
+  // via window.openJobDescriptionPanel below (dispatches rd:open-jobs).
   
-  // Initialize history panel
-  initHistoryPanel();
-  
-  // Initialize user profile panel
-  initUserProfilePanel();
+  // Version history is now a React component (src/components/HistoryDialog.jsx)
+  // that opens on the rd:open-history event (see window.openHistoryPanel below).
+
+  // User profile editor is now React (components/profile/ProfileDialog.jsx),
+  // opened via window.openUserProfilePanel below (dispatches rd:open-profile).
   
   // Expose panel openers and wizards globally
   window.openJobDescriptionPanel = openJobDescriptionPanel;
-  window.openHistoryPanel = openHistoryPanel;
+  // History is React (HistoryDialog) — open it via its window event.
+  window.openHistoryPanel = () => window.dispatchEvent(new CustomEvent('rd:open-history'));
   window.openUserProfilePanel = openUserProfilePanel;
   window.showOnboardingWizard = showOnboardingWizard;
   window.startProfileInterviewFromChat = startProfileInterviewFromPanel;
@@ -436,12 +439,10 @@ async function init() {
   // Initialize settings modal
   initSettingsModal();
 
-  // Keep settings UI synchronized across onboarding/chat/settings flows.
+  // Keep chat availability in sync when settings change. Settings is now a React
+  // dialog (SettingsDialog.jsx) that reads settings reactively, so the old
+  // #settings-modal refresh is gone.
   window.addEventListener(SETTINGS_UPDATED_EVENT, () => {
-    const modal = document.getElementById('settings-modal');
-    if (modal?.classList.contains('show')) {
-      loadApiKeysToModal();
-    }
     refreshChatPanel();
   });
   
@@ -466,7 +467,7 @@ async function init() {
 }
 
 /**
- * Print-mode init for the hidden child window pdf.js spawns at `/?print=1`.
+ * Print-mode init for the hidden child window pdf.js spawns at `/print.html`.
  *
  * Runs ONLY the minimum needed to render the active variant's resume:
  * design services (fonts/spacing/accent/photo/headerStyle) and the renderer
@@ -482,7 +483,7 @@ async function init() {
  * On any failure, emits `print-error` so the main window can surface a
  * meaningful error instead of timing out.
  */
-async function initPrintMode() {
+export async function initPrintMode() {
   // Resolve this print window's own label so every event we emit can be
   // tagged with it. Each PDF export uses a unique label (e.g.
   // `pdf-print-1716234567890`); the main window's listener uses that label
@@ -606,11 +607,6 @@ function handleVariantChange(_variant) {
   renderCurrentResume();
   // Update job description panel analysis for new variant
   onJobPanelVariantChange();
-}
-
-// Handle structure panel changes
-function handleStructureChange() {
-  renderCurrentResume();
 }
 
 // Handle chat panel apply actions
@@ -1048,7 +1044,19 @@ function applyTextCommand(command) {
     if (command === 'clear') result = clearInlineFormatting(target.value || '', start, end);
     if (!result) return;
 
-    target.value = result.value;
+    // Write through the prototype's native value setter, not `target.value =`.
+    // React installs a value-tracker on any input it gives an onChange handler
+    // (e.g. the structure panel's summary textarea); a direct assignment updates
+    // that tracker, so the dispatched input event is deduped and onChange never
+    // fires — the format markers would land in the DOM but never reach the store.
+    // The native setter leaves the tracker stale, so React sees a real change.
+    // For plain vanilla inputs this behaves exactly like `target.value =`.
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    if (valueSetter) valueSetter.call(target, result.value);
+    else target.value = result.value;
     target.focus();
     target.setSelectionRange(result.start, result.end);
     target.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1219,5 +1227,5 @@ function renderCurrentResume() {
   updateTextToolbarState();
 }
 
-// Start the app
-init();
+// init() is invoked by the React entry (src/main.jsx -> App.jsx) after mount;
+// the print window (src/printEntry.js) calls initPrintMode() directly.

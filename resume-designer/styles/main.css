@@ -3,9 +3,13 @@
    ========================================================================== */
 
 :root {
-  /* Typography */
+  /* Typography
+     --font-display / --font-body belong to the RESUME DOCUMENT (resume.css,
+     fontService.js). The app chrome uses --font-ui / --font-mono-ui. */
   --font-display: 'Cormorant Garamond', Georgia, serif;
   --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-ui: 'Geist Sans', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono-ui: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   
   /* Spacing */
   --space-xs: 0.25rem;
@@ -170,7 +174,7 @@ html, body {
 }
 
 body {
-  font-family: var(--font-body);
+  font-family: var(--font-ui);
   font-size: 16px;
   line-height: 1.5;
   color: var(--color-text);
@@ -710,14 +714,17 @@ html[data-theme="dark"] .header-variant-select {
   overflow: hidden;
 }
 
-/* Zoom Controls Toolbar */
+/* Zoom Controls Toolbar — floating "zoom pill" (approved mockup .zoom-pill):
+   light surface, 11px radius, 1px border, hairline dividers, tabular-nums
+   readout, ghost icon buttons. Glass overrides layer translucency under Tauri. */
 .zoom-controls {
   display: flex;
   align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  background: rgba(45, 42, 38, 0.95);
-  border-radius: 8px;
+  gap: 2px;
+  padding: 4px;
+  background: var(--color-panel-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
   /* Anchored to .preview-area (position:relative) rather than the viewport, so
      it centers on the content column at first paint and tracks sidebar open/close.
      position:fixed centered on 50vw landed it far-left until a reflow corrected it. */
@@ -726,7 +733,7 @@ html[data-theme="dark"] .header-variant-select {
   left: 50%;
   transform: translateX(-50%);
   z-index: 50;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 22px -8px rgba(45, 42, 38, 0.25);
   max-width: calc(100% - 24px);
   flex-wrap: wrap;
   justify-content: center;
@@ -736,19 +743,19 @@ html[data-theme="dark"] .header-variant-select {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   background: transparent;
   border: none;
-  border-radius: 6px;
-  color: rgba(248, 246, 243, 0.8);
+  border-radius: 7px;
+  color: var(--color-text-muted);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .zoom-btn:hover {
-  background: rgba(248, 246, 243, 0.1);
-  color: var(--color-sidebar-text);
+  background: var(--color-hover-bg);
+  color: var(--color-text);
 }
 
 .zoom-btn:active {
@@ -756,25 +763,26 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 .zoom-level {
-  min-width: 50px;
-  padding: 0 var(--space-sm);
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: rgba(248, 246, 243, 0.9);
+  min-width: 44px;
+  padding: 0 7px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .zoom-divider {
   width: 1px;
-  height: 20px;
-  background: rgba(248, 246, 243, 0.2);
-  margin: 0 var(--space-xs);
+  height: 18px;
+  background: var(--color-border);
+  margin: 0 4px;
 }
 
 .text-tools {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-xs);
+  gap: 2px;
 }
 
 .text-tool-label {
@@ -784,7 +792,7 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 .text-size-level {
-  min-width: 46px;
+  min-width: 42px;
   padding: 0 4px;
 }
 
@@ -795,20 +803,20 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 .text-tool-btn.active {
-  background: rgba(248, 246, 243, 0.18);
-  color: var(--color-sidebar-text);
+  background: var(--color-accent-soft, rgba(196, 92, 62, 0.12));
+  color: var(--color-accent);
 }
 
 .zoom-btn:disabled,
 .zoom-btn.disabled {
-  opacity: 0.3;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .zoom-btn:disabled:hover,
 .zoom-btn.disabled:hover {
   background: transparent;
-  color: rgba(248, 246, 243, 0.8);
+  color: var(--color-text-muted);
 }
 
 /* Resume Scroller - handles all scrolling */
@@ -939,178 +947,8 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 /* ==========================================================================
-   Settings Modal Specific Styles
+   Form controls (shared by the print-window Settings modal + backup modal)
    ========================================================================== */
-
-.settings-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  background: #fef3c7;
-  border-radius: 8px;
-  font-size: 0.875rem;
-  color: #92400e;
-  margin-bottom: var(--space-lg);
-}
-
-.settings-warning svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.settings-section {
-  margin-bottom: var(--space-lg);
-}
-
-.settings-section-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  margin: 0 0 var(--space-sm);
-  color: var(--color-text);
-}
-
-.settings-hint {
-  font-size: 0.8rem;
-  color: var(--color-text-muted);
-  margin: var(--space-xs) 0 0;
-  line-height: 1.4;
-}
-
-.settings-checkbox {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-xs);
-  font-size: 0.85rem;
-  color: var(--color-text);
-  cursor: pointer;
-}
-
-.settings-checkbox input[type="checkbox"] {
-  margin-top: 2px;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-
-.api-key-input-wrapper {
-  display: flex;
-  gap: var(--space-xs);
-}
-
-.api-key-input {
-  flex: 1;
-  font-family: monospace;
-}
-
-.api-key-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border-light);
-  border-radius: 4px;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.api-key-toggle:hover {
-  background: var(--color-bg-dark);
-  color: var(--color-text);
-}
-
-.settings-actions {
-  display: flex;
-  gap: var(--space-sm);
-  justify-content: flex-end;
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--color-border);
-  margin-top: var(--space-lg);
-}
-
-/* Action rows inside a section (Data / Updates) — left-aligned, no footer rule. */
-.settings-actions-left {
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  border-top: none;
-  padding-top: 0;
-  margin-top: var(--space-sm);
-}
-
-/* General tab: horizontal theme picker. Reuses .theme-option (built for the
-   header dropdown) but lays the three out as side-by-side cards. */
-.settings-theme-options {
-  display: flex;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-.settings-theme-options .theme-option {
-  flex: 1 1 0;
-  width: auto;
-  min-width: 90px;
-  justify-content: center;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  /* The base .theme-option palette was built for the old dark header menu;
-     use theme-aware vars so the label + icon stay legible on the panel in
-     every mode — notably System on a light OS, where no data-theme rule
-     applied and the text/icon rendered near-white on a light background. */
-  color: var(--color-text);
-}
-.settings-theme-options .theme-option svg {
-  color: var(--color-text-muted);
-}
-/* Override the dropdown's between-item divider in this horizontal context. */
-.settings-theme-options .theme-option + .theme-option {
-  border-top: 1px solid var(--color-border);
-}
-
-/* Updates tab: segmented Stable/Beta channel control. */
-.settings-segmented {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  background: var(--color-bg-dark);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-}
-.settings-segment {
-  appearance: none;
-  border: none;
-  background: none;
-  padding: var(--space-xs) var(--space-lg);
-  border-radius: 6px;
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.settings-segment:hover {
-  color: var(--color-text);
-}
-.settings-segment.active {
-  background: var(--color-accent);
-  color: #fff;
-}
-
-/* Inline code in settings hints (e.g. the `next` branch name). */
-.settings-hint code {
-  font-family: monospace;
-  font-size: 0.78rem;
-  background: var(--color-bg-dark);
-  padding: 1px 5px;
-  border-radius: 4px;
-}
-
-/* ==========================================================================
-   PDF Dialog
-   ========================================================================== */
-
-.pdf-dialog {
-  max-width: 400px;
-}
 
 .form-group {
   margin-bottom: var(--space-lg);
@@ -1138,38 +976,6 @@ html[data-theme="dark"] .header-variant-select {
 .form-input:focus {
   outline: none;
   border-color: var(--color-accent);
-}
-
-.pdf-filename-wrapper {
-  display: flex;
-  align-items: stretch;
-}
-
-.pdf-filename-wrapper .form-input {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  border-right: none;
-}
-
-.pdf-extension {
-  display: flex;
-  align-items: center;
-  padding: 0 var(--space-md);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-left: none;
-  border-radius: 0 6px 6px 0;
-  font-family: var(--font-body);
-  font-size: 0.875rem;
-  color: var(--color-text-muted);
-}
-
-.pdf-dialog-actions {
-  display: flex;
-  gap: var(--space-sm);
-  justify-content: flex-end;
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--color-border);
 }
 
 /* ==========================================================================
@@ -1358,123 +1164,6 @@ html[data-theme="dark"] .header-variant-select {
 }
 
 /* ==========================================================================
-   Settings Theme Picker (.theme-option)
-   ========================================================================== */
-
-html[data-theme="light"] .theme-option svg {
-  color: var(--color-text-muted);
-}
-
-/* System preference dark mode fallback */
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .theme-option {
-    color: #e8e4df;
-  }
-  
-  html:not([data-theme="light"]) .theme-option svg {
-    color: #9a9590;
-  }
-}
-
-.theme-option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  width: 100%;
-  padding: var(--space-sm) var(--space-md);
-  background: none;
-  border: none;
-  color: #e8e4df; /* Default to light text for dark backgrounds */
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.theme-option svg {
-  color: #b8b4af; /* Lighter icon color */
-}
-
-/* Light mode - dark text */
-html[data-theme="light"] .theme-option {
-  color: #2d2a26;
-}
-
-html[data-theme="light"] .theme-option svg {
-  color: #6b6560;
-}
-
-/* Dark mode - light text (explicit) */
-html[data-theme="dark"] .theme-option {
-  color: #e8e4df;
-}
-
-html[data-theme="dark"] .theme-option svg {
-  color: #b8b4af;
-}
-
-/* System preference dark mode */
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .theme-option {
-    color: #e8e4df;
-  }
-  
-  html:not([data-theme="light"]) .theme-option svg {
-    color: #b8b4af;
-  }
-}
-
-.theme-option:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #d97a5d; /* Accent color */
-}
-
-html[data-theme="light"] .theme-option:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #c45c3e;
-}
-
-.theme-option.selected {
-  background: rgba(196, 92, 62, 0.15);
-  color: var(--color-accent);
-}
-
-/* Force selected option to be visible in all modes */
-html[data-theme="light"] .theme-option.selected,
-html:not([data-theme]) .theme-option.selected {
-  background: rgba(196, 92, 62, 0.15);
-  color: #c45c3e;
-}
-
-html[data-theme="dark"] .theme-option.selected {
-  background: rgba(217, 122, 93, 0.2);
-  color: #d97a5d;
-}
-
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .theme-option.selected {
-    background: rgba(217, 122, 93, 0.2);
-    color: #d97a5d;
-  }
-}
-
-.theme-option + .theme-option {
-  border-top: 1px solid var(--color-border-light);
-}
-
-/* Force border visibility */
-html[data-theme="dark"] .theme-option + .theme-option {
-  border-color: #3d3a36;
-}
-
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .theme-option + .theme-option {
-    border-color: #3d3a36;
-  }
-}
-
-/* ==========================================================================
    Spinner animation
    ========================================================================== */
 
@@ -1487,191 +1176,8 @@ html[data-theme="dark"] .theme-option + .theme-option {
   to { transform: rotate(360deg); }
 }
 
-/* ==========================================================================
-   Settings Tabs
-   ========================================================================== */
-
 .modal-wide {
   max-width: 640px;
-}
-
-.settings-tabs {
-  display: flex;
-  gap: var(--space-xs);
-  padding: 0 var(--space-lg);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-panel-header);
-}
-
-.settings-tab {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md) var(--space-lg);
-  background: none;
-  border: none;
-  font-family: var(--font-body);
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: var(--transition-fast);
-}
-
-.settings-tab:hover {
-  color: var(--color-text);
-}
-
-.settings-tab.active {
-  color: var(--color-accent);
-  border-bottom-color: var(--color-accent);
-}
-
-.settings-tab svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-.settings-tab-content {
-  display: none;
-}
-
-.settings-tab-content.active {
-  display: block;
-}
-
-/* ==========================================================================
-   Usage Panel / Token Usage Stats
-   ========================================================================== */
-
-.usage-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-}
-
-.usage-summary {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-md);
-}
-
-.usage-stat-card {
-  background: var(--color-bg);
-  border: 1px solid var(--color-border-light);
-  border-radius: 8px;
-  padding: var(--space-md);
-  text-align: center;
-}
-
-.usage-stat-label {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: var(--space-xs);
-}
-
-.usage-stat-value {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--color-text);
-  font-family: var(--font-body);
-}
-
-.usage-stat-value.usage-cost {
-  color: var(--color-accent);
-}
-
-.usage-breakdown {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.usage-breakdown-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--color-text);
-  margin: 0;
-}
-
-.usage-table-container {
-  border: 1px solid var(--color-border-light);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.usage-table-scrollable {
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.usage-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8125rem;
-}
-
-.usage-table thead {
-  background: var(--color-bg);
-  position: sticky;
-  top: 0;
-}
-
-.usage-table th {
-  padding: var(--space-sm) var(--space-md);
-  text-align: left;
-  font-weight: 600;
-  color: var(--color-text-muted);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--color-border-light);
-}
-
-.usage-table th:not(:first-child) {
-  text-align: right;
-}
-
-.usage-table td {
-  padding: var(--space-sm) var(--space-md);
-  border-bottom: 1px solid var(--color-border-light);
-  color: var(--color-text);
-}
-
-.usage-table td:not(:first-child) {
-  text-align: right;
-  font-family: var(--font-body);
-  font-variant-numeric: tabular-nums;
-}
-
-.usage-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.usage-table tbody tr:hover {
-  background: var(--color-hover-bg);
-}
-
-.usage-empty-row td {
-  color: var(--color-text-muted);
-  font-style: italic;
-  text-align: center !important;
-  padding: var(--space-lg);
-}
-
-.usage-model-name {
-  font-weight: 500;
-  word-break: break-word;
-}
-
-.usage-feature-name {
-  text-transform: capitalize;
 }
 
 .btn-danger {
@@ -1681,16 +1187,6 @@ html[data-theme="dark"] .theme-option + .theme-option {
 .btn-danger:hover {
   background: rgba(220, 53, 69, 0.1);
   color: #dc3545;
-}
-
-.settings-actions .btn svg {
-  flex-shrink: 0;
-}
-
-.settings-actions .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
 }
 
 /* ==========================================================================

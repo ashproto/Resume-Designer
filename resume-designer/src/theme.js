@@ -90,11 +90,13 @@ function applyTheme(theme) {
 }
 
 /**
- * Update theme UI elements
+ * Update theme UI elements.
+ *
+ * The legacy vanilla theme-picker dropdown this used to sync is gone — the React
+ * SettingsDialog (and the header toggle) now reflect the active theme via
+ * component state and the `themechange` event dispatched in applyTheme(). No DOM
+ * element needs updating here anymore, so this is a no-op kept for its callers.
  */
 function updateThemeUI() {
-  // Update selected state in dropdown
-  document.querySelectorAll('.theme-option').forEach(opt => {
-    opt.classList.toggle('selected', opt.dataset.theme === currentTheme);
-  });
+  // Intentionally empty (see above).
 }

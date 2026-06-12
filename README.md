@@ -29,8 +29,10 @@ Your résumé data never leaves your machine except for the AI calls you explici
 
 **AI assistant (bring your own key)**
 - One [OpenRouter](https://openrouter.ai) key → many models (Claude, GPT, Gemini, and more), with a model picker and per-model reasoning-effort control.
-- **Tailor to a job description**: paste a posting and let the assistant rewrite your résumé for it — applied as **inline diffs you review** before they land.
-- A chat panel for free-form drafting/feedback, with **token-usage and cost tracking**.
+- **Generate a résumé for a job**: paste a posting and the assistant builds a brand-new tailored variant from your master profile.
+- **Tailor an existing résumé**: the assistant rewrites it for a posting — applied as **inline diffs you review** before they land.
+- Responses **stream live, including the model's reasoning**, with a stop control, web-search **citations**, and per-run token/cost stats.
+- A chat panel for free-form drafting/feedback, with **token-usage and cost tracking** across every feature.
 
 **Import & export**
 - **Import an existing résumé** from PDF or Word (`.docx`) to bootstrap your profile.
@@ -76,12 +78,12 @@ Your key is stored locally on your device and is sent only to OpenRouter to make
 ## Privacy & data
 
 - **Local-first:** résumés, profile, and settings live in your browser/app local storage on your device.
-- **No account, no backend, no analytics.** Network use is limited to three things: the AI requests you make to OpenRouter; the desktop app's automatic update check on launch (GitHub Releases); and **web fonts** — the default typography preset pulls fonts from Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`), which you can avoid by choosing a system-font pairing in Settings. (The desktop update check runs regardless; the browser build makes neither call.)
+- **No account, no backend, no analytics.** Network use is limited to three things: the AI requests you make to OpenRouter; the desktop app's automatic update check on launch (GitHub Releases); and **web fonts for the résumé document** — the built-in typography pairings load from Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`) at launch. The app's own UI fonts (Geist) are bundled and make no request. (The desktop update check runs regardless; the browser build checks for neither updates nor telemetry.)
 - Export a full **JSON backup** any time, and import it on another machine.
 
 ## Run from source
 
-The app is a vanilla-JS + [Vite](https://vitejs.dev/) front end wrapped in a [Tauri 2](https://v2.tauri.app/) desktop shell. All commands run from the `resume-designer/` directory.
+The app is a [React](https://react.dev/) + [Vite](https://vitejs.dev/) front end wrapped in a [Tauri 2](https://v2.tauri.app/) desktop shell. All commands run from the `resume-designer/` directory.
 
 ```bash
 git clone https://github.com/SiriusA7/Resume-Designer.git
@@ -111,10 +113,10 @@ Full build, signing, notarization, and release details are in [`resume-designer/
 
 ## Tech stack
 
-- **Front end:** vanilla JavaScript (no UI framework) + Vite 5, with a small reactive store.
-- **Desktop shell:** Tauri 2 (Rust) — native dialogs, file system, auto-updater, and a WKWebView/WebView2-based PDF capture.
-- **AI:** [OpenRouter](https://openrouter.ai) HTTP API (bring your own key).
-- **Notable libraries:** `pdfjs-dist` + `mammoth` (PDF/DOCX import), `html2pdf.js` + `html-to-image` (browser PDF export), `marked` (chat rendering), `diff` (inline AI-edit diffs).
+- **Front end:** [React 19](https://react.dev/) + [shadcn/ui](https://ui.shadcn.com/) (Radix + Tailwind) for the app chrome, with the resume document rendered by framework-free vanilla JS that the React shell hosts but never touches; Vite and a small reactive store underneath. Chrome typography is [Geist](https://vercel.com/font), self-hosted via `@fontsource`.
+- **Desktop shell:** Tauri 2 (Rust) — native dialogs, file system, auto-updater, and a WKWebView/WebView2-based PDF capture through a hidden `print.html` window.
+- **AI:** [OpenRouter](https://openrouter.ai) HTTP API (bring your own key), streamed over SSE with live reasoning, citations, and usage accounting.
+- **Notable libraries:** `pdfjs-dist` + `mammoth` (PDF/DOCX import), `html2pdf.js` + `html-to-image` (browser PDF export), `marked` + `DOMPurify` (sanitized chat rendering), `diff` (inline AI-edit diffs), `@dnd-kit` (drag-to-reorder), `sonner` (toasts), `lucide-react` (icons).
 
 ## Contributing
 

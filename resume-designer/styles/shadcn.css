@@ -1,0 +1,211 @@
+/*
+ * shadcn/ui + Tailwind layer for the React app chrome.
+ *
+ * Tailwind utilities (Preflight disabled — see tailwind.config.js) plus the
+ * shadcn design-token contract expressed as ALIASES onto the app's existing 49
+ * CSS variables (styles/main.css). Because each shadcn token points at a
+ * --color-* var that already themes via [data-theme] and the
+ * prefers-color-scheme fallback, shadcn surfaces inherit light/dark/system
+ * theming with no extra wiring.
+ *
+ * Loaded by the React bundle (src/main.jsx, Step 4); the vanilla app and the
+ * PDF print window never import it.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The React root hosts the vanilla `.app` skeleton (App.jsx). display:contents
+   makes #root layout-transparent so `.app` keeps its body-level flex/grid. */
+#root {
+  display: contents;
+}
+
+/* Form-control normalization — the subset of Tailwind Preflight that shadcn
+   components depend on. Preflight as a whole is disabled (it would flatten the
+   resume's headings/lists/margins and fight the 13.5k-line vanilla CSS — see
+   tailwind.config.js), but WITHOUT this subset native <button>/<input>/<select>/
+   <textarea> fall back to the UA default font (Arial) and native chrome, which
+   renders as dated "native" controls in WKWebView (the macOS Tauri webview) and
+   was the cause of the Settings dialog looking unstyled. These are element-level
+   rules, so the vanilla CSS's class-based control styles (.btn, .form-input, …)
+   still win on specificity — only the otherwise-unstyled shadcn controls change. */
+@layer base {
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    font-size: 100%;
+    font-weight: inherit;
+    line-height: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    margin: 0;
+  }
+  button,
+  select {
+    text-transform: none;
+  }
+  /* Scoped to the `button` ELEMENT selector (0,0,1) — deliberately NOT the
+     Preflight `[type='button'],[type='reset'],[type='submit']` attribute
+     selectors (0,1,0). Those tie the specificity of single-class button rules
+     (.btn-primary, .theme-option, shadcn variants); because this reset lives in
+     the React CSS bundle that loads AFTER the link-tag main.css, the tie broke
+     in favour of `background-color: transparent` and blanked the accent on any
+     bespoke `.btn-primary`/`type="button"` button (e.g. Settings "Save"). The
+     element selector still neutralizes native <button> chrome for unstyled /
+     ghost buttons, but loses to ANY class-set background regardless of load
+     order. (No <input type="button|submit|reset"> exists in the app.) */
+  button {
+    -webkit-appearance: button;
+    appearance: button;
+    background-color: transparent;
+    background-image: none;
+  }
+  :-moz-focusring {
+    outline: auto;
+  }
+  ::-moz-focus-inner {
+    border-style: none;
+    padding: 0;
+  }
+  textarea {
+    resize: vertical;
+  }
+}
+
+@layer base {
+  :root {
+    --background: var(--color-bg);
+    --foreground: var(--color-text);
+
+    --card: var(--color-panel-bg);
+    --card-foreground: var(--color-text);
+    --popover: var(--color-panel-bg);
+    --popover-foreground: var(--color-text);
+
+    /* Accent is a warm terracotta in BOTH themes (#c45c3e / #d97a5d), so white
+       foreground reads on it in light and dark alike. */
+    --primary: var(--color-accent);
+    --primary-foreground: #ffffff;
+
+    --secondary: var(--color-bg-dark);
+    --secondary-foreground: var(--color-text);
+
+    --muted: var(--color-bg-dark);
+    --muted-foreground: var(--color-text-muted);
+
+    /* shadcn `accent` = the hover/active surface for menu items etc. Reuse the
+       app's native hover tint so menus highlight on-brand. */
+    --accent: var(--color-hover-bg);
+    --accent-foreground: var(--color-text);
+
+    /* Status tokens (spec §2.4). Unlike the aliases above these are raw values
+       (main.css has no --color-* status palette), so they need their own dark
+       overrides below — mirroring main.css's [data-theme="dark"] +
+       prefers-color-scheme fallback pattern. */
+    --success: #3d7a4f;
+    --success-bg: #e9f2ec;
+    --warning: #9a6b1f;
+    --warning-bg: #f7efdd;
+    --destructive: #b3402e;
+    --destructive-bg: #f7e9e6;
+    --destructive-foreground: #ffffff;
+
+    --border: var(--color-border);
+    --input: var(--color-input-bg);
+    --ring: var(--color-accent);
+
+    /* 10px. Drives the shadcn radius scale (lg=10, md=8, sm=6) to match the
+       approved mockup geometry: cards/menus 10px, buttons/inputs 8px. The
+       dialog (14px) is overridden directly in ui/dialog.jsx. */
+    --radius: 0.625rem;
+  }
+
+  [data-theme="dark"] {
+    --success: #82c79a;
+    --success-bg: rgba(61, 122, 79, 0.25);
+    --warning: #d9a84e;
+    --warning-bg: rgba(154, 107, 31, 0.25);
+    --destructive: #e07a6a;
+    --destructive-bg: rgba(179, 64, 46, 0.25);
+  }
+
+  /* System preference fallback — same pattern as main.css. White foreground
+     stays readable on the dark #e07a6a, matching the app's terracotta-accent
+     convention (white-on-accent in both themes). */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --success: #82c79a;
+      --success-bg: rgba(61, 122, 79, 0.25);
+      --warning: #d9a84e;
+      --warning-bg: rgba(154, 107, 31, 0.25);
+      --destructive: #e07a6a;
+      --destructive-bg: rgba(179, 64, 46, 0.25);
+    }
+  }
+}
+
+/* ==========================================================================
+   Liquid-glass for shadcn / Radix surfaces  (Tauri desktop shell only)
+   --------------------------------------------------------------------------
+   Mirrors the tier model in styles/glass.css and REUSES its --glass-* tokens,
+   so the `prefers-reduced-transparency` block there (which flips every
+   --glass-*-pct to 100% and --glass-blur to none) neutralizes these surfaces
+   too — no per-rule fallback needed here.
+
+   These rules are intentionally UNLAYERED so they win over both the @layer base
+   aliases above and the Tailwind utility classes (bg-popover/bg-card/…), which
+   live in lower-priority layers. Active only under <html data-tauri="true">
+   (Tauri, or ?translucent in a browser), so a plain browser stays opaque.
+   ========================================================================== */
+
+/* Tint — redefine the floating + card surface tokens translucent under the
+   shell. `--input` is already made translucent by glass.css (via
+   --color-input-bg), so inputs inherit it for free. */
+:root[data-tauri="true"] {
+  --popover: color-mix(in srgb, var(--color-panel-bg) var(--glass-menu-pct), transparent);
+  --card: color-mix(in srgb, var(--color-panel-bg) var(--glass-content-pct), transparent);
+}
+
+/* Blur — portalled floating content (dropdown / select / combobox / popover /
+   tooltip) renders at document.body level, so its backdrop-filter samples the
+   page for real. This is exactly the nested-backdrop-filter defeat that
+   menuPortal.js worked around for the vanilla menus; Radix's body portal
+   supersedes that hack (the old #glass-portal layer and menuPortal.js are gone). */
+:root[data-tauri="true"] [data-radix-popper-content-wrapper] > * {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* Stacking — Radix floating content (select / dropdown / combobox / popover /
+   tooltip) portals to document.body, so it competes at the root layer with the
+   app's custom high-z overlays: the onboarding wizard (z-3000) and the jobs
+   analysis overlay (z-2200). Radix's default z-50 renders the dropdown BEHIND
+   them — e.g. the model picker inside the onboarding wizard was unreachable.
+   Lift the popper wrapper above every app overlay. (!important guarantees the
+   override regardless of where Radix sets the base z-index.) */
+[data-radix-popper-content-wrapper] {
+  z-index: 3100 !important;
+}
+
+/* Dialog + Sheet content = modal tier: frosted, a touch more opaque for their
+   dense content (matches the vanilla `.modal` rule). [role="dialog"] is set by
+   Radix Dialog/Sheet/AlertDialog/CommandDialog content; vanilla `.modal`s don't
+   set it, so there's no cross-hit. */
+:root[data-tauri="true"] [role="dialog"] {
+  background: color-mix(in srgb, var(--color-modal-bg) var(--glass-modal-pct), transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* Lighten the modal scrim (the `glass-overlay` class is added to the shadcn
+   Dialog/Sheet Overlay components in Step 3) so the wallpaper vibrancy still
+   reads behind an open dialog — same treatment as glass.css gives `.modal-overlay`. */
+:root[data-tauri="true"] .glass-overlay {
+  background: color-mix(in srgb, var(--color-modal-overlay) 70%, transparent);
+}

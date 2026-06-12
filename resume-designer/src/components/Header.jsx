@@ -1,0 +1,378 @@
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  Plus, Copy, Pencil, Trash2, MoreHorizontal, Wrench, Upload, Download,
+  ChevronDown, Settings, FileDown, User, Briefcase, History, Menu, Check, Loader2,
+} from 'lucide-react';
+import { toast } from 'sonner';
+
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { confirmDestructive } from '@/components/ui/confirm';
+import { cn } from '@/lib/utils';
+
+import { useVariants } from '../hooks/useVariants.js';
+import {
+  loadVariant, duplicateVariant, deleteCurrentVariant, renameCurrentVariant,
+  importVariant, exportCurrentVariant,
+} from '../variantManager.js';
+import { openSettings } from '../settingsModal.js';
+
+// Format a variant's updatedAt for the selector menu (relative, then absolute).
+function formatDate(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  const diffDays = Math.floor((Date.now() - date.getTime()) / 86_400_000);
+  if (diffDays === 0) return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// Variant-action menu items, shared verbatim by the kebab menu (768–1400px) and
+// the mobile hamburger (≤768px) so the two can't drift. The expanded icon-button
+// mode (>1400px) is a separate <Button> map (a different element) and stays inline
+// at its render site. `danger` flags the Delete entry with destructive text.
+function VariantMenuItems({ actions }) {
+  return actions.map(({ key, label, Icon, run, danger }) => (
+    <DropdownMenuItem
+      key={key}
+      onSelect={run}
+      className={danger ? 'text-destructive focus:text-destructive' : undefined}
+    >
+      <Icon className="size-4" />
+      {label}
+    </DropdownMenuItem>
+  ));
+}
+
+/**
+ * The app header, restyled onto genuine shadcn primitives + Tailwind for the
+ * full-shadcn chrome redesign (spec §5.3). This is a presentation-only pass:
+ * every handler, prop, event, and contract from the prior header is preserved —
+ * only the markup/styling changed (real <Button>/<DropdownMenu> in place of the
+ * bespoke `.header-*` / `.custom-dropdown*` classes).
+ *
+ * Rendered via createPortal into the empty `<header id="header-bar">` left in the
+ * static skeleton. That element is NEVER replaced: it owns the bar's flex layout,
+ * the liquid-glass background (glass.css frosts `.header-bar`), the macOS
+ * traffic-light padding (driven by `<html>` classes from main.js), and the
+ * window-drag region (tauriDrag.js attaches its mousedown handler to it). We
+ * portal our content INTO it and return `null` if it is missing.
+ *
+ * Drag-safety: every interactive element below is a real shadcn `<Button>`
+ * (renders a `<button>`) or a Radix DropdownMenu item (`role="menuitem"`), all of
+ * which tauriDrag.js exempts from the drag handler; the two zone wrappers also
+ * carry `data-no-drag`. Radix menus portal to `<body>` (default) so they frost
+ * correctly outside the header. No `.header-*`/`.custom-dropdown*` class names are
+ * applied here.
+ *
+ * Variant CRUD lives in variantManager.js; this component is the view + the
+ * rename dialog. deleteCurrentVariant() is unconditional (the confirm was lifted
+ * out of variantManager), so the Header owns the delete confirmation (shadcn
+ * AlertDialog via confirmDestructive) + the last-variant guard. The PDF button
+ * proxies the hidden `#download-pdf` button wired by pdf.js and reflects its
+ * generation state via the rd:pdf-busy event.
+ */
+export default function Header() {
+  const { currentId, list } = useVariants();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const importInputRef = useRef(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  // Mirror pdf.js's generation state onto the visible PDF button (rd:pdf-busy).
+  useEffect(() => {
+    const onPdfBusy = (e) => setPdfBusy(!!e.detail?.busy);
+    window.addEventListener('rd:pdf-busy', onPdfBusy);
+    return () => window.removeEventListener('rd:pdf-busy', onPdfBusy);
+  }, []);
+
+  const host = typeof document !== 'undefined' ? document.getElementById('header-bar') : null;
+  if (!host) return null;
+
+  const currentName = list.find((v) => v.id === currentId)?.name || 'Select Resume';
+
+  const newVariant = () => window.showOnboardingWizard?.({ skipApiKeyStep: true });
+  const openRename = () => {
+    setRenameValue(currentName);
+    setRenameOpen(true);
+  };
+  const submitRename = (e) => {
+    e.preventDefault();
+    if (renameCurrentVariant(renameValue)) setRenameOpen(false);
+  };
+  const pickImport = () => importInputRef.current?.click();
+  const onImportChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      importVariant(file);
+      e.target.value = ''; // allow re-importing the same file
+    }
+  };
+
+  // deleteCurrentVariant() is unconditional now (the confirm was lifted out of
+  // variantManager into the caller), so the Header owns the confirmation + the
+  // last-variant guard.
+  const handleDelete = async () => {
+    if (list.length <= 1) {
+      toast.info("You can't delete your only resume.");
+      return;
+    }
+    const ok = await confirmDestructive({
+      title: 'Delete this resume?',
+      description: `"${currentName}" will be permanently deleted. This can't be undone.`,
+      actionLabel: 'Delete',
+    });
+    if (ok) deleteCurrentVariant();
+  };
+
+  // Variant action items reused by the expanded icon buttons, the kebab menu, and
+  // the mobile hamburger. Delete is flagged `danger` and runs handleDelete, which
+  // owns the confirm AlertDialog + the last-variant guard.
+  const variantActions = [
+    { key: 'new', label: 'New Resume', Icon: Plus, run: newVariant },
+    { key: 'duplicate', label: 'Duplicate', Icon: Copy, run: duplicateVariant },
+    { key: 'rename', label: 'Rename', Icon: Pencil, run: openRename },
+    { key: 'delete', label: 'Delete', Icon: Trash2, run: handleDelete, danger: true },
+  ];
+  const toolItems = [
+    { key: 'profile', label: 'User Profile', Icon: User, run: () => window.openUserProfilePanel?.() },
+    { key: 'jobs', label: 'Job Descriptions', Icon: Briefcase, run: () => window.openJobDescriptionPanel?.() },
+    { key: 'history', label: 'Version History', Icon: History, run: () => window.openHistoryPanel?.() },
+  ];
+
+  return createPortal(
+    <>
+      {/* LEFT ZONE — brand + variant selector + (wide) variant icon actions.
+          A single flex child so the skeleton bar's `justify-content:space-between`
+          pins it to the start. `min-w-0` lets the variant name ellipsize. */}
+      <div data-no-drag className="flex min-w-0 items-center gap-3.5">
+        {/* Brand: terracotta rounded-square mark + Geist 600 wordmark.
+            Geometry pinned to mockup: 24px mark, rounded-[7px], 14.5px wordmark. */}
+        <div className="flex shrink-0 items-center gap-2.5">
+          <span className="flex size-6 items-center justify-center rounded-[7px] bg-primary text-[13px] font-bold text-primary-foreground">
+            R
+          </span>
+          <span className="whitespace-nowrap text-[14.5px] font-semibold tracking-[-0.01em]">
+            Resume Designer
+          </span>
+        </div>
+
+        <div className="flex min-w-0 items-center gap-1.5">
+          {/* Variant selector — outline combobox-style trigger → standard menu. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-[34px] max-w-[230px] px-3 text-[13.5px] font-medium max-[900px]:max-w-[180px] max-[768px]:max-w-[160px] max-[500px]:max-w-[120px]"
+              >
+                <span className="min-w-0 truncate">{currentName}</span>
+                <ChevronDown className="size-[13px] shrink-0 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-[60vh] min-w-56 overflow-y-auto">
+              {list.map((v) => (
+                <DropdownMenuItem key={v.id} onSelect={() => loadVariant(v.id)}>
+                  <Check className={cn('size-3.5 shrink-0', v.id !== currentId && 'opacity-0')} />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{v.name}</span>
+                    {v.updatedAt && (
+                      <span className="text-xs text-muted-foreground">{formatDate(v.updatedAt)}</span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Expanded variant actions — ghost icon buttons, only >1400px. */}
+          <div className="hidden items-center gap-0.5 min-[1401px]:flex">
+            {variantActions.map(({ key, label, Icon, run, danger }) => (
+              <Button
+                key={key}
+                variant="ghost"
+                size="icon"
+                className={cn('size-8', danger && 'hover:text-destructive')}
+                title={label}
+                aria-label={label}
+                onClick={run}
+              >
+                <Icon className="size-4" />
+              </Button>
+            ))}
+          </div>
+
+          {/* Collapsed variant actions — kebab menu, only 769px–1400px (at/below
+              768px the hamburger takes over; above 1400px the expanded icons do). */}
+          <div className="hidden min-[769px]:max-[1400px]:flex">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="size-8" title="Resume actions" aria-label="Resume actions">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <VariantMenuItems actions={variantActions} />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT ZONE — tools / import / export / settings / PDF + mobile menu.
+          The second flex child, pinned to the end by `space-between`. */}
+      <div data-no-drag className="flex shrink-0 items-center gap-1.5 max-[900px]:gap-1">
+        {/* Desktop actions — hidden ≤768px; tighter gaps ≤900px. */}
+        <div className="flex items-center gap-1.5 max-[900px]:gap-0.5 max-[768px]:hidden">
+          {/* Tools */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-[34px] text-[13.5px]" title="Tools" aria-label="Tools">
+                <Wrench className="size-4" />
+                <span className="max-[1200px]:hidden">Tools</span>
+                <ChevronDown className="size-3 text-muted-foreground max-[1200px]:hidden" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {toolItems.map(({ key, label, Icon, run }) => (
+                <DropdownMenuItem key={key} onSelect={run}>
+                  <Icon className="size-4" />
+                  {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Import */}
+          <Button variant="ghost" size="sm" className="h-[34px] text-[13.5px]" title="Import resume" aria-label="Import resume" onClick={pickImport}>
+            <Upload className="size-4" />
+            <span className="max-[1050px]:hidden">Import</span>
+          </Button>
+
+          {/* Export */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-[34px] text-[13.5px]" title="Export resume" aria-label="Export resume">
+                <Download className="size-4" />
+                <span className="max-[1050px]:hidden">Export</span>
+                <ChevronDown className="size-3 text-muted-foreground max-[1050px]:hidden" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => exportCurrentVariant('json')}>Export as JSON</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportCurrentVariant('md')}>Export as Markdown</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Settings gear — always visible at every breakpoint (like PDF). */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          title="Settings"
+          aria-label="Settings"
+          onClick={() => openSettings()}
+        >
+          <Settings className="size-[17px]" />
+        </Button>
+
+        {/* PDF — the bar's only filled button; proxies the hidden #download-pdf. */}
+        <Button
+          size="sm"
+          className="h-[34px] text-[13.5px]"
+          title="Download PDF"
+          aria-label="Download PDF"
+          disabled={pdfBusy}
+          onClick={() => document.getElementById('download-pdf')?.click()}
+        >
+          {pdfBusy ? <Loader2 className="size-4 animate-spin" /> : <FileDown className="size-4" />}
+          <span className="max-[1200px]:hidden">{pdfBusy ? 'Generating…' : 'PDF'}</span>
+        </Button>
+
+        {/* Mobile hamburger menu — shown ≤768px only; groups Resume/Tools/File. */}
+        <div className="hidden max-[768px]:flex">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-9" title="Menu" aria-label="Menu">
+                <Menu className="size-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48">
+              <DropdownMenuLabel>Resume</DropdownMenuLabel>
+              <VariantMenuItems actions={variantActions} />
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Tools</DropdownMenuLabel>
+              {toolItems.map(({ key, label, Icon, run }) => (
+                <DropdownMenuItem key={key} onSelect={run}>
+                  <Icon className="size-4" />
+                  {label}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>File</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={pickImport}>
+                <Upload className="size-4" /> Import
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportCurrentVariant('json')}>
+                <Download className="size-4" /> Export as JSON
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportCurrentVariant('md')}>
+                <Download className="size-4" /> Export as Markdown
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Shared hidden file input for Import (desktop + mobile). Reset after pick. */}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".json,.md,.markdown"
+        hidden
+        onChange={onImportChange}
+      />
+
+      {/* Rename dialog (system shadcn Dialog shell + glass-card). */}
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent className="max-w-sm glass-card">
+          <DialogHeader>
+            <DialogTitle>Rename resume</DialogTitle>
+            <DialogDescription className="sr-only">Enter a new name for the current resume variant</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submitRename} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="rename-variant-input">Name</Label>
+              <Input
+                id="rename-variant-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={() => setRenameOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!renameValue.trim()}>
+                Rename
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>,
+    host
+  );
+}
