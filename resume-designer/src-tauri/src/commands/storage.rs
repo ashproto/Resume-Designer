@@ -53,10 +53,18 @@ pub fn storage_load_all(app: AppHandle) -> Result<HashMap<String, String>, Strin
 
 /// Scan one storage dir. Only entries whose name passes `validate_key` are
 /// considered — exactly the set of names `storage_write` can create — so
-/// foreign files (`.DS_Store`, stale `.tmp-*` from a crashed write) can't
-/// poison the whole load. A per-entry read failure (deleted mid-scan, bad
-/// permissions, non-UTF-8 content) skips that entry with a warning; only a
-/// failed directory listing is an error.
+/// foreign files (`.DS_Store`, stale `.tmp-*` from a crashed write) are skipped
+/// and can't poison the load. But a read failure on a VALID-KEY file (transient
+/// I/O, permissions, non-UTF-8 corruption) is FATAL: it aborts the whole load
+/// so `initAppStorage`'s `loadAll()` rejects, rather than silently dropping real
+/// app data. A silent drop would let the renderer boot as if that key never
+/// existed and overwrite the still-present file on its next save (main window),
+/// or capture an empty/stale resume (print window). On abort the main window
+/// degrades to a read-only localStorage fallback — leaving the on-disk file
+/// intact for a later boot once the transient error clears — and the print
+/// window fails the export loudly. An unreadable *directory entry* (deleted
+/// mid-scan, no name to validate) is still skipped; a failed directory listing
+/// is also an error.
 fn load_dir(dir: &Path) -> Result<HashMap<String, String>, String> {
     let mut map = HashMap::new();
     for entry in
@@ -77,7 +85,10 @@ fn load_dir(dir: &Path) -> Result<HashMap<String, String>, String> {
             Ok(value) => {
                 map.insert(name, value);
             }
-            Err(e) => eprintln!("storage: skipping {name}: {e}"),
+            // The name passed validate_key, so this is real app data, not a
+            // foreign dropping (those are filtered above). Failing to read it
+            // must abort the load — never silently drop it (see fn doc).
+            Err(e) => return Err(format!("read storage key {name}: {e}")),
         }
     }
     Ok(map)
@@ -157,7 +168,15 @@ mod tests {
 
     #[test]
     fn rejects_traversal_and_hidden() {
-        for k in ["", "../etc/passwd", "a/b", "a\\b", ".hidden", ".tmp-x", "a..b"] {
+        for k in [
+            "",
+            "../etc/passwd",
+            "a/b",
+            "a\\b",
+            ".hidden",
+            ".tmp-x",
+            "a..b",
+        ] {
             assert!(validate_key(k).is_err(), "{k} should be rejected");
         }
     }
@@ -174,20 +193,19 @@ mod tests {
         );
     }
 
-    /// Foreign files (`.DS_Store`, stale `.tmp-*`) must not poison the load,
-    /// and an unreadable file with a valid key name is skipped, not fatal.
+    /// Foreign files (`.DS_Store`, stale `.tmp-*`) must not poison the load —
+    /// their names fail `validate_key`, so they're skipped and a valid readable
+    /// key still loads cleanly.
     #[test]
-    fn load_dir_skips_foreign_and_unreadable_files() {
+    fn load_dir_skips_foreign_files() {
         let dir = tempfile::tempdir().expect("create temp dir");
         std::fs::write(dir.path().join("resume-designer-data"), "{\"ok\":true}").unwrap();
         // macOS Finder droppings: invalid UTF-8, name fails validate_key.
         std::fs::write(dir.path().join(".DS_Store"), [0x00u8, 0x01, 0xFF, 0xFE]).unwrap();
         // Leftover from a crashed write: name fails validate_key.
         std::fs::write(dir.path().join(".tmp-x"), "half-written").unwrap();
-        // Valid key name but non-UTF-8 content: read fails, must be skipped.
-        std::fs::write(dir.path().join("resume-binary"), [0xFFu8, 0xFE, 0xFD]).unwrap();
 
-        let map = load_dir(dir.path()).expect("load_dir should not fail");
+        let map = load_dir(dir.path()).expect("load_dir should not fail on foreign files");
         assert_eq!(
             map.len(),
             1,
@@ -196,6 +214,24 @@ mod tests {
         assert_eq!(
             map.get("resume-designer-data").map(String::as_str),
             Some("{\"ok\":true}")
+        );
+    }
+
+    /// A file whose NAME is a valid app key but whose content cannot be read
+    /// (non-UTF-8 corruption, transient I/O) must ABORT the whole load, not be
+    /// silently dropped — otherwise the renderer boots as if that key never
+    /// existed and overwrites the still-present file on its next save.
+    #[test]
+    fn load_dir_aborts_on_unreadable_valid_key() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        std::fs::write(dir.path().join("resume-designer-data"), "{\"ok\":true}").unwrap();
+        // Valid key name, non-UTF-8 content: read_to_string fails → load aborts.
+        std::fs::write(dir.path().join("resume-binary"), [0xFFu8, 0xFE, 0xFD]).unwrap();
+
+        let result = load_dir(dir.path());
+        assert!(
+            result.is_err(),
+            "a non-UTF-8 valid-key file must make load_dir fail, got: {result:?}"
         );
     }
 }
