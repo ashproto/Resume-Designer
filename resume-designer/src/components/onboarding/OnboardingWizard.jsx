@@ -85,7 +85,7 @@ export default function OnboardingWizard() {
   const jobGenModelRef = useRef(getSettings().onboardingModel || null);
   const jobGenReasoningRef = useRef(getSettings().onboardingReasoning || 'medium');
   const closeTimerRef = useRef(null);
-  const overlayRef = useRef(null);
+  const dragStripRef = useRef(null);
 
   const doOpen = useCallback((options = {}) => {
     // New-resume mode (the header "+") always skips the API-key step, even with no
@@ -168,11 +168,11 @@ export default function OnboardingWizard() {
   }, []);
 
   // The full-screen overlay covers the header's drag region, so window-dragging
-  // from the top dies while the wizard is open. Re-arm native dragging on the
-  // overlay backdrop (no-op outside Tauri); the card is data-no-drag, so only the
-  // dimmed margin around it moves the window — controls keep their own clicks.
+  // from the top dies while the wizard is open. Re-arm native dragging on a thin
+  // strip pinned to the very top of the backdrop (height = the app header's), so
+  // only that band moves the window — not the whole backdrop. No-op outside Tauri.
   useEffect(() => {
-    if (open && overlayRef.current) initWindowDrag(overlayRef.current);
+    if (open && dragStripRef.current) initWindowDrag(dragStripRef.current);
   }, [open]);
 
   // --- flow handlers ------------------------------------------------------
@@ -392,7 +392,6 @@ export default function OnboardingWizard() {
   return (
     <div
       id="onboarding-overlay"
-      ref={overlayRef}
       className={cn(
         // `onboarding-overlay` + `show` are functional tokens (see doc comment),
         // not stylesheet hooks — all visuals below are Tailwind.
@@ -400,8 +399,16 @@ export default function OnboardingWizard() {
         entered ? 'show opacity-100' : 'pointer-events-none opacity-0',
       )}
     >
+      {/* Window-drag strip: only this top band (the app header's height) drags the
+          native window in Tauri — not the whole backdrop. Pinned to the true top
+          of the viewport, behind the centered card. aria-hidden + transparent:
+          purely a drag affordance, no semantics and no visual. */}
       <div
-        data-no-drag
+        ref={dragStripRef}
+        aria-hidden="true"
+        className="absolute inset-x-0 top-0 h-[var(--header-height)]"
+      />
+      <div
         className={cn(
           'flex w-full max-w-[620px] max-h-[90vh] flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-lg glass-card',
           'transition-transform duration-300',
