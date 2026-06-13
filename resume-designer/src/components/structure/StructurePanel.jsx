@@ -72,10 +72,19 @@ function writeField(path, value) {
   try { store.update(path, value); } finally { localEdit = false; }
 }
 function writeTool(index, value) {
-  const items = normalizeTools(store.get('tools'));
+  // Split WITHOUT dropping blanks (and join the same way) so the index space stays
+  // aligned with the rendered inputs while the user is mid-edit — e.g. after clearing
+  // a field before retyping. normalizeTools/serializeTools filter blanks, which shrank
+  // the array, so the still-mounted input wrote to a stale index and overwrote the next
+  // tool (or, with a single tool, saved nothing). Blanks compact via serializeTools on
+  // add/delete/reorder/remount.
+  const raw = store.get('tools');
+  const items = Array.isArray(raw)
+    ? raw.map((t) => String(t ?? ''))
+    : String(raw ?? '').split(/[\n•]/g).map((t) => t.trim());
   if (index < 0 || index >= items.length) return;
   items[index] = value;
-  writeField('tools', serializeTools(items));
+  writeField('tools', items.join(' • '));
 }
 
 // ------------------------------ small building blocks ------------------------
