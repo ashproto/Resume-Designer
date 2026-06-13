@@ -275,9 +275,10 @@ export function buildResumeData(resume) {
     sections.push({ id: 'highlights', title: 'Highlights', content: r.highlights.map((h) => `- ${h}`) });
   }
 
-  // Skills as individually-editable tag pills, capped to the 12 most relevant.
+  // Skills as individually-editable bulleted items, capped to the 12 most relevant.
+  // Bulleted is the app-wide default; the user can switch a section to inline tags.
   if (r.skills && r.skills.length > 0) {
-    sections.push({ id: 'skills', title: 'Skills', type: 'skills', content: r.skills.slice(0, 12).map((s) => String(s)) });
+    sections.push({ id: 'skills', title: 'Skills', type: 'list', content: r.skills.slice(0, 12).map((s) => String(s)) });
   }
 
   if (r.certifications && r.certifications.length > 0) {
