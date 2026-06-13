@@ -149,6 +149,19 @@ function renderToolsBulleted(tools, editablePath = null) {
     .join('')}</div>`;
 }
 
+// Inline-tag tools for stacked layouts: the same .skill-tag-inline visual as the
+// shared stacked skills renderer, but each chip carries data-editable so the inline
+// editor edits it individually (parity with renderToolsInline) instead of the wrapper
+// <p> swallowing the click into a whole-field edit.
+function renderToolsInlineStacked(tools, editablePath = null) {
+  const tokens = normalizeTools(tools);
+  if (tokens.length === 0) return '';
+  const editableAttr = editablePath ? ` data-editable="${editablePath}"` : '';
+  return tokens
+    .map((token) => `<span class="skill-tag-inline"${editableAttr}>${formatInlineMarkdown(token)}</span>`)
+    .join('<span class="skill-sep">•</span>');
+}
+
 // Bulleted is the default tools display; only an explicit 'skills' opts into the
 // inline tag row.
 function toolsAreBulleted(data) {
@@ -301,7 +314,7 @@ function renderStackedVerticalSections(data) {
         <div class="section stacked-vertical-section">
           <h3 class="section-title">Tools</h3>
           <div class="stacked-vertical-content">
-            ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p data-editable="tools">${formatSkillsLineStacked(data.tools)}</p>`}
+            ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p>${renderToolsInlineStacked(data.tools, 'tools')}</p>`}
           </div>
         </div>
       `;
@@ -341,7 +354,7 @@ function renderStackedVerticalSections(data) {
       <div class="section stacked-vertical-section">
         <h3 class="section-title">Tools</h3>
         <div class="stacked-vertical-content">
-          ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p data-editable="tools">${formatSkillsLineStacked(data.tools)}</p>`}
+          ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p>${renderToolsInlineStacked(data.tools, 'tools')}</p>`}
         </div>
       </div>
     `;
@@ -432,7 +445,7 @@ function renderStackedSections(data) {
         <div class="stacked-skill-section">
           <h3 class="section-title">Tools</h3>
           <div class="stacked-skill-content tools-list">
-            ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p data-editable="tools">${formatSkillsLineStacked(data.tools)}</p>`}
+            ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p>${renderToolsInlineStacked(data.tools, 'tools')}</p>`}
           </div>
         </div>
       `;
