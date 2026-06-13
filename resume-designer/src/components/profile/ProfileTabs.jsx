@@ -32,6 +32,19 @@ function BrandIcon({ children }) {
   );
 }
 
+// Profile fields are plain-text inputs, but AI-extracted content can carry markdown
+// emphasis markers (**bold**, _italic_). Strip them on display so the Profile shows
+// clean text instead of raw symbols — emphasis belongs in the generated résumé (the
+// renderer applies it there), not in this input surface. Mirrors the renderer's bold
+// + italic patterns so only genuine emphasis is removed (mid-word underscores like
+// my_var stay intact).
+function stripEmphasis(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|[\s([{"'`])_([^_\n]+)_(?=$|[\s)\]}"'`.,!?;:])/g, '$1$2');
+}
+
 // Section heading + optional muted description (mirrors SettingsDialog.SectionHeader).
 // Mockup tokens: group-title 14px/600, group-sub 12.5px muted.
 function SectionHeader({ title, description }) {
@@ -78,7 +91,7 @@ function Area({ id, label, hint, value, placeholder, rows = 4, onCommit }) {
         id={id}
         rows={rows}
         placeholder={placeholder}
-        defaultValue={value || ''}
+        defaultValue={stripEmphasis(value)}
         onChange={(e) => onCommit(e.target.value)}
       />
     </div>
@@ -277,7 +290,7 @@ function ExperienceTab({ profile, scheduleSave, refresh }) {
             <Textarea
               rows={4}
               placeholder="Describe this role in detail: what did you accomplish? What challenges did you overcome? What technologies did you use? What was your team like?"
-              defaultValue={exp.details || ''}
+              defaultValue={stripEmphasis(exp.details)}
               onChange={(e) => set(i, 'details')(e.target.value)}
             />
           </>
@@ -378,7 +391,7 @@ function EducationTab({ profile, scheduleSave, refresh }) {
             <Textarea
               rows={3}
               placeholder="Notable courses, projects, thesis, honors, activities, GPA if relevant..."
-              defaultValue={edu.details || ''}
+              defaultValue={stripEmphasis(edu.details)}
               onChange={(e) => set(i, 'details')(e.target.value)}
             />
           </>
@@ -413,7 +426,7 @@ function ProjectsTab({ profile, scheduleSave, refresh }) {
             <Textarea
               rows={4}
               placeholder="Describe the project: what problem does it solve? What technologies did you use? What was your role? What was the outcome?"
-              defaultValue={proj.description || ''}
+              defaultValue={stripEmphasis(proj.description)}
               onChange={(e) => set(i, 'description')(e.target.value)}
             />
           </>
@@ -489,7 +502,7 @@ function MoreTab({ profile, scheduleSave, refresh }) {
               titleInput={<Input className="font-medium" placeholder="Section Title" defaultValue={sec.title || ''} onChange={(e) => { customs[i].title = e.target.value; scheduleSave(); }} />}
               onDelete={() => { customs.splice(i, 1); refresh(); }}
             >
-              <Textarea rows={3} placeholder="Content..." defaultValue={sec.content || ''} onChange={(e) => { customs[i].content = e.target.value; scheduleSave(); }} />
+              <Textarea rows={3} placeholder="Content..." defaultValue={stripEmphasis(sec.content)} onChange={(e) => { customs[i].content = e.target.value; scheduleSave(); }} />
             </EntryCard>
           ))}
           <AddButton onClick={() => { customs.push({ title: '', content: '' }); refresh(); }}>Add Custom Section</AddButton>
