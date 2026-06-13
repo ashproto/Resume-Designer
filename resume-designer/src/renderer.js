@@ -16,7 +16,10 @@ function splitByBulletSeparators(line) {
 }
 
 function stripLeadingBulletMarker(text) {
-  return text.replace(/^[-*•]\s*/, '').trim();
+  // Strip ONE leading bullet glyph (-, •, or a lone *) but never the ** that opens a
+  // markdown bold span, so emphasis that starts a line — e.g. "**40% faster** delivery"
+  // — survives instead of being mangled into "*40% faster**".
+  return text.replace(/^(?:[-•]\s*|\*(?!\*)\s*)/, '').trim();
 }
 
 function normalizeLineItems(line, mode) {
