@@ -70,10 +70,13 @@ function VariantMenuItems({ actions }) {
  *
  * Drag-safety: every interactive element below is a real shadcn `<Button>`
  * (renders a `<button>`) or a Radix DropdownMenu item (`role="menuitem"`), all of
- * which tauriDrag.js exempts from the drag handler; the two zone wrappers also
- * carry `data-no-drag`. Radix menus portal to `<body>` (default) so they frost
- * correctly outside the header. No `.header-*`/`.custom-dropdown*` class names are
- * applied here.
+ * which tauriDrag.js exempts from the drag handler. The zone wrappers deliberately
+ * do NOT carry `data-no-drag`: the controls are exempted individually, so a
+ * wrapper-level opt-out would only dead-zone the empty space — e.g. the gap
+ * between the centered variant group and the right-aligned tools — and kill window
+ * drag there. Radix menus portal to `<body>` (default) so they frost correctly
+ * outside the header. No `.header-*`/`.custom-dropdown*` class names are applied
+ * here.
  *
  * Variant CRUD lives in variantManager.js; this component is the view + the
  * rename dialog. deleteCurrentVariant() is unconditional (the confirm was lifted
@@ -171,8 +174,9 @@ export default function Header() {
       </div>
 
       {/* CENTER ZONE — New + variant selector + actions kebab, centered between
-          the two flex-1 side zones. */}
-      <div data-no-drag className="flex min-w-0 items-center gap-1.5">
+          the two flex-1 side zones. No `data-no-drag` (see drag-safety note above):
+          the buttons self-exempt; the wrapper must stay draggable. */}
+      <div className="flex min-w-0 items-center gap-1.5">
           {/* New resume — promoted out of the actions menu to a header button,
               left of the selector. */}
           <Button
@@ -248,8 +252,10 @@ export default function Header() {
 
       {/* RIGHT ZONE — tools / settings / PDF + mobile menu. `flex-1` + justify-end
           (matched by the left zone's flex-1) right-aligns these and centers the
-          middle zone. */}
-      <div data-no-drag className="flex flex-1 items-center justify-end gap-1.5 max-[900px]:gap-1">
+          middle zone. No `data-no-drag`: with justify-end, the zone's empty left
+          half is the gap beside the variant group, and a wrapper opt-out would make
+          that strip non-draggable (the buttons self-exempt — see note above). */}
+      <div className="flex flex-1 items-center justify-end gap-1.5 max-[900px]:gap-1">
         {/* Desktop actions — hidden ≤768px; tighter gaps ≤900px. */}
         <div className="flex items-center gap-1.5 max-[900px]:gap-0.5 max-[768px]:hidden">
           {/* Tools, promoted to regular header buttons (icon + short label;
