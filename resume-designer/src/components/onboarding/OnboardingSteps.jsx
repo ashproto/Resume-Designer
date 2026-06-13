@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  ArrowLeft, Check, Clipboard, FileText, Info, KeyRound, Loader2, Lock, MessageSquareText,
-  Plus, Sparkles, Target, Upload, X,
+  ArrowLeft, ArrowRight, Brain, Briefcase, Check, Clipboard, Cpu, FileText, Info, KeyRound,
+  Loader2, Lock, MessageSquareText, Plus, Sparkles, Target, Upload, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { LiveReasoning } from '../chat/LiveReasoning.jsx';
+import { formatTokenCount } from '../../tokenTrackingService.js';
 
 /**
  * Presentational step components for the onboarding wizard, composed from
@@ -524,6 +525,92 @@ const JOB_INPUT_BENEFITS = [
   'Experience prioritized for this role',
 ];
 
+// One token-usage stat (muted label + big number) for the completion strip.
+function GenStat({ label, value }) {
+  return (
+    <div className="rounded-md bg-muted/60 px-3 py-2.5">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-lg font-semibold tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+/**
+ * The "generating résumé" screen — replaces the JobInputStep form once generation
+ * starts. Shows a read-only summary of the target job + the model/reasoning used
+ * (the now-hidden inputs), the live reasoning stream, and — on completion ('done')
+ * — a prominent token-usage strip plus a Review button. Cancel aborts mid-flight.
+ */
+export function JobGeneratingView({ job, modelLabel, reasoningLabel, reasoning, run, elapsed, phase, onCancel, onReview, onEdit }) {
+  const done = phase === 'done';
+  const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+  const totalTokens = run ? (run.promptTokens || 0) + (run.completionTokens || 0) : 0;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <StepBody>
+        <StepHeader
+          title={done ? 'Résumé ready' : 'Generating your résumé'}
+          description={done
+            ? 'Tailored to the role below — review and fine-tune it next.'
+            : 'Tailoring your profile to this role. This usually takes 20–40 seconds.'}
+        />
+
+        {/* Read-only representation of the target job + the model/reasoning used. */}
+        <div className="flex flex-wrap items-center gap-2.5 rounded-md border bg-muted/40 p-3">
+          <Briefcase className="size-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{job.title || 'Target role'}</div>
+            {job.company && <div className="truncate text-xs text-muted-foreground">{job.company}</div>}
+          </div>
+          <Badge variant="secondary" className="gap-1 font-normal"><Cpu className="size-3" />{modelLabel}</Badge>
+          {reasoningLabel && (
+            <Badge variant="secondary" className="gap-1 font-normal"><Brain className="size-3" />Reasoning: {reasoningLabel}</Badge>
+          )}
+        </div>
+
+        {/* Reasoning summary — streams while generating, collapsible recap when done. */}
+        <LiveReasoning
+          reasoning={reasoning}
+          reasoningTokens={run?.reasoningTokens || 0}
+          streaming={!done}
+          defaultOpen
+        />
+
+        {/* Token usage — prominent, appears on completion. */}
+        {done && run && (
+          <div className="grid grid-cols-3 gap-2.5">
+            <GenStat label="Tokens" value={formatTokenCount(totalTokens)} />
+            <GenStat label="Reasoning" value={formatTokenCount(run.reasoningTokens || 0)} />
+            <GenStat label="Time" value={clock} />
+          </div>
+        )}
+      </StepBody>
+      <StepFooter>
+        {done ? (
+          <>
+            <Button variant="ghost" onClick={onEdit}>
+              <ArrowLeft className="size-4" /> Back to edit
+            </Button>
+            <Button onClick={onReview}>
+              Review your résumé <ArrowRight className="size-4" />
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Writing your résumé…
+              <span className="tabular-nums text-xs text-muted-foreground/70">{clock}</span>
+            </span>
+            <Button variant="ghost" onClick={onCancel}>
+              <X className="size-4" /> Cancel
+            </Button>
+          </>
+        )}
+      </StepFooter>
+    </div>
+  );
+}
+
 export function JobInputStep({
   hasProfileData,
   targetJob,
@@ -533,6 +620,7 @@ export function JobInputStep({
   modelSupportsReasoning,
   fetchModelCatalog,
   onGenerate,
+  onReview,
   onBack,
   onOpenProfile,
 }) {
@@ -541,8 +629,13 @@ export function JobInputStep({
   const [description, setDescription] = useState(targetJob?.description || '');
   const [model, setModel] = useState(defaultModel);
   const [reasoning, setReasoning] = useState(defaultReasoning);
-  const [generating, setGenerating] = useState(false);
+  // Generation lifecycle: 'form' (inputs) → 'generating' (live screen) → 'done'
+  // (settled screen: token usage + Review). Errors/cancel return to 'form'.
+  const [phase, setPhase] = useState('form');
   const [liveReasoning, setLiveReasoning] = useState('');
+  const [run, setRun] = useState(null); // token usage, from the onRun hook at stream end
+  const [elapsed, setElapsed] = useState(0); // seconds since generation started
+  const abortRef = useRef(null); // AbortController backing Cancel
   const [tick, setTick] = useState(0);
 
   // Re-evaluate reasoning support after the catalog loads (tick bump).
@@ -552,6 +645,14 @@ export function JobInputStep({
   useEffect(() => {
     fetchModelCatalog().then(() => setTick((t) => t + 1)).catch(() => {});
   }, [fetchModelCatalog]);
+
+  // Elapsed-time ticker — runs only while generating; its value freezes on done.
+  useEffect(() => {
+    if (phase !== 'generating') return undefined;
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
 
   if (!hasProfileData) {
     return (
@@ -611,22 +712,61 @@ export function JobInputStep({
       return;
     }
     setLiveReasoning('');
-    setGenerating(true);
+    setRun(null);
+    setPhase('generating');
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
+      // onGenerate sets the parsed resume in the wizard but does NOT advance — we
+      // settle into the 'done' screen here; the user clicks through to review.
       await onGenerate({
         title: title.trim(), company: company.trim(), description: d, model, reasoning,
-        hooks: { onReasoning: (_x, full) => setLiveReasoning(full) },
+        signal: controller.signal,
+        hooks: {
+          onReasoning: (_x, full) => setLiveReasoning(full),
+          onRun: (r) => setRun(r),
+        },
       });
+      setPhase('done');
     } catch (e) {
-      toast.error('Failed to generate resume: ' + e.message);
-      setGenerating(false);
+      // A user Cancel aborts the request — return to the form silently; surface
+      // anything else as an error toast.
+      if (controller.signal.aborted) setPhase('form');
+      else { toast.error('Failed to generate resume: ' + e.message); setPhase('form'); }
+    } finally {
+      abortRef.current = null;
     }
   };
+
+  const handleCancel = () => abortRef.current?.abort();
 
   // Group the flat model list for the Select (JobsDialog/JobSelectionDialog pattern).
   const groupedModels = {};
   for (const m of availableModels) {
     (groupedModels[m.group || 'Models'] ??= []).push(m);
+  }
+
+  // Once generation starts, swap the whole form for the dedicated generating / done
+  // screen (read-only target + live reasoning + token usage).
+  if (phase !== 'form') {
+    const modelLabel = availableModels.find((m) => m.id === model)?.label || model;
+    const reasoningLabel = reasoningSupported && reasoning !== 'none'
+      ? (REASONING_OPTIONS.find((o) => o.value === reasoning)?.label || null)
+      : null;
+    return (
+      <JobGeneratingView
+        job={{ title: title.trim(), company: company.trim() }}
+        modelLabel={modelLabel}
+        reasoningLabel={reasoningLabel}
+        reasoning={liveReasoning}
+        run={run}
+        elapsed={elapsed}
+        phase={phase}
+        onCancel={handleCancel}
+        onReview={onReview}
+        onEdit={() => setPhase('form')}
+      />
+    );
   }
 
   return (
@@ -724,11 +864,6 @@ export function JobInputStep({
             </p>
           ))}
         </div>
-        {generating && (
-          <div className="mt-4">
-            <LiveReasoning reasoning={liveReasoning} streaming defaultOpen />
-          </div>
-        )}
       </StepBody>
       <StepFooter>
         <Button
@@ -738,16 +873,8 @@ export function JobInputStep({
         >
           <ArrowLeft className="size-4" /> Back
         </Button>
-        <Button id="generate-btn" disabled={generating} onClick={handleGenerate}>
-          {generating ? (
-            <>
-              <Loader2 className="size-4 animate-spin" /> Generating…
-            </>
-          ) : (
-            <>
-              <Sparkles className="size-4" /> Generate Resume
-            </>
-          )}
+        <Button id="generate-btn" onClick={handleGenerate}>
+          <Sparkles className="size-4" /> Generate Resume
         </Button>
       </StepFooter>
     </div>
