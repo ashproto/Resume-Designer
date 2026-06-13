@@ -732,6 +732,9 @@ html[data-theme="dark"] .header-variant-select {
   min-width: 0;
   position: relative;
   overflow: hidden;
+  /* Query container so the floating toolbar restacks based on the preview column's
+     width (which changes with the side panels), not the whole window's. */
+  container-type: inline-size;
 }
 
 /* Zoom Controls Toolbar — floating "zoom pill" (approved mockup .zoom-pill):
@@ -757,6 +760,29 @@ html[data-theme="dark"] .header-variant-select {
   max-width: calc(100% - 24px);
   flex-wrap: wrap;
   justify-content: center;
+}
+
+/* The zoom/undo cluster, kept together so the toolbar can restack into two centered
+   rows (zoom cluster + text tools) instead of one wide wrapped row. */
+.zoom-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* When the preview column is too narrow for a single row, stack the two clusters
+   into a column. A column shrink-wraps to the wider cluster (no side gaps), unlike
+   a wrapped row which stretches to max-width and centers short lines. ~565px ≈ the
+   single-row width (538px) plus the pill's side margins. */
+@container (max-width: 565px) {
+  .zoom-controls {
+    flex-direction: column;
+  }
+  .zoom-controls > .zoom-divider {
+    width: 22px;
+    height: 1px;
+    margin: 1px 0;
+  }
 }
 
 .zoom-btn {

@@ -29,6 +29,7 @@ import {
 } from '../../aiService.js';
 import { getSettings, saveSettings, SETTINGS_UPDATED_EVENT } from '../../persistence.js';
 import { refreshChatPanel } from '../../chatPanel.js';
+import { initWindowDrag } from '../../tauriDrag.js';
 import {
   ApiKeyStep,
   ChoosePathStep,
@@ -84,6 +85,7 @@ export default function OnboardingWizard() {
   const jobGenModelRef = useRef(getSettings().onboardingModel || null);
   const jobGenReasoningRef = useRef(getSettings().onboardingReasoning || 'medium');
   const closeTimerRef = useRef(null);
+  const overlayRef = useRef(null);
 
   const doOpen = useCallback((options = {}) => {
     // New-resume mode (the header "+") always skips the API-key step, even with no
@@ -165,6 +167,14 @@ export default function OnboardingWizard() {
     document.body.style.overflow = '';
   }, []);
 
+  // The full-screen overlay covers the header's drag region, so window-dragging
+  // from the top dies while the wizard is open. Re-arm native dragging on the
+  // overlay backdrop (no-op outside Tauri); the card is data-no-drag, so only the
+  // dimmed margin around it moves the window — controls keep their own clicks.
+  useEffect(() => {
+    if (open && overlayRef.current) initWindowDrag(overlayRef.current);
+  }, [open]);
+
   // --- flow handlers ------------------------------------------------------
 
   const goTo = useCallback((s) => setStep(s), []);
@@ -217,16 +227,17 @@ export default function OnboardingWizard() {
     else setQuestion(question - 1);
   }, [question]);
 
-  const generateForJob = useCallback(async ({ title, company, description, model, reasoning, hooks }) => {
+  const generateForJob = useCallback(async ({ title, company, description, model, reasoning, hooks, signal }) => {
     const job = { title: title || 'Target Role', company: company || 'Company', description };
     setTargetJob(job);
     setJobDescriptions([job]);
     jobGenModelRef.current = model;
     jobGenReasoningRef.current = reasoning;
     saveSettings({ onboardingModel: model, onboardingReasoning: reasoning });
-    const resume = await generateResumeForJob(model, job, reasoning, { hooks });
+    // No setStep here: JobInputStep settles into its own 'done' screen (reasoning +
+    // token usage) and advances to review only when the user clicks through.
+    const resume = await generateResumeForJob(model, job, reasoning, { hooks, signal });
     setParsedResume(resume);
-    setStep(4);
   }, []);
 
   const addJob = useCallback((jd) => setJobDescriptions((prev) => [...prev, jd]), []);
@@ -333,6 +344,7 @@ export default function OnboardingWizard() {
               modelSupportsReasoning={modelSupportsReasoning}
               fetchModelCatalog={fetchModelCatalog}
               onGenerate={generateForJob}
+              onReview={() => goTo(4)}
               onBack={(draft) => { setTargetJob(draft); goTo(1); }}
               onOpenProfile={openProfile}
             />
@@ -380,6 +392,7 @@ export default function OnboardingWizard() {
   return (
     <div
       id="onboarding-overlay"
+      ref={overlayRef}
       className={cn(
         // `onboarding-overlay` + `show` are functional tokens (see doc comment),
         // not stylesheet hooks — all visuals below are Tailwind.
@@ -388,6 +401,7 @@ export default function OnboardingWizard() {
       )}
     >
       <div
+        data-no-drag
         className={cn(
           'flex w-full max-w-[620px] max-h-[90vh] flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-lg glass-card',
           'transition-transform duration-300',

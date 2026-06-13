@@ -71,6 +71,13 @@ When asked for feedback, be constructive and specific.
 
 Current resume context will be provided with each message.`;
 
+// Résumé text fields are rendered with light markdown — the renderer converts
+// **text** → bold and _text_ → italic before display AND before PDF capture, so no
+// literal markers ever reach the output (ATS sees clean bold text, not asterisks).
+// Generators share this guidance so they can spotlight high-signal phrases without
+// over-formatting.
+const EMPHASIS_GUIDANCE = `EMPHASIS — inside prose fields only (summary, highlights, experience bullets, and section content) you may spotlight the single most important phrase using markdown: **double asterisks** for bold, _underscores_ for italic. Apply it strategically and SPARINGLY — at most one emphasis per bullet, and never wrap a whole sentence. Prefer bolding a quantified result (e.g. **40% faster**) or a key keyword from the job description; reserve italic for a secondary qualifier. Do NOT emphasize names, titles, companies, dates, skills, tools, or contact fields. The markers are literal characters inside the JSON string values, so the response itself stays pure JSON (no code fences).`;
+
 // System prompt for generating structured changes
 const CHANGE_GENERATION_PROMPT = `You are an expert resume consultant. When asked to modify a resume, you MUST respond with a valid JSON object containing the changes to make.
 
@@ -94,11 +101,13 @@ Valid paths include:
 - And similar nested paths using dot notation and array indices
 
 Rules:
-1. ONLY output valid JSON - no markdown, no explanation outside the JSON
+1. ONLY output valid JSON - no code fences, no explanation outside the JSON
 2. Include all fields that should be changed
 3. For array items, use numeric indices like experience[0].bullets[1]
 4. Keep unchanged fields out of the response
-5. The explanation field should be inside the JSON`;
+5. The explanation field should be inside the JSON
+
+${EMPHASIS_GUIDANCE}`;
 
 // System prompt for job description analysis
 const JOB_ANALYSIS_PROMPT = `You are an expert resume consultant and ATS (Applicant Tracking System) specialist. Analyze resumes against job descriptions to help candidates improve their match rate.
@@ -560,7 +569,7 @@ Create a complete, ATS-optimized resume that:
    restatements of the experience bullets
 7. Separates concrete tools/software from competency skills (see the fields below)
 
-Return ONLY a valid JSON object (no markdown, no explanation) in this exact format:
+Return ONLY a valid JSON object (no code fences, no prose outside the JSON) in this exact format:
 {
   "name": "Full Name from profile",
   "tagline": "Professional title tailored to target job",
@@ -613,7 +622,9 @@ IMPORTANT:
 - Select at most 12 of the most relevant skills (quality over quantity)
 - Use action verbs and quantify achievements where possible
 - Include keywords from the job description naturally
-- Make the summary compelling and specific to this role`;
+- Make the summary compelling and specific to this role
+
+${EMPHASIS_GUIDANCE}`;
 
   const messages = [{ role: 'user', content: prompt }];
   

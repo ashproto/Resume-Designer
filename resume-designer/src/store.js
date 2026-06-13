@@ -514,7 +514,7 @@ export const EMPTY_RESUME = {
     {
       id: generateId('section'),
       title: 'Skills',
-      type: 'skills',
+      type: 'list',
       content: ['Skill 1', 'Skill 2', 'Skill 3']
     }
   ],
