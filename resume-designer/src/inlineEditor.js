@@ -773,7 +773,15 @@ function startEditing(element) {
   element.dataset.originalEditValue = element.textContent || '';
 
   const path = element.dataset.editable;
-  const isInlineToolToken = path === 'tools' && element.matches('.tool-token, .skill-tag, .skill-tag-inline');
+  // Tool chips — inline (.tool-token/.skill-tag) OR bulleted (.highlight-bullet) —
+  // all share data-editable="tools" because `tools` is a single `•`-joined string.
+  // Treat a click on one chip as editing JUST that chip: skip the whole-field
+  // textContent swap below and let extractEditedValue re-join the siblings on save.
+  // Without including .highlight-bullet here, clicking a bulleted tool replaced the
+  // chip's text with the ENTIRE tools string (it looked like it "captured" every
+  // adjacent tool).
+  const isInlineToolToken = path === 'tools'
+    && element.matches('.tool-token, .skill-tag, .skill-tag-inline, .highlight-bullet');
   if (path && !isInlineToolToken) {
     const sourceValue = store.get(path);
     if (typeof sourceValue === 'string') {
@@ -845,6 +853,18 @@ function finishEditing(element) {
   }
 }
 
+// Re-apply markdown emphasis (**bold**, _italic_, ++underline++) onto an element's
+// plain text from its rendered <strong>/<em>/<u> children, so a round-trip through
+// contentEditable doesn't silently drop formatting. Shared by bullet lists and tool
+// chips.
+function serializeEmphasis(el) {
+  let result = (el.textContent || '').trim();
+  el.querySelectorAll('strong').forEach((n) => { const t = n.textContent; if (t) result = result.replace(t, `**${t}**`); });
+  el.querySelectorAll('em').forEach((n) => { const t = n.textContent; if (t) result = result.replace(t, `_${t}_`); });
+  el.querySelectorAll('u').forEach((n) => { const t = n.textContent; if (t) result = result.replace(t, `++${t}++`); });
+  return result;
+}
+
 // Extract the edited value, preserving format for special content types
 function extractEditedValue(element, path) {
   // Check for skill tags (rendered as separate spans that need to be joined with •)
@@ -857,36 +877,24 @@ function extractEditedValue(element, path) {
   // Check for highlight bullets (need to restore the "- " prefix)
   const highlightBullets = element.querySelectorAll('.highlight-bullet');
   if (highlightBullets.length > 0) {
-    const serialized = Array.from(highlightBullets).map((bulletEl) => {
-      const content = bulletEl.textContent.trim();
-      const strongTags = bulletEl.querySelectorAll('strong');
-      const italicTags = bulletEl.querySelectorAll('em');
-      const underlineTags = bulletEl.querySelectorAll('u');
-      let result = content;
-      strongTags.forEach((strong) => {
-        const boldText = strong.textContent;
-        result = result.replace(boldText, `**${boldText}**`);
-      });
-      italicTags.forEach((italic) => {
-        const italicText = italic.textContent;
-        result = result.replace(italicText, `_${italicText}_`);
-      });
-      underlineTags.forEach((underline) => {
-        const underlineText = underline.textContent;
-        result = result.replace(underlineText, `++${underlineText}++`);
-      });
-      return result ? `- ${result}` : '';
-    }).filter(Boolean);
-
-    return serialized.join(' • ');
+    return Array.from(highlightBullets)
+      .map((bulletEl) => { const r = serializeEmphasis(bulletEl); return r ? `- ${r}` : ''; })
+      .filter(Boolean)
+      .join(' • ');
   }
   
-  // For tools field, also check for skill tags
+  // Tools are a single `•`-joined string rendered as many chips (inline tags OR a
+  // bulleted list), all sharing data-editable="tools". Re-join EVERY sibling chip —
+  // not just the edited one — so editing one tool doesn't drop the others, and keep
+  // each chip's bold/italic.
   if (path === 'tools') {
-    const toolScope = element.closest('.tools-list') || element.closest('.skill-tag-row') || element.parentElement;
-    const toolTags = toolScope?.querySelectorAll('.tool-token, .skill-tag[data-editable="tools"], .skill-tag-inline[data-editable="tools"]');
+    const toolScope = element.closest('.tools-bulleted') || element.closest('.tools-list')
+      || element.closest('.skill-tag-row') || element.parentElement;
+    const toolTags = toolScope?.querySelectorAll(
+      '.tool-token, .skill-tag[data-editable="tools"], .skill-tag-inline[data-editable="tools"], .highlight-bullet[data-editable="tools"]'
+    );
     if (toolTags && toolTags.length > 0) {
-      return Array.from(toolTags).map(tag => tag.textContent.trim()).filter(t => t).join(' • ');
+      return Array.from(toolTags).map((tag) => serializeEmphasis(tag)).filter(Boolean).join(' • ');
     }
   }
   
