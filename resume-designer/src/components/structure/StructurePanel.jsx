@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronDown, Plus, Trash2, X } from 'lucide-react';
 
 import { store, generateId, experienceSortValue } from '../../store.js';
+import * as uiState from '../../uiState.js';
 import { SortableList, SortableItem, DragHandle } from '../Sortable.jsx';
 import { PanelSection } from './PanelSection.jsx';
 import DesignTab from './DesignTab.jsx';
@@ -198,13 +199,12 @@ function SectionItem({ section, index }) {
 }
 
 function ExperienceItem({ exp, index }) {
-  const [expanded, setExpanded] = useState(exp._expanded !== false);
+  const expId = exp.id || `exp-${index}`;
+  const [expanded, setExpanded] = useState(() => uiState.isExpanded(expId));
   const toggle = () => {
     const next = !expanded;
     setExpanded(next);
-    // updateSilent => no history, no 'change' event, so no remount; the expanded
-    // state persists across later structural re-renders (#9).
-    store.updateSilent(`experience[${index}]._expanded`, next);
+    uiState.setExpanded(expId, next); // view state — outside the document/history
   };
   const removeExperience = async () => {
     const ok = await confirmDestructive({
@@ -281,11 +281,10 @@ export default function StructurePanel() {
   const [renameOpen, setRenameOpen] = useState(false); // "Custom Section…" title dialog
   const [customTitle, setCustomTitle] = useState('');
   // Experience "Sort by" mode: 'date' | 'relevance' | 'custom'. Date/relevance are
-  // one-shot reorders; 'custom' keeps the user's manual drag order. Persisted
-  // per-variant on the resume data (experienceSortMode) via updateSilent, so it
-  // survives reload/variant-switch without polluting undo history. Seeded from
-  // saved data on open + kept in sync via the store subscription below.
-  const [sortMode, setSortMode] = useState(() => store.getData()?.experienceSortMode || 'date');
+  // one-shot reorders; 'custom' keeps the user's manual drag order. Stored in
+  // uiState (outside the résumé document/history). Seeded on mount + kept in
+  // sync via the store subscription below.
+  const [sortMode, setSortMode] = useState(() => uiState.getSortMode());
   const tabContentRef = useRef(null);
   const scrollPos = useRef(0);
 
@@ -314,13 +313,11 @@ export default function StructurePanel() {
   // but never on a local text edit (localEdit gate).
   useEffect(() => {
     if (!open) return undefined;
-    // Seed the sort mode from the active variant's saved value when the panel opens.
-    setSortMode(store.getData()?.experienceSortMode || 'date');
+    setSortMode(uiState.getSortMode());
     return store.subscribe((event) => {
       if (event === 'change' || event === 'dataLoaded') {
         if (localEdit) return;
-        // Keep the sort dropdown in sync with the data (variant switch, undo/redo).
-        setSortMode(store.getData()?.experienceSortMode || 'date');
+        setSortMode(uiState.getSortMode());
         bump();
       }
     });
@@ -355,9 +352,7 @@ export default function StructurePanel() {
   };
   const applySort = (mode) => {
     setSortMode(mode);
-    // Persist the choice per-variant without history/remount (updateSilent).
-    store.updateSilent('experienceSortMode', mode);
-    // 'custom' keeps the user's manual order — nothing to reorder.
+    uiState.setSortMode(mode); // view state — no history/remount
     if (mode === 'custom') return;
     const experience = store.get('experience');
     if (!Array.isArray(experience) || experience.length < 2) return;
@@ -375,7 +370,7 @@ export default function StructurePanel() {
   // flip the sort mode to 'custom' so it sticks (and the dropdown reflects it).
   const reorderExperience = (from, to) => {
     setSortMode('custom');
-    store.updateSilent('experienceSortMode', 'custom');
+    uiState.setSortMode('custom');
     store.moveInArray('experience', from, to);
   };
 
@@ -506,7 +501,7 @@ export default function StructurePanel() {
             <PanelSection title="Experience" {...sectionProps('experience')} headerExtra={
               <Button
                 variant="ghost" size="icon" type="button" className="size-7" title="Add experience"
-                onClick={() => store.addToArray('experience', { id: generateId('exp'), title: 'New Position', company: 'Company Name', dates: 'Start – End', bullets: ['Describe your accomplishments'], _expanded: true })}
+                onClick={() => store.addToArray('experience', { id: generateId('exp'), title: 'New Position', company: 'Company Name', dates: 'Start – End', bullets: ['Describe your accomplishments'] })}
               >
                 <Plus className="size-4" />
               </Button>
