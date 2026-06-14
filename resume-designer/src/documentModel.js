@@ -54,11 +54,14 @@ export const resumeSchema = new Schema({
     listItem: { content: 'paragraph', toDOM: () => ['li', 0], parseDOM: [{ tag: 'li' }] },
     experienceItem: {
       group: 'block',
-      attrs: { id: { default: '' }, title: { default: '' }, company: { default: '' }, dates: { default: '' } },
-      content: 'bulletList?',
-      toDOM: (n) => ['div', { class: 'exp', 'data-id': n.attrs.id, 'data-title': n.attrs.title, 'data-company': n.attrs.company, 'data-dates': n.attrs.dates }, 0],
-      parseDOM: [{ tag: 'div.exp' }],
+      attrs: { id: { default: '' } },
+      content: 'jobTitle company dates bulletList?',
+      toDOM: (n) => ['div', { class: 'exp', 'data-id': n.attrs.id }, 0],
+      parseDOM: [{ tag: 'div.exp', getAttrs: (el) => ({ id: el.getAttribute('data-id') || '' }) }],
     },
+    jobTitle: { content: 'text*', toDOM: () => ['div', { class: 'exp-title' }, 0], parseDOM: [{ tag: 'div.exp-title' }] },
+    company: { content: 'text*', toDOM: () => ['div', { class: 'exp-company' }, 0], parseDOM: [{ tag: 'div.exp-company' }] },
+    dates: { content: 'text*', toDOM: () => ['div', { class: 'exp-dates' }, 0], parseDOM: [{ tag: 'div.exp-dates' }] },
     text: { group: 'inline' },
   },
   marks: {

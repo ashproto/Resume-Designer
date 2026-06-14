@@ -85,6 +85,22 @@ describe('modelToFlat (lossless round-trip)', () => {
   }
 });
 
+describe('experienceItem fields', () => {
+  it('exposes jobTitle/company/dates as editable child nodes', () => {
+    const exp = flatToModel(POPULATED).content
+      .find((n) => n.attrs?.sectionKind === 'experience').content
+      .find((n) => n.type === 'experienceItem');
+    expect(exp.content.map((n) => n.type)).toEqual(['jobTitle', 'company', 'dates', 'bulletList']);
+    expect(exp.content[0].content[0].text).toBe('Collaborator');
+  });
+  it('omits the bulletList node when an experience item has no bullets', () => {
+    const exp = flatToModel(EMPTY_FIELDS).content
+      .find((n) => n.attrs?.sectionKind === 'experience').content
+      .find((n) => n.type === 'experienceItem');
+    expect(exp.content.map((n) => n.type)).toEqual(['jobTitle', 'company', 'dates']);
+  });
+});
+
 import { getVariantModel } from '../src/migrateToModel.js';
 
 describe('getVariantModel', () => {

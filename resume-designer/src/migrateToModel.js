@@ -15,6 +15,19 @@ const headerNode = (flat) => ({
   content: [field('name', flat.name ?? ''), field('tagline', flat.tagline ?? ''), contactList(flat.contact)],
 });
 
+const experienceItemNode = (e) => ({
+  type: 'experienceItem',
+  attrs: { id: e.id ?? '' },
+  content: [
+    field('jobTitle', e.title ?? ''),
+    field('company', e.company ?? ''),
+    field('dates', e.dates ?? ''),
+    ...(e.bullets?.length
+      ? [{ type: 'bulletList', content: e.bullets.map((b) => ({ type: 'listItem', content: [para(b)] })) }]
+      : []),
+  ],
+});
+
 const section = (sectionKind, title, type, content, extra = {}) =>
   ({ type: 'section', attrs: { id: extra.id ?? '', title, type, sectionKind }, content });
 
@@ -30,11 +43,7 @@ export function flatToModel(flat) {
   }
 
   if ((flat.experience ?? []).length) {
-    content.push(section('experience', 'Experience', 'experience', flat.experience.map((e) => ({
-      type: 'experienceItem',
-      attrs: { id: e.id ?? '', title: e.title ?? '', company: e.company ?? '', dates: e.dates ?? '' },
-      content: e.bullets?.length ? [{ type: 'bulletList', content: e.bullets.map((b) => ({ type: 'listItem', content: [para(b)] })) }] : [],
-    }))));
+    content.push(section('experience', 'Experience', 'experience', flat.experience.map(experienceItemNode)));
   }
 
   if ((flat.education ?? []).length) {
@@ -51,6 +60,7 @@ const textOf = (node) =>
 const paragraphsText = (sectionNode) =>
   (sectionNode.content ?? []).filter((n) => n.type === 'paragraph').map(textOf);
 const childOfType = (node, type) => (node?.content ?? []).find((n) => n.type === type);
+const blocksOfType = (sectionNode, type) => (sectionNode?.content ?? []).filter((n) => n.type === type);
 const contactOf = (header) => {
   const list = childOfType(header, 'contactList');
   const contact = {};
@@ -78,12 +88,12 @@ export function modelToFlat(model) {
     if (kind === 'summary') {
       flat.summary = paragraphsText(s)[0] ?? '';
     } else if (kind === 'experience') {
-      flat.experience = (s.content ?? []).filter((n) => n.type === 'experienceItem').map((it) => ({
+      flat.experience = blocksOfType(s, 'experienceItem').map((it) => ({
         id: it.attrs?.id ?? '',
-        title: it.attrs?.title ?? '',
-        company: it.attrs?.company ?? '',
-        dates: it.attrs?.dates ?? '',
-        bullets: (((it.content ?? [])[0]?.content) ?? [])
+        title: textOf(childOfType(it, 'jobTitle')),
+        company: textOf(childOfType(it, 'company')),
+        dates: textOf(childOfType(it, 'dates')),
+        bullets: ((childOfType(it, 'bulletList')?.content) ?? [])
           .filter((li) => li.type === 'listItem')
           .map((li) => textOf((li.content ?? [])[0])),
       }));
