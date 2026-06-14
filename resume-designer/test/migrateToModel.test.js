@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { flatToModel, modelToFlat } from '../src/migrateToModel.js';
 import { validateModel } from '../src/documentModel.js';
+import { EMPTY_RESUME } from '../src/store.js';
 
 const POPULATED = {
   name: 'Ada Lovelace',
@@ -24,4 +25,40 @@ describe('flatToModel', () => {
     expect(kinds).toContain('summary');
     expect(kinds).toContain('experience');
   });
+});
+
+const SPARSE = {
+  name: 'X', tagline: '', contact: { location: '', email: '', phone: '', portfolio: '', instagram: '' },
+  summary: '', sections: [], experience: [], education: [], tools: '',
+};
+
+const EMPHASIS = {
+  name: 'A', tagline: 'B', contact: { location: '', email: '', phone: '', portfolio: '', instagram: '' },
+  summary: 'Led **growth** and _scaled_ the team — 3×.',
+  sections: [
+    { id: 'a', title: 'Skills', type: 'list', content: ['C++', 'Rust • WASM'] },
+    { id: 'b', title: 'Awards', type: 'list', content: ['Turing Award (1966)'] },
+  ],
+  experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020–24', bullets: ['Shipped **v2**.', 'Cut costs 40%.'] }],
+  education: ['PhD — MIT — 2018', 'BSc — UCL — 2014'],
+  tools: 'Figma • VS Code • git',
+};
+
+// Exercises the relaxed cardinalities: empty custom-section content + an
+// experience item with NO bullets must survive as empty (not `['']`).
+const EMPTY_FIELDS = {
+  name: 'A', tagline: '', contact: { location: '', email: '', phone: '', portfolio: '', instagram: '' },
+  summary: '',
+  sections: [{ id: 'x', title: 'Empty Sec', type: 'list', content: [] }],
+  experience: [{ id: 'e', title: 'Role', company: 'Co', dates: '', bullets: [] }],
+  education: [], tools: '',
+};
+
+describe('modelToFlat (lossless round-trip)', () => {
+  for (const [label, sample] of [['POPULATED', POPULATED], ['SPARSE', SPARSE], ['EMPTY_RESUME', EMPTY_RESUME], ['EMPHASIS', EMPHASIS], ['EMPTY_FIELDS', EMPTY_FIELDS]]) {
+    it(`round-trips ${label} byte-for-byte`, () => {
+      const back = modelToFlat(flatToModel(sample));
+      expect(back).toEqual(sample);
+    });
+  }
 });

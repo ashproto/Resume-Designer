@@ -35,4 +35,52 @@ export function flatToModel(flat) {
   return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION }, content };
 }
 
-export function modelToFlat() { throw new Error('not implemented yet'); }
+const textOf = (node) =>
+  (node?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+const paragraphsText = (sectionNode) =>
+  (sectionNode.content ?? []).filter((n) => n.type === 'paragraph').map(textOf);
+
+export function modelToFlat(model) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const sections = (model.content ?? []).filter((n) => n.type === 'section');
+
+  const flat = {
+    name: header?.attrs?.name ?? '',
+    tagline: header?.attrs?.tagline ?? '',
+    contact: header?.attrs?.contact ?? {},
+    summary: '',
+    sections: [],
+    experience: [],
+    education: [],
+    tools: '',
+  };
+
+  for (const s of sections) {
+    const kind = s.attrs?.sectionKind;
+    if (kind === 'summary') {
+      flat.summary = paragraphsText(s)[0] ?? '';
+    } else if (kind === 'experience') {
+      flat.experience = (s.content ?? []).filter((n) => n.type === 'experienceItem').map((it) => ({
+        id: it.attrs?.id ?? '',
+        title: it.attrs?.title ?? '',
+        company: it.attrs?.company ?? '',
+        dates: it.attrs?.dates ?? '',
+        bullets: (((it.content ?? [])[0]?.content) ?? [])
+          .filter((li) => li.type === 'listItem')
+          .map((li) => textOf((li.content ?? [])[0])),
+      }));
+    } else if (kind === 'education') {
+      flat.education = paragraphsText(s);
+    } else if (kind === 'tools') {
+      flat.tools = paragraphsText(s)[0] ?? '';
+    } else { // 'custom'
+      flat.sections.push({
+        id: s.attrs?.id ?? '',
+        title: s.attrs?.title ?? '',
+        type: s.attrs?.type ?? 'list',
+        content: paragraphsText(s),
+      });
+    }
+  }
+  return flat;
+}
