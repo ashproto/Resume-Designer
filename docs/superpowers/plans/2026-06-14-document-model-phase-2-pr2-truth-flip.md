@@ -428,7 +428,9 @@ git commit -m "feat(ui): drive experience accordion + sort from ui-state, not r�
 - Modify (wholesale): `resume-designer/src/store.js`
 - Test: `resume-designer/test/store.test.js`
 
-The store's truth becomes the model. `getData()`/`get()` bridge via `modelToFlat`; the flat-path writers round-trip through flat; history snapshots are model JSON with a `modelToFlat` read bridge and a flat→model load migration; `updateSilent` is removed (no callers after Task 3); the save callback receives the **model** (so `variant.data` persists as model JSON). The app behaves identically.
+The store's truth becomes the model. `getData()`/`get()` bridge via `modelToFlat`; the flat-path writers round-trip through flat; history snapshots are model JSON with a `modelToFlat` read bridge and a flat→model load migration; `updateSilent` is removed (no callers after Task 3); the save callback receives **`getData()` (flat)** so `variant.data` persists as the flat interchange shape. The app behaves identically.
+
+> **CORRECTION (applied during review, fix commit `82be4b6`):** the save callback must hand persistence **`this.getData()` (flat)**, NOT the raw `model`. `variantManager` export, `importFromJSON`, `generateMarkdown`, and `getVariantModel` read `variant.data` as flat directly, so a model-shaped `variant.data` breaks single-file export/import. The `store.js` code block below predates the fix — its two `saveCallback(model)` calls (in `scheduleSave`/`saveNow`) are `saveCallback(this.getData())` in the committed code, and the "save callback gets a model" test asserts the flat/importable shape instead.
 
 - [ ] **Step 1: Write the failing store test suite**
 

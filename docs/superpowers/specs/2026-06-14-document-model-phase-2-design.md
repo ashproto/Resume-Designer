@@ -143,7 +143,7 @@ New methods that compile to ProseMirror transactions:
 - Persistence unchanged: history is stored per variant at `resume-designer-history-<id>` and is part of the backup envelope (`isOwnedKey` / `BACKUP_HISTORY_PREFIX`) exactly as today. Snapshots now contain model JSON instead of flat data.
 
 ### Persistence + adoption migration
-- `variant.data` becomes the **model JSON** (with `schemaVersion`). `saveVariant` / `initPersistence` / the debounced `onSave` path are otherwise unchanged.
+- `variant.data` persists as the **flat interchange shape** (NOT model JSON). *(Revised during PR 2.2 review: `variantManager` export, `importFromJSON`, `generateMarkdown`, and `getVariantModel` read `variant.data` as flat directly, so a model-shaped `variant.data` breaks single-file export/import. The store hands `getData()` (flat) to the save callback; the model is the in-memory truth only — there is no on-disk adoption-migration.)* `saveVariant` / `initPersistence` / the debounced `onSave` path are otherwise unchanged.
 - On variant load (`store.setData`/`setModel`), detect shape: a value without `schemaVersion`/`docType` is **flat** → run `flatToModel`, set the model, and **persist it back** (one-time adoption). A value already a model loads directly (validated by `validateModel`).
 - Export/import: JSON/Markdown export serialize `modelToFlat(model)`; `importFromJSON` validates the flat shape then `flatToModel`s it. The backup envelope is unaffected (it round-trips raw storage strings).
 
