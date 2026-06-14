@@ -44,6 +44,18 @@ const EMPHASIS = {
   tools: 'Figma • VS Code • git',
 };
 
+// Exercises: a section with NO `type` key (onboarding shape), a section with
+// type:'skills', and the top-level toolsDisplay field — all must round-trip.
+const REAL_VARIANT = {
+  name: 'B', tagline: '', contact: { location: '', email: '', phone: '', portfolio: '', instagram: '' },
+  summary: '',
+  sections: [
+    { id: 'h', title: 'Highlights', content: ['- Did a thing'] },
+    { id: 'sk', title: 'Skills', type: 'skills', content: ['Rust', 'Go'] },
+  ],
+  experience: [], education: [], tools: 'a • b', toolsDisplay: 'skills',
+};
+
 // Exercises the relaxed cardinalities: empty custom-section content + an
 // experience item with NO bullets must survive as empty (not `['']`).
 const EMPTY_FIELDS = {
@@ -55,7 +67,7 @@ const EMPTY_FIELDS = {
 };
 
 describe('modelToFlat (lossless round-trip)', () => {
-  for (const [label, sample] of [['POPULATED', POPULATED], ['SPARSE', SPARSE], ['EMPTY_RESUME', EMPTY_RESUME], ['EMPHASIS', EMPHASIS], ['EMPTY_FIELDS', EMPTY_FIELDS]]) {
+  for (const [label, sample] of [['POPULATED', POPULATED], ['SPARSE', SPARSE], ['EMPTY_RESUME', EMPTY_RESUME], ['EMPHASIS', EMPHASIS], ['EMPTY_FIELDS', EMPTY_FIELDS], ['REAL_VARIANT', REAL_VARIANT]]) {
     it(`round-trips ${label} byte-for-byte`, () => {
       const back = modelToFlat(flatToModel(sample));
       expect(back).toEqual(sample);

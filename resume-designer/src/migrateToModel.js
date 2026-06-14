@@ -15,7 +15,7 @@ export function flatToModel(flat) {
   if (flat.summary) content.push(section('summary', 'Summary', 'text', [para(flat.summary)]));
 
   for (const s of flat.sections ?? []) {
-    content.push(section('custom', s.title ?? '', s.type ?? 'list', (s.content ?? []).map(para), { id: s.id }));
+    content.push(section('custom', s.title ?? '', s.type ?? '', (s.content ?? []).map(para), { id: s.id }));
   }
 
   if ((flat.experience ?? []).length) {
@@ -32,7 +32,7 @@ export function flatToModel(flat) {
 
   if (flat.tools) content.push(section('tools', 'Tools', 'text', [para(flat.tools)]));
 
-  return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION }, content };
+  return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION, toolsDisplay: flat.toolsDisplay ?? '' }, content };
 }
 
 const textOf = (node) =>
@@ -74,14 +74,12 @@ export function modelToFlat(model) {
     } else if (kind === 'tools') {
       flat.tools = paragraphsText(s)[0] ?? '';
     } else { // 'custom'
-      flat.sections.push({
-        id: s.attrs?.id ?? '',
-        title: s.attrs?.title ?? '',
-        type: s.attrs?.type ?? 'list',
-        content: paragraphsText(s),
-      });
+      const entry = { id: s.attrs?.id ?? '', title: s.attrs?.title ?? '', content: paragraphsText(s) };
+      if (s.attrs?.type) entry.type = s.attrs.type; // omit when the empty sentinel
+      flat.sections.push(entry);
     }
   }
+  if (model.attrs?.toolsDisplay) flat.toolsDisplay = model.attrs.toolsDisplay;
   return flat;
 }
 

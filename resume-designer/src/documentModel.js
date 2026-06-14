@@ -8,7 +8,7 @@ export const SCHEMA_VERSION = 1;
 // `section`. Text (incl. any **markers**) is stored verbatim in text nodes.
 export const resumeSchema = new Schema({
   nodes: {
-    doc: { content: 'header section*', attrs: { schemaVersion: { default: SCHEMA_VERSION } } },
+    doc: { content: 'header section*', attrs: { schemaVersion: { default: SCHEMA_VERSION }, toolsDisplay: { default: '' } } },
     header: {
       atom: true,
       attrs: { name: { default: '' }, tagline: { default: '' }, contact: { default: {} } },
