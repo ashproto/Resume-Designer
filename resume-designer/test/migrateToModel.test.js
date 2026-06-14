@@ -132,6 +132,26 @@ describe('education entries', () => {
   });
 });
 
+describe('tags in the migration', () => {
+  it('emits tools as a tagGroup of tags', () => {
+    const tools = flatToModel(POPULATED).content.find((n) => n.attrs?.sectionKind === 'tools');
+    const tg = tools.content.find((n) => n.type === 'tagGroup');
+    expect(tg).toBeDefined();
+    expect(tg.content.map((t) => t.content[0].text)).toEqual(['Difference Engine', 'Slide Rule']);
+  });
+  it('emits a type:"skills" custom section as a tagGroup', () => {
+    const sk = flatToModel(REAL_VARIANT).content.find((n) => n.attrs?.id === 'sk'); // type:'skills'
+    const tg = sk.content.find((n) => n.type === 'tagGroup');
+    expect(tg).toBeDefined();
+    expect(tg.content.map((t) => t.content[0].text)).toEqual(['Rust', 'Go']);
+  });
+  it('leaves a non-skills custom section as paragraphs', () => {
+    const hi = flatToModel(REAL_VARIANT).content.find((n) => n.attrs?.id === 'h'); // no type
+    expect(hi.content.some((n) => n.type === 'tagGroup')).toBe(false);
+    expect(hi.content.some((n) => n.type === 'paragraph')).toBe(true);
+  });
+});
+
 describe('experience relevanceRank', () => {
   it('carries _relevanceRank into the experienceItem attr and back', () => {
     const flat = { ...SPARSE, experience: [{ id: 'e1', title: 'Dev', company: 'Co', dates: '2020', bullets: [], _relevanceRank: 2 }] };

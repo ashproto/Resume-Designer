@@ -4,6 +4,8 @@ const text = (s) => (s ? [{ type: 'text', text: s }] : []);
 const field = (type, s) => ({ type, content: text(s) });
 const para = (s) => ({ type: 'paragraph', content: text(s) });
 const heading = (title) => ({ type: 'heading', content: text(title) });
+const splitTools = (s) => String(s ?? '').split('•').map((t) => t.trim()).filter(Boolean);
+const tagGroup = (items) => ({ type: 'tagGroup', content: items.map((t) => ({ type: 'tag', content: text(t) })) });
 
 const contactList = (contact) => ({
   type: 'contactList',
@@ -43,7 +45,11 @@ export function flatToModel(flat) {
   if (flat.summary) content.push(section('summary', 'Summary', 'text', [para(flat.summary)]));
 
   for (const s of flat.sections ?? []) {
-    content.push(section('custom', s.title ?? '', s.type ?? '', (s.content ?? []).map(para), { id: s.id }));
+    const type = s.type ?? '';
+    const blocks = type === 'skills'
+      ? [tagGroup(s.content ?? [])]
+      : (s.content ?? []).map(para);
+    content.push(section('custom', s.title ?? '', type, blocks, { id: s.id }));
   }
 
   if ((flat.experience ?? []).length) {
@@ -54,7 +60,7 @@ export function flatToModel(flat) {
     content.push(section('education', 'Education', 'list', flat.education.map((e) => field('educationItem', e))));
   }
 
-  if (flat.tools) content.push(section('tools', 'Tools', 'text', [para(flat.tools)]));
+  if (flat.tools) content.push(section('tools', 'Tools', 'text', [tagGroup(splitTools(flat.tools))]));
 
   return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION, docType: 'resume', toolsDisplay: flat.toolsDisplay ?? '' }, content };
 }
@@ -64,6 +70,10 @@ const textOf = (node) =>
 const paragraphsText = (sectionNode) =>
   (sectionNode.content ?? []).filter((n) => n.type === 'paragraph').map(textOf);
 const childOfType = (node, type) => (node?.content ?? []).find((n) => n.type === type);
+const tagsOf = (node) => {
+  const tg = childOfType(node, 'tagGroup');
+  return tg ? (tg.content ?? []).filter((n) => n.type === 'tag').map(textOf) : null;
+};
 const headingTitle = (sectionNode) => textOf(childOfType(sectionNode, 'heading'));
 const blocksOfType = (sectionNode, type) => (sectionNode?.content ?? []).filter((n) => n.type === type);
 const contactOf = (header) => {
@@ -109,9 +119,11 @@ export function modelToFlat(model) {
     } else if (kind === 'education') {
       flat.education = blocksOfType(s, 'educationItem').map(textOf);
     } else if (kind === 'tools') {
-      flat.tools = paragraphsText(s)[0] ?? '';
+      const tags = tagsOf(s);
+      flat.tools = tags ? tags.join(' • ') : (paragraphsText(s)[0] ?? '');
     } else { // 'custom'
-      const entry = { id: s.attrs?.id ?? '', title: headingTitle(s), content: paragraphsText(s) };
+      const tags = tagsOf(s);
+      const entry = { id: s.attrs?.id ?? '', title: headingTitle(s), content: tags ?? paragraphsText(s) };
       if (s.attrs?.type) entry.type = s.attrs.type; // omit when the empty sentinel
       flat.sections.push(entry);
     }
