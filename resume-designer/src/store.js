@@ -376,7 +376,7 @@ function createStore() {
       if (saveTimeout) clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => {
         if (saveCallback && isDirty) {
-          saveCallback(model);
+          saveCallback(this.getData()); // persist FLAT (stable on-disk/interchange shape)
           this.markSaved();
         }
       }, SAVE_DEBOUNCE_MS);
@@ -385,7 +385,7 @@ function createStore() {
     saveNow() {
       if (saveTimeout) clearTimeout(saveTimeout);
       if (saveCallback && model) {
-        saveCallback(model);
+        saveCallback(this.getData()); // persist FLAT (stable on-disk/interchange shape)
         this.markSaved();
       }
     },

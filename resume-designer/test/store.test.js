@@ -57,12 +57,15 @@ describe('store (model-native)', () => {
     expect(store.getData().education).not.toContain('New Degree');
   });
 
-  it('hands the MODEL to the save callback', () => {
+  it('hands FLAT (importable) data to the save callback — stable on-disk shape', () => {
     let saved = null;
     store.onSave((d) => { saved = d; });
     store.update('name', 'Z');
     store.saveNow();
-    expect(saved.type).toBe('doc');
+    // variant.data must stay flat: importFromJSON validates name+contact; markdown reads data.name.
+    expect(saved.type).toBeUndefined();      // NOT a model doc
+    expect(saved.name).toBe('Z');
+    expect(saved.contact).toBeDefined();
   });
 
   it('migrates a pre-2.2 FLAT history snapshot on load', () => {
