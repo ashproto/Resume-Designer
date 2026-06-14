@@ -4,9 +4,10 @@ import { Schema } from 'prosemirror-model';
 export const SCHEMA_VERSION = 1;
 
 // Résumé document schema. Reading order = depth-first node order. Every visible
-// field is an editable node (no data hidden in atom attrs) so the TipTap editor
-// (Phase 2.3) can edit each field in place. Text (incl. any **markers**) is stored
-// verbatim in text nodes; emphasis marks exist but the migration does not emit them.
+// field is an editable node (no data hidden in atom attrs). Emphasis is stored as
+// bold/italic/underline MARKS on text nodes, and skills/tools as tagGroup/tag nodes;
+// the flat⇄model migration (migrateToModel.js + inlineMarkdown.js) parses/serializes
+// these to/from the flat shape's markdown markers and ' • '-joined strings.
 export const resumeSchema = new Schema({
   nodes: {
     doc: {
