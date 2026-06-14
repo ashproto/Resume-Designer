@@ -51,7 +51,7 @@ export function flatToModel(flat) {
   }
 
   if ((flat.education ?? []).length) {
-    content.push(section('education', 'Education', 'list', flat.education.map(para)));
+    content.push(section('education', 'Education', 'list', flat.education.map((e) => field('educationItem', e))));
   }
 
   if (flat.tools) content.push(section('tools', 'Tools', 'text', [para(flat.tools)]));
@@ -103,7 +103,7 @@ export function modelToFlat(model) {
           .map((li) => textOf((li.content ?? [])[0])),
       }));
     } else if (kind === 'education') {
-      flat.education = paragraphsText(s);
+      flat.education = blocksOfType(s, 'educationItem').map(textOf);
     } else if (kind === 'tools') {
       flat.tools = paragraphsText(s)[0] ?? '';
     } else { // 'custom'

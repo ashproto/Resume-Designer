@@ -122,3 +122,12 @@ describe('section headings', () => {
     expect(skills.attrs.title).toBeUndefined();
   });
 });
+
+describe('education entries', () => {
+  it('become educationItem nodes', () => {
+    const edu = flatToModel(POPULATED).content.find((n) => n.attrs?.sectionKind === 'education');
+    const items = edu.content.filter((n) => n.type === 'educationItem');
+    expect(items).toHaveLength(1);
+    expect(items[0].content[0].text).toBe('B.A. — Somewhere — 1840');
+  });
+});

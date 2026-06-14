@@ -61,6 +61,7 @@ export const resumeSchema = new Schema({
     paragraph: { group: 'block', content: 'inline*', toDOM: () => ['p', 0], parseDOM: [{ tag: 'p' }] },
     bulletList: { group: 'block', content: 'listItem*', toDOM: () => ['ul', 0], parseDOM: [{ tag: 'ul' }] },
     listItem: { content: 'paragraph', toDOM: () => ['li', 0], parseDOM: [{ tag: 'li' }] },
+    educationItem: { group: 'block', content: 'text*', toDOM: () => ['div', { class: 'edu-item' }, 0], parseDOM: [{ tag: 'div.edu-item' }] },
     experienceItem: {
       group: 'block',
       attrs: { id: { default: '' } },
