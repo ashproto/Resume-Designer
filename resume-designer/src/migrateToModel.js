@@ -84,3 +84,13 @@ export function modelToFlat(model) {
   }
   return flat;
 }
+
+const FLAT_DEFAULTS = {
+  name: '', tagline: '', contact: {}, summary: '',
+  sections: [], experience: [], education: [], tools: '',
+};
+
+// Compute a document model for a stored variant on demand. Pure; persists nothing.
+export function getVariantModel(variant) {
+  return flatToModel({ ...FLAT_DEFAULTS, ...(variant?.data ?? {}) });
+}

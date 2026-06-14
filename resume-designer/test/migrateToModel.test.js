@@ -62,3 +62,14 @@ describe('modelToFlat (lossless round-trip)', () => {
     });
   }
 });
+
+import { getVariantModel } from '../src/migrateToModel.js';
+
+describe('getVariantModel', () => {
+  it('derives a valid model from a stored variant, defaulting missing fields', () => {
+    const variant = { id: 'v1', name: 'CV', data: { name: 'Ada', tagline: '', contact: {} } };
+    const model = getVariantModel(variant);
+    expect(model.content[0].type).toBe('header');
+    expect(model.content[0].attrs.name).toBe('Ada');
+  });
+});
