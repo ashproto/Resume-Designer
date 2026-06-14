@@ -33,6 +33,7 @@ describe('flatToModel', () => {
   it('round-trips contact including empty values', () => {
     const back = modelToFlat(flatToModel(POPULATED));
     expect(back.contact).toEqual(POPULATED.contact); // phone/portfolio/instagram '' preserved
+    expect(Object.keys(back.contact)).toEqual(Object.keys(POPULATED.contact)); // order preserved
   });
 });
 

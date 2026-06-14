@@ -21,9 +21,11 @@ describe('resumeSchema', () => {
     expect(() => validateModel(validDoc)).not.toThrow();
   });
   it('header is contentful — name/tagline/contactList are editable child nodes', () => {
-    const header = validDoc.content[0];
-    expect(header.type).toBe('header');
-    expect(header.content.map((n) => n.type)).toEqual(['name', 'tagline', 'contactList']);
+    const header = resumeSchema.nodeFromJSON(validDoc).firstChild;
+    expect(header.type.name).toBe('header');
+    const childTypes = [];
+    header.forEach((child) => childTypes.push(child.type.name));
+    expect(childTypes).toEqual(['name', 'tagline', 'contactList']);
   });
   it('rejects a document whose first node is not a header', () => {
     const bad = { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
