@@ -62,6 +62,8 @@ export const resumeSchema = new Schema({
     bulletList: { group: 'block', content: 'listItem*', toDOM: () => ['ul', 0], parseDOM: [{ tag: 'ul' }] },
     listItem: { content: 'paragraph', toDOM: () => ['li', 0], parseDOM: [{ tag: 'li' }] },
     educationItem: { group: 'block', content: 'text*', toDOM: () => ['div', { class: 'edu-item' }, 0], parseDOM: [{ tag: 'div.edu-item' }] },
+    tagGroup: { group: 'block', content: 'tag*', toDOM: () => ['ul', { class: 'tag-group' }, 0], parseDOM: [{ tag: 'ul.tag-group' }] },
+    tag: { content: 'text*', toDOM: () => ['li', { class: 'tag' }, 0], parseDOM: [{ tag: 'li.tag' }] },
     experienceItem: {
       group: 'block',
       attrs: { id: { default: '' } },
@@ -77,6 +79,7 @@ export const resumeSchema = new Schema({
   marks: {
     bold: { toDOM: () => ['strong', 0], parseDOM: [{ tag: 'strong' }] },
     italic: { toDOM: () => ['em', 0], parseDOM: [{ tag: 'em' }] },
+    underline: { toDOM: () => ['u', 0], parseDOM: [{ tag: 'u' }] },
     link: { attrs: { href: {} }, toDOM: (m) => ['a', { href: m.attrs.href }, 0], parseDOM: [{ tag: 'a[href]', getAttrs: (el) => ({ href: el.getAttribute('href') }) }] },
   },
 });

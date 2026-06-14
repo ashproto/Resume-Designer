@@ -39,6 +39,29 @@ describe('resumeSchema', () => {
     expect(empty.attrs?.schemaVersion ?? SCHEMA_VERSION).toBe(SCHEMA_VERSION);
     expect(() => validateModel(empty)).not.toThrow();
   });
+  it('exposes tagGroup/tag nodes and the underline mark', () => {
+    expect(resumeSchema.nodes.tagGroup).toBeDefined();
+    expect(resumeSchema.nodes.tag).toBeDefined();
+    expect(resumeSchema.marks.underline).toBeDefined();
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'header', content: [
+          { type: 'name', content: [{ type: 'text', text: 'A', marks: [{ type: 'underline' }] }] },
+          { type: 'tagline', content: [] },
+          { type: 'contactList', content: [] },
+        ] },
+        { type: 'section', attrs: { id: 's', type: 'list', sectionKind: 'skills' }, content: [
+          { type: 'heading', content: [{ type: 'text', text: 'Skills' }] },
+          { type: 'tagGroup', content: [
+            { type: 'tag', content: [{ type: 'text', text: 'Rust' }] },
+            { type: 'tag', content: [{ type: 'text', text: 'Go' }] },
+          ] },
+        ] },
+      ],
+    };
+    expect(() => validateModel(doc)).not.toThrow();
+  });
   it('serializes to DOM in model order', async () => {
     const { DOMSerializer } = await import('prosemirror-model');
     const { JSDOM } = await import('jsdom');
