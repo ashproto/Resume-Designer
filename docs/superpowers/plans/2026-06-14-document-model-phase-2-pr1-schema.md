@@ -172,7 +172,7 @@ export function getVariantModel(variant) {
 
 - [ ] **Step 1: Update fixtures + add the failing structural tests**
 
-In `test/documentModel.test.js`, replace the `validDoc` constant (lines 4–11) with the new header shape and a heading in the section:
+In `test/documentModel.test.js`, replace the `validDoc` constant (lines 4–11) with the new contentful header shape. **Leave the section in its current shape** (title attr + a single paragraph, no heading) — sections are not touched until Task 3:
 
 ```javascript
 const validDoc = {
@@ -185,11 +185,8 @@ const validDoc = {
         { type: 'contactItem', attrs: { kind: 'email' }, content: [{ type: 'text', text: 'ada@x.com' }] },
       ] },
     ] },
-    { type: 'section', attrs: { id: 's1', type: 'text', sectionKind: 'summary' },
-      content: [
-        { type: 'heading', content: [{ type: 'text', text: 'Summary' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'First programmer.' }] },
-      ] },
+    { type: 'section', attrs: { id: 's1', title: 'Summary', type: 'text', sectionKind: 'summary' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'First programmer.' }] }] },
   ],
 };
 ```
@@ -204,7 +201,7 @@ In the same file, inside `describe('resumeSchema', …)`, replace the header in 
   });
 ```
 
-For the serialize test, change its `nodeFromJSON({...})` header to:
+For the serialize test, change only its `nodeFromJSON({...})` **header** (keep the section in its current title-attr shape):
 
 ```javascript
         { type: 'header', content: [
@@ -212,11 +209,8 @@ For the serialize test, change its `nodeFromJSON({...})` header to:
           { type: 'tagline', content: [] },
           { type: 'contactList', content: [] },
         ] },
-        { type: 'section', attrs: { id: 'a', type: 'list', sectionKind: 'custom' },
-          content: [
-            { type: 'heading', content: [{ type: 'text', text: 'Skills' }] },
-            { type: 'paragraph', content: [{ type: 'text', text: 'Math' }] },
-          ] },
+        { type: 'section', attrs: { id: 'a', title: 'Skills', type: 'list', sectionKind: 'custom' },
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Math' }] }] },
 ```
 
 In `test/migrateToModel.test.js`, add to `describe('flatToModel', …)`:
@@ -485,7 +479,27 @@ git commit -m "feat(model): experience fields as editable jobTitle/company/dates
 - Modify: `resume-designer/src/migrateToModel.js` (`section` builder + custom-section reading)
 - Test: `resume-designer/test/migrateToModel.test.js`
 
-- [ ] **Step 1: Add the failing structural test**
+- [ ] **Step 1: Update documentModel fixtures + add the failing structural test**
+
+This task makes a section's `heading` mandatory and removes the section `title` attr, so the two `test/documentModel.test.js` fixtures must gain a leading `heading` and drop `title`. Change the `validDoc` section to:
+
+```javascript
+    { type: 'section', attrs: { id: 's1', type: 'text', sectionKind: 'summary' },
+      content: [
+        { type: 'heading', content: [{ type: 'text', text: 'Summary' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'First programmer.' }] },
+      ] },
+```
+
+Change the `'serializes to DOM in model order'` test's section to:
+
+```javascript
+        { type: 'section', attrs: { id: 'a', type: 'list', sectionKind: 'custom' },
+          content: [
+            { type: 'heading', content: [{ type: 'text', text: 'Skills' }] },
+            { type: 'paragraph', content: [{ type: 'text', text: 'Math' }] },
+          ] },
+```
 
 In `test/migrateToModel.test.js`, add:
 
@@ -506,7 +520,7 @@ Expected: FAIL — the section still carries `title` in attrs and has no `headin
 
 - [ ] **Step 3: Evolve `section` in `src/documentModel.js`**
 
-Replace the `section` node (lines 18–23) with the `title`-less, heading-led version and add the `heading` node:
+Replace the `section` node with the `title`-less, heading-led version and add the `heading` node (deliberately NOT in the `block` group, so `heading block*` permits exactly one heading, first):
 
 ```javascript
     section: {
