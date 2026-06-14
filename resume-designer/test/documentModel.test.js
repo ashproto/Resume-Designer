@@ -4,7 +4,13 @@ import { resumeSchema, validateModel, createEmptyModel, SCHEMA_VERSION } from '.
 const validDoc = {
   type: 'doc',
   content: [
-    { type: 'header', attrs: { name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' } } },
+    { type: 'header', content: [
+      { type: 'name', content: [{ type: 'text', text: 'Ada Lovelace' }] },
+      { type: 'tagline', content: [{ type: 'text', text: 'Pioneer' }] },
+      { type: 'contactList', content: [
+        { type: 'contactItem', attrs: { kind: 'email' }, content: [{ type: 'text', text: 'ada@x.com' }] },
+      ] },
+    ] },
     { type: 'section', attrs: { id: 's1', title: 'Summary', type: 'text', sectionKind: 'summary' },
       content: [{ type: 'paragraph', content: [{ type: 'text', text: 'First programmer.' }] }] },
   ],
@@ -13,6 +19,11 @@ const validDoc = {
 describe('resumeSchema', () => {
   it('accepts a valid résumé document', () => {
     expect(() => validateModel(validDoc)).not.toThrow();
+  });
+  it('header is contentful — name/tagline/contactList are editable child nodes', () => {
+    const header = validDoc.content[0];
+    expect(header.type).toBe('header');
+    expect(header.content.map((n) => n.type)).toEqual(['name', 'tagline', 'contactList']);
   });
   it('rejects a document whose first node is not a header', () => {
     const bad = { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
@@ -29,7 +40,11 @@ describe('resumeSchema', () => {
     const dom = new JSDOM('<!doctype html><body></body>');
     const doc = resumeSchema.nodeFromJSON({
       type: 'doc', content: [
-        { type: 'header', attrs: { name: 'Ada', tagline: '', contact: {} } },
+        { type: 'header', content: [
+          { type: 'name', content: [{ type: 'text', text: 'Ada' }] },
+          { type: 'tagline', content: [] },
+          { type: 'contactList', content: [] },
+        ] },
         { type: 'section', attrs: { id: 'a', title: 'Skills', type: 'list', sectionKind: 'custom' },
           content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Math' }] }] },
       ],

@@ -3,17 +3,45 @@ import { Schema } from 'prosemirror-model';
 // Bump when the model's node/attr shape changes in a way that needs migration.
 export const SCHEMA_VERSION = 1;
 
-// Résumé document schema. Reading order = depth-first node order. `header` is an
-// atom holding name/tagline/contact in attrs; every résumé area becomes a typed
-// `section`. Text (incl. any **markers**) is stored verbatim in text nodes.
+// Résumé document schema. Reading order = depth-first node order. Every visible
+// field is an editable node (no data hidden in atom attrs) so the TipTap editor
+// (Phase 2.3) can edit each field in place. Text (incl. any **markers**) is stored
+// verbatim in text nodes; emphasis marks exist but the migration does not emit them.
 export const resumeSchema = new Schema({
   nodes: {
-    doc: { content: 'header section*', attrs: { schemaVersion: { default: SCHEMA_VERSION }, toolsDisplay: { default: '' } } },
+    doc: {
+      content: 'header section*',
+      attrs: {
+        schemaVersion: { default: SCHEMA_VERSION },
+        docType: { default: 'resume' },
+        toolsDisplay: { default: '' },
+      },
+    },
     header: {
-      atom: true,
-      attrs: { name: { default: '' }, tagline: { default: '' }, contact: { default: {} } },
-      toDOM: (n) => ['header', {}, `${n.attrs.name} ${n.attrs.tagline}`.trim()],
+      content: 'name tagline contactList',
+      toDOM: () => ['header', 0],
       parseDOM: [{ tag: 'header' }],
+    },
+    name: {
+      content: 'text*',
+      toDOM: () => ['h1', { class: 'resume-name' }, 0],
+      parseDOM: [{ tag: 'h1.resume-name' }],
+    },
+    tagline: {
+      content: 'text*',
+      toDOM: () => ['p', { class: 'resume-tagline' }, 0],
+      parseDOM: [{ tag: 'p.resume-tagline' }],
+    },
+    contactList: {
+      content: 'contactItem*',
+      toDOM: () => ['ul', { class: 'contact-list' }, 0],
+      parseDOM: [{ tag: 'ul.contact-list' }],
+    },
+    contactItem: {
+      content: 'text*',
+      attrs: { kind: { default: '' } },
+      toDOM: (n) => ['li', { class: 'contact-item', 'data-kind': n.attrs.kind }, 0],
+      parseDOM: [{ tag: 'li.contact-item', getAttrs: (el) => ({ kind: el.getAttribute('data-kind') || '' }) }],
     },
     section: {
       attrs: { id: { default: '' }, title: { default: '' }, type: { default: 'text' }, sectionKind: { default: 'custom' } },
@@ -50,7 +78,14 @@ export function validateModel(json) {
 export function createEmptyModel() {
   return {
     type: 'doc',
-    attrs: { schemaVersion: SCHEMA_VERSION },
-    content: [{ type: 'header', attrs: { name: '', tagline: '', contact: {} } }],
+    attrs: { schemaVersion: SCHEMA_VERSION, docType: 'resume', toolsDisplay: '' },
+    content: [{
+      type: 'header',
+      content: [
+        { type: 'name', content: [] },
+        { type: 'tagline', content: [] },
+        { type: 'contactList', content: [] },
+      ],
+    }],
   };
 }

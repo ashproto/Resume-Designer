@@ -25,6 +25,15 @@ describe('flatToModel', () => {
     expect(kinds).toContain('summary');
     expect(kinds).toContain('experience');
   });
+  it('emits a contentful header (name/tagline/contactList nodes)', () => {
+    const header = flatToModel(POPULATED).content[0];
+    expect(header.content.map((n) => n.type)).toEqual(['name', 'tagline', 'contactList']);
+    expect(header.content[0].content[0].text).toBe('Ada Lovelace');
+  });
+  it('round-trips contact including empty values', () => {
+    const back = modelToFlat(flatToModel(POPULATED));
+    expect(back.contact).toEqual(POPULATED.contact); // phone/portfolio/instagram '' preserved
+  });
 });
 
 const SPARSE = {
@@ -81,7 +90,10 @@ describe('getVariantModel', () => {
   it('derives a valid model from a stored variant, defaulting missing fields', () => {
     const variant = { id: 'v1', name: 'CV', data: { name: 'Ada', tagline: '', contact: {} } };
     const model = getVariantModel(variant);
-    expect(model.content[0].type).toBe('header');
-    expect(model.content[0].attrs.name).toBe('Ada');
+    const header = model.content[0];
+    expect(header.type).toBe('header');
+    const nameNode = header.content.find((n) => n.type === 'name');
+    const nameText = (nameNode?.content ?? []).find((n) => n.type === 'text')?.text ?? '';
+    expect(nameText).toBe('Ada');
   });
 });

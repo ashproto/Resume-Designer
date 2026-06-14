@@ -1,16 +1,27 @@
 import { SCHEMA_VERSION } from './documentModel.js';
 
-const para = (text) => ({ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] });
+const text = (s) => (s ? [{ type: 'text', text: s }] : []);
+const field = (type, s) => ({ type, content: text(s) });
+const para = (s) => ({ type: 'paragraph', content: text(s) });
+
+const contactList = (contact) => ({
+  type: 'contactList',
+  content: Object.entries(contact ?? {}).map(([kind, value]) => ({
+    type: 'contactItem', attrs: { kind }, content: text(value),
+  })),
+});
+const headerNode = (flat) => ({
+  type: 'header',
+  content: [field('name', flat.name ?? ''), field('tagline', flat.tagline ?? ''), contactList(flat.contact)],
+});
+
 const section = (sectionKind, title, type, content, extra = {}) =>
   ({ type: 'section', attrs: { id: extra.id ?? '', title, type, sectionKind }, content });
 
 // Flat résumé (store.js EMPTY_RESUME shape) → document model. Order is fixed:
 // summary, custom sections (in order), experience, education, tools.
 export function flatToModel(flat) {
-  const content = [{
-    type: 'header',
-    attrs: { name: flat.name ?? '', tagline: flat.tagline ?? '', contact: flat.contact ?? {} },
-  }];
+  const content = [headerNode(flat)];
 
   if (flat.summary) content.push(section('summary', 'Summary', 'text', [para(flat.summary)]));
 
@@ -32,22 +43,29 @@ export function flatToModel(flat) {
 
   if (flat.tools) content.push(section('tools', 'Tools', 'text', [para(flat.tools)]));
 
-  return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION, toolsDisplay: flat.toolsDisplay ?? '' }, content };
+  return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION, docType: 'resume', toolsDisplay: flat.toolsDisplay ?? '' }, content };
 }
 
 const textOf = (node) =>
   (node?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
 const paragraphsText = (sectionNode) =>
   (sectionNode.content ?? []).filter((n) => n.type === 'paragraph').map(textOf);
+const childOfType = (node, type) => (node?.content ?? []).find((n) => n.type === type);
+const contactOf = (header) => {
+  const list = childOfType(header, 'contactList');
+  const contact = {};
+  for (const item of list?.content ?? []) contact[item.attrs?.kind ?? ''] = textOf(item);
+  return contact;
+};
 
 export function modelToFlat(model) {
   const header = (model.content ?? []).find((n) => n.type === 'header');
   const sections = (model.content ?? []).filter((n) => n.type === 'section');
 
   const flat = {
-    name: header?.attrs?.name ?? '',
-    tagline: header?.attrs?.tagline ?? '',
-    contact: header?.attrs?.contact ?? {},
+    name: textOf(childOfType(header, 'name')),
+    tagline: textOf(childOfType(header, 'tagline')),
+    contact: contactOf(header),
     summary: '',
     sections: [],
     experience: [],
