@@ -11,8 +11,11 @@ const validDoc = {
         { type: 'contactItem', attrs: { kind: 'email' }, content: [{ type: 'text', text: 'ada@x.com' }] },
       ] },
     ] },
-    { type: 'section', attrs: { id: 's1', title: 'Summary', type: 'text', sectionKind: 'summary' },
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'First programmer.' }] }] },
+    { type: 'section', attrs: { id: 's1', type: 'text', sectionKind: 'summary' },
+      content: [
+        { type: 'heading', content: [{ type: 'text', text: 'Summary' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'First programmer.' }] },
+      ] },
   ],
 };
 
@@ -47,8 +50,11 @@ describe('resumeSchema', () => {
           { type: 'tagline', content: [] },
           { type: 'contactList', content: [] },
         ] },
-        { type: 'section', attrs: { id: 'a', title: 'Skills', type: 'list', sectionKind: 'custom' },
-          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Math' }] }] },
+        { type: 'section', attrs: { id: 'a', type: 'list', sectionKind: 'custom' },
+          content: [
+            { type: 'heading', content: [{ type: 'text', text: 'Skills' }] },
+            { type: 'paragraph', content: [{ type: 'text', text: 'Math' }] },
+          ] },
       ],
     });
     const frag = DOMSerializer.fromSchema(resumeSchema)

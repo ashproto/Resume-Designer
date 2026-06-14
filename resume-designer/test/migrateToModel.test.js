@@ -114,3 +114,11 @@ describe('getVariantModel', () => {
     expect(nameText).toBe('Ada');
   });
 });
+
+describe('section headings', () => {
+  it('stores a section title in an editable heading node, not an attr', () => {
+    const skills = flatToModel(POPULATED).content.find((n) => n.attrs?.id === 'sec_1');
+    expect(skills.content[0]).toEqual({ type: 'heading', content: [{ type: 'text', text: 'Skills' }] });
+    expect(skills.attrs.title).toBeUndefined();
+  });
+});

@@ -3,6 +3,7 @@ import { SCHEMA_VERSION } from './documentModel.js';
 const text = (s) => (s ? [{ type: 'text', text: s }] : []);
 const field = (type, s) => ({ type, content: text(s) });
 const para = (s) => ({ type: 'paragraph', content: text(s) });
+const heading = (title) => ({ type: 'heading', content: text(title) });
 
 const contactList = (contact) => ({
   type: 'contactList',
@@ -28,8 +29,11 @@ const experienceItemNode = (e) => ({
   ],
 });
 
-const section = (sectionKind, title, type, content, extra = {}) =>
-  ({ type: 'section', attrs: { id: extra.id ?? '', title, type, sectionKind }, content });
+const section = (sectionKind, title, type, blocks, extra = {}) => ({
+  type: 'section',
+  attrs: { id: extra.id ?? '', type, sectionKind },
+  content: [heading(title), ...blocks],
+});
 
 // Flat résumé (store.js EMPTY_RESUME shape) → document model. Order is fixed:
 // summary, custom sections (in order), experience, education, tools.
@@ -60,6 +64,7 @@ const textOf = (node) =>
 const paragraphsText = (sectionNode) =>
   (sectionNode.content ?? []).filter((n) => n.type === 'paragraph').map(textOf);
 const childOfType = (node, type) => (node?.content ?? []).find((n) => n.type === type);
+const headingTitle = (sectionNode) => textOf(childOfType(sectionNode, 'heading'));
 const blocksOfType = (sectionNode, type) => (sectionNode?.content ?? []).filter((n) => n.type === type);
 const contactOf = (header) => {
   const list = childOfType(header, 'contactList');
@@ -102,7 +107,7 @@ export function modelToFlat(model) {
     } else if (kind === 'tools') {
       flat.tools = paragraphsText(s)[0] ?? '';
     } else { // 'custom'
-      const entry = { id: s.attrs?.id ?? '', title: s.attrs?.title ?? '', content: paragraphsText(s) };
+      const entry = { id: s.attrs?.id ?? '', title: headingTitle(s), content: paragraphsText(s) };
       if (s.attrs?.type) entry.type = s.attrs.type; // omit when the empty sentinel
       flat.sections.push(entry);
     }

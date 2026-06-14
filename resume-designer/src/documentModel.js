@@ -44,10 +44,19 @@ export const resumeSchema = new Schema({
       parseDOM: [{ tag: 'li.contact-item', getAttrs: (el) => ({ kind: el.getAttribute('data-kind') || '' }) }],
     },
     section: {
-      attrs: { id: { default: '' }, title: { default: '' }, type: { default: 'text' }, sectionKind: { default: 'custom' } },
-      content: 'block*',
+      attrs: { id: { default: '' }, type: { default: 'text' }, sectionKind: { default: 'custom' } },
+      content: 'heading block*',
       toDOM: (n) => ['section', { 'data-kind': n.attrs.sectionKind, 'data-type': n.attrs.type, 'data-id': n.attrs.id }, 0],
-      parseDOM: [{ tag: 'section' }],
+      parseDOM: [{ tag: 'section', getAttrs: (el) => ({
+        id: el.getAttribute('data-id') || '',
+        type: el.getAttribute('data-type') || 'text',
+        sectionKind: el.getAttribute('data-kind') || 'custom',
+      }) }],
+    },
+    heading: {
+      content: 'text*',
+      toDOM: () => ['h2', 0],
+      parseDOM: [{ tag: 'h2' }],
     },
     paragraph: { group: 'block', content: 'inline*', toDOM: () => ['p', 0], parseDOM: [{ tag: 'p' }] },
     bulletList: { group: 'block', content: 'listItem*', toDOM: () => ['ul', 0], parseDOM: [{ tag: 'ul' }] },
