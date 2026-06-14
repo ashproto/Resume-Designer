@@ -7,8 +7,9 @@
  * a transient flat then re-derive the model via flatToModel (reusing setByPath /
  * the array helpers verbatim). Undo/redo snapshots are model JSON;
  * getHistoryEntryData() bridges back to flat for the diff view, and loadHistory
- * migrates pre-2.2 flat snapshots. The save callback receives the MODEL, so
- * variant.data persists as model JSON.
+ * migrates pre-2.2 flat snapshots. The save callback receives getData() (FLAT),
+ * so variant.data persists as the flat interchange shape (single-file
+ * export/import/getVariantModel read it directly); the model is the in-memory truth.
  */
 
 import { appStorage } from './appStorage.js';
