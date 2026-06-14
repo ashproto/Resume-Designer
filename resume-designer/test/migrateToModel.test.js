@@ -152,6 +152,16 @@ describe('tags in the migration', () => {
   });
 });
 
+describe('marks in the migration', () => {
+  it('parses summary emphasis into marks', () => {
+    const flat = { ...SPARSE, summary: 'Led **growth** today' };
+    const para = flatToModel(flat).content.find((n) => n.attrs?.sectionKind === 'summary')
+      .content.find((n) => n.type === 'paragraph');
+    const bold = para.content.find((c) => c.marks?.some((m) => m.type === 'bold'));
+    expect(bold.text).toBe('growth');
+  });
+});
+
 describe('experience relevanceRank', () => {
   it('carries _relevanceRank into the experienceItem attr and back', () => {
     const flat = { ...SPARSE, experience: [{ id: 'e1', title: 'Dev', company: 'Co', dates: '2020', bullets: [], _relevanceRank: 2 }] };

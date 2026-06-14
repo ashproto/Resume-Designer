@@ -3,6 +3,8 @@
  * Converts parsed resume data into styled HTML with inline editing support
  */
 
+import { formatInlineMarkdown } from './inlineMarkdown.js';
+
 function normalizeSectionType(type) {
   return type === 'skills' ? 'skills' : 'list';
 }
@@ -28,14 +30,6 @@ function normalizeLineItems(line, mode) {
     return items.map(stripLeadingBulletMarker).filter(Boolean);
   }
   return items;
-}
-
-function formatInlineMarkdown(text) {
-  const escaped = escapeHtmlRaw(text);
-  return escaped
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\+\+([^+\n]+)\+\+/g, '<u>$1</u>')
-    .replace(/(^|[\s([{"'`])_([^_\n]+)_(?=$|[\s)\]}"'`.,!?;:])/g, '$1<em>$2</em>');
 }
 
 function formatListLine(line) {
@@ -551,17 +545,6 @@ function formatBullet(text) {
   }
 
   return formatInlineMarkdown(text);
-}
-
-// HTML escape utility to prevent XSS
-function escapeHtmlRaw(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 function escapeHtml(str) {

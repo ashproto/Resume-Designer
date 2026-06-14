@@ -1,6 +1,7 @@
 import { SCHEMA_VERSION } from './documentModel.js';
+import { parseInlineMarks, serializeInlineMarks } from './inlineMarkdown.js';
 
-const text = (s) => (s ? [{ type: 'text', text: s }] : []);
+const text = (s) => parseInlineMarks(s);
 const field = (type, s) => ({ type, content: text(s) });
 const para = (s) => ({ type: 'paragraph', content: text(s) });
 const heading = (title) => ({ type: 'heading', content: text(title) });
@@ -65,8 +66,7 @@ export function flatToModel(flat) {
   return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION, docType: 'resume', toolsDisplay: flat.toolsDisplay ?? '' }, content };
 }
 
-const textOf = (node) =>
-  (node?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+const textOf = (node) => serializeInlineMarks((node?.content ?? []).filter((c) => c.type === 'text'));
 const paragraphsText = (sectionNode) =>
   (sectionNode.content ?? []).filter((n) => n.type === 'paragraph').map(textOf);
 const childOfType = (node, type) => (node?.content ?? []).find((n) => n.type === type);
