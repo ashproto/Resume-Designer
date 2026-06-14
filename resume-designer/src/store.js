@@ -1,12 +1,20 @@
 /**
- * Resume Store - Reactive state management for resume data
- * Handles state updates, change events, and coordinates with persistence
+ * Resume Store — model-native reactive state.
+ *
+ * The single source of truth is the document MODEL (ProseMirror doc JSON).
+ * The flat résumé shape is a derived bridge: getData()/get() return
+ * modelToFlat(model); the legacy flat-path writers (update/addToArray/…) mutate
+ * a transient flat then re-derive the model via flatToModel (reusing setByPath /
+ * the array helpers verbatim). Undo/redo snapshots are model JSON;
+ * getHistoryEntryData() bridges back to flat for the diff view, and loadHistory
+ * migrates pre-2.2 flat snapshots. The save callback receives the MODEL, so
+ * variant.data persists as model JSON.
  */
 
 import { appStorage } from './appStorage.js';
+import { flatToModel, modelToFlat } from './migrateToModel.js';
 
-// Cryptographically-secure random suffix (replaces Math.random; getRandomValues
-// has no secure-context requirement, so it works in the Tauri custom-scheme
+// Cryptographically-secure random suffix (works in the Tauri custom-scheme
 // webview and the browser build alike).
 export function randomSuffix() {
   const a = new Uint32Array(2);
@@ -14,19 +22,11 @@ export function randomSuffix() {
   return a[0].toString(36) + a[1].toString(36);
 }
 
-// Generate unique IDs for new items
 export function generateId(prefix = 'item') {
   return `${prefix}-${Date.now()}-${randomSuffix()}`;
 }
 
-// Comparable sort key for an experience entry: higher = more recent. Drives the
-// chronological (newest-first) default order and the "Date" sort button.
-// Prefers the human-readable `dates` string — the field the structure panel
-// exposes for editing — so the sort stays in sync when the user edits it; falls
-// back to the machine-readable endDate. An ongoing role ("Present"/"Current"/
-// "Currently"/"to date"/etc.) sorts newest; an entry with no parseable date
-// sorts oldest. Finite values only (no Infinity) so two
-// equal keys subtract to 0, never NaN. (#7)
+// Comparable sort key for an experience entry: higher = more recent. (#7, PR#13)
 export function experienceSortValue(exp) {
   if (!exp) return 0;
   const raw = String(exp.dates || exp.endDate || '').trim();
@@ -35,11 +35,6 @@ export function experienceSortValue(exp) {
   const years = raw.match(/\d{4}/g);
   if (!years || years.length === 0) return 0;
   const year = parseInt(years[years.length - 1], 10);
-  // Month precision for same-year ordering. Prefer a "YYYY-MM" in the visible
-  // dates; if absent, borrow the month from the machine-readable endDate, but
-  // only when endDate refers to the same end year — so a later edit to the
-  // visible year still wins (a changed year de-syncs endDate and we ignore it).
-  // (#7, PR#13)
   const ym = raw.match(/(\d{4})-(\d{1,2})/g);
   let month = 0;
   if (ym && ym.length) {
@@ -52,56 +47,48 @@ export function experienceSortValue(exp) {
   return year * 12 + month;
 }
 
-// Deep clone utility
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
-// Get nested value by path (e.g., "contact.email")
 function getByPath(obj, path) {
   return path.split('.').reduce((current, key) => {
     if (current === null || current === undefined) return undefined;
-    // Handle array index notation like "experience[0]"
     const match = key.match(/^(\w+)\[(\d+)\]$/);
-    if (match) {
-      return current[match[1]]?.[parseInt(match[2])];
-    }
+    if (match) return current[match[1]]?.[parseInt(match[2])];
     return current[key];
   }, obj);
 }
 
-// Set nested value by path
 function setByPath(obj, path, value) {
   const keys = path.split('.');
   const lastKey = keys.pop();
-  
   let current = obj;
   for (const key of keys) {
-    // Handle array index notation
     const match = key.match(/^(\w+)\[(\d+)\]$/);
     if (match) {
       current = current[match[1]][parseInt(match[2])];
     } else {
-      if (current[key] === undefined) {
-        current[key] = {};
-      }
+      if (current[key] === undefined) current[key] = {};
       current = current[key];
     }
   }
-  
-  // Handle array index in last key
   const lastMatch = lastKey.match(/^(\w+)\[(\d+)\]$/);
-  if (lastMatch) {
-    current[lastMatch[1]][parseInt(lastMatch[2])] = value;
-  } else {
-    current[lastKey] = value;
-  }
+  if (lastMatch) current[lastMatch[1]][parseInt(lastMatch[2])] = value;
+  else current[lastKey] = value;
 }
 
-// History persistence key prefix
+// A model is a doc node; a flat résumé is a plain object (name/contact/…).
+function isModel(x) {
+  return !!x && typeof x === 'object' && x.type === 'doc';
+}
+// Coerce either shape to a model (adoption-migration for flat inputs).
+function toModel(x) {
+  return isModel(x) ? deepClone(x) : flatToModel(x || {});
+}
+
 const HISTORY_KEY_PREFIX = 'resume-designer-history-';
 
-// Change type constants
 export const CHANGE_TYPES = {
   INITIAL: 'initial',
   EDIT: 'edit',
@@ -109,358 +96,272 @@ export const CHANGE_TYPES = {
   IMPORT: 'import',
   REORDER: 'reorder',
   ADD: 'add',
-  REMOVE: 'remove'
+  REMOVE: 'remove',
 };
 
-// Create the store
 function createStore() {
-  let data = null;
+  let model = null;
   let isDirty = false;
   const listeners = new Set();
   let saveCallback = null;
   let saveTimeout = null;
   const SAVE_DEBOUNCE_MS = 500;
-  
-  // Undo/redo history with metadata
-  // Each entry: { data, timestamp, description, changeType, path? }
+
+  // Undo/redo history; each entry's `data` is MODEL JSON.
   let history = [];
   let historyIndex = -1;
-  const MAX_HISTORY = 100; // Increased for version history
+  const MAX_HISTORY = 100;
   let isUndoRedoAction = false;
   let currentVariantId = null;
   let pendingChangeDescription = null;
   let pendingChangeType = CHANGE_TYPES.EDIT;
 
   return {
-    // Get current data (returns a clone to prevent direct mutation)
+    // --- reads (flat bridge) ---
     getData() {
-      return data ? deepClone(data) : null;
+      return model ? modelToFlat(model) : null;
     },
-
-    // Get raw reference (use carefully)
     getDataRef() {
-      return data;
+      // NOTE: derived copy, not a live reference — mutating it does not affect the store.
+      return model ? modelToFlat(model) : null;
     },
-
-    // Current variant id (used by the per-variant UI-state store).
+    getModel() {
+      return model ? deepClone(model) : null;
+    },
     getVariantId() {
       return currentVariantId;
     },
 
-    // Set entire data object
+    // --- whole-document set (accepts flat OR model) ---
     setData(newData, skipSave = false, variantId = null) {
-      data = deepClone(newData);
+      model = toModel(newData);
       isDirty = false;
-      
-      // Track current variant for history persistence
       if (variantId) {
         currentVariantId = variantId;
-        // Try to load existing history for this variant
         this.loadHistory(variantId);
       }
-      
-      // If no history was loaded, initialize with current state
       if (history.length === 0) {
         history.push({
-          data: deepClone(data),
+          data: deepClone(model),
           timestamp: new Date().toISOString(),
           description: 'Initial state',
-          changeType: CHANGE_TYPES.INITIAL
+          changeType: CHANGE_TYPES.INITIAL,
         });
         historyIndex = 0;
       }
-      
-      this.emit('dataLoaded', data);
+      this.emit('dataLoaded', this.getData());
       this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
-      if (!skipSave) {
-        this.scheduleSave();
-      }
+      if (!skipSave) this.scheduleSave();
     },
 
-    // Update a specific field by path
+    // Set the model directly (model-native callers). Accepts flat too.
+    setModel(newModel, skipSave = false) {
+      model = toModel(newModel);
+      isDirty = true;
+      if (!isUndoRedoAction) this.pushHistory();
+      this.emit('change', this.getData());
+      if (!skipSave) this.scheduleSave();
+    },
+
+    // --- flat-path writes (round-trip through flat, re-derive the model) ---
     update(path, value) {
-      if (!data) return;
-      
-      // Make the change
-      setByPath(data, path, value);
+      if (!model) return;
+      const flat = modelToFlat(model);
+      setByPath(flat, path, value);
+      model = flatToModel(flat);
       isDirty = true;
-      
-      // Save state to history AFTER making changes (unless this is an undo/redo action)
-      if (!isUndoRedoAction) {
-        this.pushHistory();
-      }
-      
+      if (!isUndoRedoAction) this.pushHistory();
       this.emit('fieldUpdated', { path, value });
-      this.emit('change', data);
+      this.emit('change', this.getData());
       this.scheduleSave();
     },
 
-    // Update a field by path WITHOUT recording history or emitting a change.
-    // Use for transient UI-only state (e.g. an accordion's collapsed/expanded
-    // flag): it persists on the next debounced save — so the value DOES land in
-    // appStorage and exported backups — but must NOT pollute undo history or
-    // trigger a re-render (a re-render here would defeat the DOM-class toggle the
-    // caller just performed). (#9)
-    updateSilent(path, value) {
-      if (!data) return;
-      setByPath(data, path, value);
-      isDirty = true;
-      this.scheduleSave();
-    },
-
-    // Set metadata for next history entry
     setChangeMetadata(description, changeType = CHANGE_TYPES.EDIT) {
       pendingChangeDescription = description;
       pendingChangeType = changeType;
     },
-    
-    // Push current state to history (called AFTER changes are made)
+
     pushHistory(description = null, changeType = null) {
-      if (!data) return;
-      
-      // Remove any future history if we're not at the end (branching)
-      if (historyIndex < history.length - 1) {
-        history.splice(historyIndex + 1);
-      }
-      
-      // Create history entry with metadata
-      const entry = {
-        data: deepClone(data),
+      if (!model) return;
+      if (historyIndex < history.length - 1) history.splice(historyIndex + 1);
+      history.push({
+        data: deepClone(model),
         timestamp: new Date().toISOString(),
         description: description || pendingChangeDescription || 'Edit',
-        changeType: changeType || pendingChangeType || CHANGE_TYPES.EDIT
-      };
-      
-      // Add the NEW current state
-      history.push(entry);
+        changeType: changeType || pendingChangeType || CHANGE_TYPES.EDIT,
+      });
       historyIndex = history.length - 1;
-      
-      // Reset pending metadata
       pendingChangeDescription = null;
       pendingChangeType = CHANGE_TYPES.EDIT;
-      
-      // Limit history size
       if (history.length > MAX_HISTORY) {
         history.shift();
         historyIndex--;
       }
-      
-      // Persist history
       this.saveHistory();
-      
       this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
     },
-    
-    // Save history to storage (quota throws survive the browser passthrough,
-    // hence the try/catch; cached mode never throws here)
+
     saveHistory() {
       if (!currentVariantId) return;
-
       try {
-        const historyData = {
-          history: history,
-          historyIndex: historyIndex
-        };
-        appStorage.setItem(
-          HISTORY_KEY_PREFIX + currentVariantId,
-          JSON.stringify(historyData)
-        );
+        appStorage.setItem(HISTORY_KEY_PREFIX + currentVariantId, JSON.stringify({ history, historyIndex }));
       } catch (e) {
         console.warn('Failed to save history:', e);
       }
     },
 
-    // Load history from storage
     loadHistory(variantId) {
       try {
         const saved = appStorage.getItem(HISTORY_KEY_PREFIX + variantId);
         if (saved) {
-          const historyData = JSON.parse(saved);
-          if (historyData.history && Array.isArray(historyData.history)) {
-            history = historyData.history;
-            historyIndex = historyData.historyIndex ?? history.length - 1;
+          const data = JSON.parse(saved);
+          if (data.history && Array.isArray(data.history)) {
+            history = data.history.map((entry) =>
+              isModel(entry?.data) ? entry : { ...entry, data: flatToModel(entry?.data || {}) });
+            historyIndex = data.historyIndex ?? history.length - 1;
             return true;
           }
         }
       } catch (e) {
         console.warn('Failed to load history:', e);
       }
-      
-      // Reset to empty if load fails
       history = [];
       historyIndex = -1;
       return false;
     },
-    
-    // Check if undo is available
-    canUndo() {
-      return historyIndex > 0;
-    },
-    
-    // Check if redo is available
-    canRedo() {
-      return historyIndex < history.length - 1;
-    },
-    
-    // Undo last change
+
+    canUndo() { return historyIndex > 0; },
+    canRedo() { return historyIndex < history.length - 1; },
+
     undo() {
       if (!this.canUndo()) return false;
-      
       isUndoRedoAction = true;
       historyIndex--;
-      data = deepClone(history[historyIndex].data);
+      model = deepClone(history[historyIndex].data);
       isDirty = true;
-      this.saveHistory(); // Persist after undo
-      this.emit('change', data);
+      this.saveHistory();
+      this.emit('change', this.getData());
       this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
       this.scheduleSave();
       isUndoRedoAction = false;
-      
       return true;
     },
-    
-    // Redo last undone change
+
     redo() {
       if (!this.canRedo()) return false;
-      
       isUndoRedoAction = true;
       historyIndex++;
-      data = deepClone(history[historyIndex].data);
+      model = deepClone(history[historyIndex].data);
       isDirty = true;
-      this.saveHistory(); // Persist after redo
-      this.emit('change', data);
+      this.saveHistory();
+      this.emit('change', this.getData());
       this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
       this.scheduleSave();
       isUndoRedoAction = false;
-      
       return true;
     },
-    
-    // Get all history entries (for history panel)
+
     getHistoryEntries() {
       return history.map((entry, index) => ({
         index,
         timestamp: entry.timestamp,
         description: entry.description,
         changeType: entry.changeType,
-        isCurrent: index === historyIndex
+        isCurrent: index === historyIndex,
       }));
     },
-    
-    // Get specific history entry data
+
+    // Returns FLAT data (bridge) so the History diff view / diffEngine are unchanged.
     getHistoryEntryData(index) {
-      if (index >= 0 && index < history.length) {
-        return deepClone(history[index].data);
-      }
+      if (index >= 0 && index < history.length) return modelToFlat(history[index].data);
       return null;
     },
-    
-    // Restore to a specific history entry
+
     restoreToEntry(index) {
       if (index < 0 || index >= history.length) return false;
-      
       isUndoRedoAction = true;
       historyIndex = index;
-      data = deepClone(history[historyIndex].data);
+      model = deepClone(history[historyIndex].data);
       isDirty = true;
       this.saveHistory();
-      this.emit('change', data);
+      this.emit('change', this.getData());
       this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
       this.scheduleSave();
       isUndoRedoAction = false;
-      
       return true;
     },
-    
-    // Get current history index
-    getHistoryIndex() {
-      return historyIndex;
-    },
-    
-    // Get history length
-    getHistoryLength() {
-      return history.length;
-    },
-    
-    // Clear history (e.g., when loading new data)
+
+    getHistoryIndex() { return historyIndex; },
+    getHistoryLength() { return history.length; },
     clearHistory() {
       history.length = 0;
       historyIndex = -1;
       this.emit('historyChanged', { canUndo: false, canRedo: false });
     },
 
-    // Get a specific field by path
     get(path) {
-      if (!data) return undefined;
-      return getByPath(data, path);
+      if (!model) return undefined;
+      return getByPath(modelToFlat(model), path);
     },
 
-    // Add item to an array field
     addToArray(path, item) {
-      if (!data) return;
-      
-      const arr = getByPath(data, path);
+      if (!model) return;
+      const flat = modelToFlat(model);
+      const arr = getByPath(flat, path);
       if (Array.isArray(arr)) {
         arr.push(item);
+        model = flatToModel(flat);
         isDirty = true;
         if (!isUndoRedoAction) this.pushHistory();
         this.emit('arrayItemAdded', { path, item });
-        this.emit('change', data);
+        this.emit('change', this.getData());
         this.scheduleSave();
       }
     },
 
-    // Remove item from array by index
     removeFromArray(path, index) {
-      if (!data) return;
-      
-      const arr = getByPath(data, path);
+      if (!model) return;
+      const flat = modelToFlat(model);
+      const arr = getByPath(flat, path);
       if (Array.isArray(arr) && index >= 0 && index < arr.length) {
         const removed = arr.splice(index, 1)[0];
+        model = flatToModel(flat);
         isDirty = true;
         if (!isUndoRedoAction) this.pushHistory();
         this.emit('arrayItemRemoved', { path, index, item: removed });
-        this.emit('change', data);
+        this.emit('change', this.getData());
         this.scheduleSave();
       }
     },
 
-    // Move item within array
     moveInArray(path, fromIndex, toIndex) {
-      if (!data) return;
-      
-      const arr = getByPath(data, path);
+      if (!model) return;
+      const flat = modelToFlat(model);
+      const arr = getByPath(flat, path);
       if (Array.isArray(arr) && fromIndex >= 0 && fromIndex < arr.length) {
         const [item] = arr.splice(fromIndex, 1);
         arr.splice(toIndex, 0, item);
+        model = flatToModel(flat);
         isDirty = true;
         if (!isUndoRedoAction) this.pushHistory();
         this.emit('arrayItemMoved', { path, fromIndex, toIndex });
-        this.emit('change', data);
+        this.emit('change', this.getData());
         this.scheduleSave();
       }
     },
 
-    // Check if there are unsaved changes
-    isDirty() {
-      return isDirty;
-    },
-
-    // Mark as saved
+    isDirty() { return isDirty; },
     markSaved() {
       isDirty = false;
       this.emit('saved');
     },
 
-    // Subscribe to events
     subscribe(callback) {
       listeners.add(callback);
       return () => listeners.delete(callback);
     },
-
-    // Emit event to all listeners
     emit(event, payload) {
-      listeners.forEach(callback => {
+      listeners.forEach((callback) => {
         try {
           callback(event, payload);
         } catch (e) {
@@ -469,41 +370,32 @@ function createStore() {
       });
     },
 
-    // Set save callback (called by persistence layer)
-    onSave(callback) {
-      saveCallback = callback;
-    },
+    onSave(callback) { saveCallback = callback; },
 
-    // Schedule a debounced save
     scheduleSave() {
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
-      }
+      if (saveTimeout) clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => {
         if (saveCallback && isDirty) {
-          saveCallback(data);
+          saveCallback(model);
           this.markSaved();
         }
       }, SAVE_DEBOUNCE_MS);
     },
 
-    // Force immediate save
     saveNow() {
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
-      }
-      if (saveCallback && data) {
-        saveCallback(data);
+      if (saveTimeout) clearTimeout(saveTimeout);
+      if (saveCallback && model) {
+        saveCallback(model);
         this.markSaved();
       }
-    }
+    },
   };
 }
 
-// Export singleton instance
 export const store = createStore();
 
-// Default empty resume template
+// Default empty resume template (flat). Still used as a content seed by callers;
+// setData() adopts it into a model.
 export const EMPTY_RESUME = {
   name: 'Your Name',
   tagline: 'Your Professional Title',
@@ -512,16 +404,11 @@ export const EMPTY_RESUME = {
     email: 'email@example.com',
     phone: '000-000-0000',
     portfolio: '',
-    instagram: ''
+    instagram: '',
   },
   summary: 'A brief professional summary describing your experience and goals.',
   sections: [
-    {
-      id: generateId('section'),
-      title: 'Skills',
-      type: 'list',
-      content: ['Skill 1', 'Skill 2', 'Skill 3']
-    }
+    { id: generateId('section'), title: 'Skills', type: 'list', content: ['Skill 1', 'Skill 2', 'Skill 3'] },
   ],
   experience: [
     {
@@ -529,12 +416,9 @@ export const EMPTY_RESUME = {
       title: 'Job Title',
       company: 'Company Name',
       dates: 'Start Date – End Date',
-      bullets: [
-        'Accomplishment or responsibility',
-        'Another key achievement'
-      ]
-    }
+      bullets: ['Accomplishment or responsibility', 'Another key achievement'],
+    },
   ],
   education: ['Degree — School Name — Dates'],
-  tools: 'Tool 1 • Tool 2 • Tool 3'
+  tools: 'Tool 1 • Tool 2 • Tool 3',
 };
