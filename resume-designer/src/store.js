@@ -142,6 +142,11 @@ function createStore() {
       return data;
     },
 
+    // Current variant id (used by the per-variant UI-state store).
+    getVariantId() {
+      return currentVariantId;
+    },
+
     // Set entire data object
     setData(newData, skipSave = false, variantId = null) {
       data = deepClone(newData);

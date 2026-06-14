@@ -339,9 +339,13 @@ const BACKUP_FIXED_KEYS = [
 ];
 // Undo/redo history lives at this prefix, one key per variant.
 const BACKUP_HISTORY_PREFIX = 'resume-designer-history-';
+// Per-variant UI/view state (accordion, sort mode), one key per variant.
+const BACKUP_UISTATE_PREFIX = 'resume-designer-ui-state-';
 
 export function isOwnedKey(key) {
-  return BACKUP_FIXED_KEYS.includes(key) || key.startsWith(BACKUP_HISTORY_PREFIX);
+  return BACKUP_FIXED_KEYS.includes(key)
+    || key.startsWith(BACKUP_HISTORY_PREFIX)
+    || key.startsWith(BACKUP_UISTATE_PREFIX);
 }
 
 /**
