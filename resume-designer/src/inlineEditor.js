@@ -865,6 +865,15 @@ function serializeEmphasis(el) {
   return result;
 }
 
+// Replace ONLY the token at `index` in a ' • '-joined tools string with `value`,
+// leaving every other token byte-identical. Fixes the old "re-join all from the
+// DOM" path that dropped/overwrote siblings whose DOM text was stale.
+export function replaceToolToken(toolsString, index, value) {
+  const tokens = String(toolsString ?? '').split('•').map((t) => t.trim()).filter(Boolean);
+  if (index >= 0) tokens[index] = value; // in-range edit, or grow-past-end append
+  return tokens.filter(Boolean).join(' • ');
+}
+
 // Extract the edited value, preserving format for special content types
 function extractEditedValue(element, path) {
   // Check for skill tags (rendered as separate spans that need to be joined with •)
@@ -883,18 +892,15 @@ function extractEditedValue(element, path) {
       .join(' • ');
   }
   
-  // Tools are a single `•`-joined string rendered as many chips (inline tags OR a
-  // bulleted list), all sharing data-editable="tools". Re-join EVERY sibling chip —
-  // not just the edited one — so editing one tool doesn't drop the others, and keep
-  // each chip's bold/italic.
   if (path === 'tools') {
     const toolScope = element.closest('.tools-bulleted') || element.closest('.tools-list')
       || element.closest('.skill-tag-row') || element.parentElement;
-    const toolTags = toolScope?.querySelectorAll(
+    const toolTags = Array.from(toolScope?.querySelectorAll(
       '.tool-token, .skill-tag[data-editable="tools"], .skill-tag-inline[data-editable="tools"], .highlight-bullet[data-editable="tools"]'
-    );
-    if (toolTags && toolTags.length > 0) {
-      return Array.from(toolTags).map((tag) => serializeEmphasis(tag)).filter(Boolean).join(' • ');
+    ) ?? []);
+    const index = toolTags.indexOf(element);
+    if (index >= 0) {
+      return replaceToolToken(store.get('tools'), index, serializeEmphasis(element));
     }
   }
   
