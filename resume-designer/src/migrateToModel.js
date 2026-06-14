@@ -18,7 +18,7 @@ const headerNode = (flat) => ({
 
 const experienceItemNode = (e) => ({
   type: 'experienceItem',
-  attrs: { id: e.id ?? '' },
+  attrs: { id: e.id ?? '', relevanceRank: Number.isFinite(e._relevanceRank) ? e._relevanceRank : null },
   content: [
     field('jobTitle', e.title ?? ''),
     field('company', e.company ?? ''),
@@ -93,15 +93,19 @@ export function modelToFlat(model) {
     if (kind === 'summary') {
       flat.summary = paragraphsText(s)[0] ?? '';
     } else if (kind === 'experience') {
-      flat.experience = blocksOfType(s, 'experienceItem').map((it) => ({
-        id: it.attrs?.id ?? '',
-        title: textOf(childOfType(it, 'jobTitle')),
-        company: textOf(childOfType(it, 'company')),
-        dates: textOf(childOfType(it, 'dates')),
-        bullets: ((childOfType(it, 'bulletList')?.content) ?? [])
-          .filter((li) => li.type === 'listItem')
-          .map((li) => textOf((li.content ?? [])[0])),
-      }));
+      flat.experience = blocksOfType(s, 'experienceItem').map((it) => {
+        const e = {
+          id: it.attrs?.id ?? '',
+          title: textOf(childOfType(it, 'jobTitle')),
+          company: textOf(childOfType(it, 'company')),
+          dates: textOf(childOfType(it, 'dates')),
+          bullets: ((childOfType(it, 'bulletList')?.content) ?? [])
+            .filter((li) => li.type === 'listItem')
+            .map((li) => textOf((li.content ?? [])[0])),
+        };
+        if (Number.isFinite(it.attrs?.relevanceRank)) e._relevanceRank = it.attrs.relevanceRank;
+        return e;
+      });
     } else if (kind === 'education') {
       flat.education = blocksOfType(s, 'educationItem').map(textOf);
     } else if (kind === 'tools') {

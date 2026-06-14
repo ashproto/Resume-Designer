@@ -131,3 +131,22 @@ describe('education entries', () => {
     expect(items[0].content[0].text).toBe('B.A. — Somewhere — 1840');
   });
 });
+
+describe('experience relevanceRank', () => {
+  it('carries _relevanceRank into the experienceItem attr and back', () => {
+    const flat = { ...SPARSE, experience: [{ id: 'e1', title: 'Dev', company: 'Co', dates: '2020', bullets: [], _relevanceRank: 2 }] };
+    const exp = flatToModel(flat).content.find((n) => n.attrs?.sectionKind === 'experience')
+      .content.find((n) => n.type === 'experienceItem');
+    expect(exp.attrs.relevanceRank).toBe(2);
+    expect(modelToFlat(flatToModel(flat)).experience[0]._relevanceRank).toBe(2);
+  });
+  it('omits _relevanceRank when absent (round-trip unchanged)', () => {
+    const back = modelToFlat(flatToModel(POPULATED)); // POPULATED has no _relevanceRank
+    expect('_relevanceRank' in back.experience[0]).toBe(false);
+  });
+  it('preserves a rank of 0 (the onboarding first-item case)', () => {
+    const flat = { ...SPARSE, experience: [{ id: 'e0', title: 'Dev', company: 'Co', dates: '2020', bullets: [], _relevanceRank: 0 }] };
+    const back = modelToFlat(flatToModel(flat));
+    expect(back.experience[0]._relevanceRank).toBe(0);
+  });
+});
