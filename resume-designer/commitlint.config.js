@@ -11,4 +11,11 @@
 export default {
   extends: ['@commitlint/config-conventional'],
   ignores: [(message) => message.includes('dependabot[bot]')],
+  // `body-max-line-length` is advisory (severity 1 = warning), not blocking:
+  // AI-assisted commits often carry long prose bodies. Warnings don't fail CI,
+  // so this keeps the ~100-char body guidance visible while the subject
+  // conventions (type / case) that drive changelogs stay strictly enforced.
+  rules: {
+    'body-max-line-length': [1, 'always', 100],
+  },
 };
