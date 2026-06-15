@@ -3,6 +3,8 @@
  * Handles light/dark mode switching with system preference support
  */
 
+import { appStorage } from './appStorage.js';
+
 const STORAGE_KEY = 'resume-designer-theme';
 const THEMES = ['light', 'dark', 'system'];
 
@@ -13,7 +15,7 @@ let currentTheme = 'system';
  */
 export function initTheme() {
   // Load saved preference
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = appStorage.getItem(STORAGE_KEY);
   if (saved && THEMES.includes(saved)) {
     currentTheme = saved;
   }
@@ -57,7 +59,7 @@ export function setTheme(theme) {
   if (!THEMES.includes(theme)) return;
   
   currentTheme = theme;
-  localStorage.setItem(STORAGE_KEY, theme);
+  appStorage.setItem(STORAGE_KEY, theme);
   applyTheme(theme);
   updateThemeUI();
 }
@@ -90,11 +92,13 @@ function applyTheme(theme) {
 }
 
 /**
- * Update theme UI elements
+ * Update theme UI elements.
+ *
+ * The legacy vanilla theme-picker dropdown this used to sync is gone — the React
+ * SettingsDialog (and the header toggle) now reflect the active theme via
+ * component state and the `themechange` event dispatched in applyTheme(). No DOM
+ * element needs updating here anymore, so this is a no-op kept for its callers.
  */
 function updateThemeUI() {
-  // Update selected state in dropdown
-  document.querySelectorAll('.theme-option').forEach(opt => {
-    opt.classList.toggle('selected', opt.dataset.theme === currentTheme);
-  });
+  // Intentionally empty (see above).
 }

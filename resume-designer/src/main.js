@@ -4,7 +4,8 @@
  */
 
 import { store } from './store.js';
-import { 
+import { appStorage, initAppStorage, markStorageReady } from './appStorage.js';
+import {
   renderResume, 
   renderResumeStacked,
   renderResumeStackedVertical,
@@ -19,10 +20,11 @@ import {
 } from './renderer.js';
 import { initPdfExport } from './pdf.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
-import { initStructurePanel, setDesignSettings } from './structurePanel.js';
-import { initHeaderBar } from './headerBar.js';
-import { initChatPanel, refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
-import { initSettingsModal, loadApiKeysToModal } from './settingsModal.js';
+import { initVariants } from './variantManager.js';
+import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
+import { initDiffView } from './diffView.js';
+import { initInlineChanges } from './inlineChanges.js';
+import { initSettingsModal } from './settingsModal.js';
 import { initZoomControls } from './zoomControls.js';
 import { initWindowDrag } from './tauriDrag.js';
 import {
@@ -43,9 +45,9 @@ import {
   importLegacyElectronData,
 } from './native.js';
 import { initTheme } from './theme.js';
-import { initJobDescriptionPanel, openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
-import { initHistoryPanel, openHistoryPanel } from './historyPanel.js';
-import { initUserProfilePanel, openUserProfilePanel } from './userProfilePanel.js';
+import { openJobDescriptionPanel, onJobPanelVariantChange } from './jobDescriptionPanel.js';
+import { initJobDescriptions } from './jobDescriptions.js';
+import { openUserProfilePanel } from './userProfilePanel.js';
 import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
 import { initHeaderStyleService, applyHeaderStyle, getHeaderStyleSettings } from './headerStyleService.js';
@@ -154,7 +156,7 @@ let currentPalette = 'terracotta';
 let currentLayout = 'sidebar';
 let customColor = '#c45c3e';
 
-// localStorage flag set by `maybeAutoMigrateLegacyData` to remember
+// appStorage flag set by `maybeAutoMigrateLegacyData` to remember
 // whether we've already tried (regardless of outcome). Lives outside
 // the `resume-designer-*` backup-owned keyspace so it's NOT wiped when
 // the user runs Import Backup — that way reimporting a legacy backup
@@ -168,7 +170,7 @@ const ELECTRON_MIGRATION_FLAG = 'resume-designer-electron-migration-attempted';
  *   1. Only runs in Tauri (web has no backend command to probe).
  *   2. Only runs ONCE — sets `ELECTRON_MIGRATION_FLAG` regardless of
  *      outcome (found / not-found / error).
- *   3. Only runs when current Tauri localStorage has no
+ *   3. Only runs when the current store (appStorage) has no
  *      `resume-designer-data` — so a user who's already created
  *      content in the new build won't have it overwritten.
  *
@@ -177,30 +179,30 @@ const ELECTRON_MIGRATION_FLAG = 'resume-designer-electron-migration-attempted';
  * their data via Tools → Import Backup if they have a JSON elsewhere.
  *
  * MUST run before `getSettings()` / store init below, otherwise those
- * read empty localStorage and the just-imported data won't be picked
+ * read an empty store and the just-imported data won't be picked
  * up until the next launch.
  */
 async function maybeAutoMigrateLegacyData() {
   if (!isTauri) return;
-  if (localStorage.getItem(ELECTRON_MIGRATION_FLAG)) return;
-  if (localStorage.getItem('resume-designer-data')) {
+  if (appStorage.getItem(ELECTRON_MIGRATION_FLAG)) return;
+  if (appStorage.getItem('resume-designer-data')) {
     // User already has Tauri-side data; don't touch it. Set the flag
     // so we stop probing on every launch from here on out.
-    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-has-data');
+    appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-has-data');
     return;
   }
 
   try {
     const probe = await probeLegacyElectronData();
     if (!probe?.found) {
-      localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-no-legacy');
+      appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'skipped-no-legacy');
       return;
     }
     console.log('[migration] Legacy Electron data found:', probe);
 
     const envelope = await importLegacyElectronData();
     const result = importFullBackupFromEnvelope(envelope);
-    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'imported');
+    appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'imported');
     console.log(
       `[migration] Imported ${result.keysImported} keys from legacy Electron data` +
       ` (removed ${result.removedExistingKeys} pre-existing keys` +
@@ -218,7 +220,7 @@ async function maybeAutoMigrateLegacyData() {
     setTimeout(() => showMigrationToast(probe, result), 800);
   } catch (err) {
     console.warn('[migration] Auto-import failed; continuing with empty store:', err);
-    localStorage.setItem(ELECTRON_MIGRATION_FLAG, 'failed');
+    appStorage.setItem(ELECTRON_MIGRATION_FLAG, 'failed');
     // Silent fail — user can still use Tools → Import Backup manually
     // if they have a JSON backup from elsewhere.
   }
@@ -272,23 +274,29 @@ function showMigrationToast(probe, result = null) {
 }
 
 // Initialize the application
-async function init() {
-  // Print-mode short-circuit: when this window was opened by pdf.js's hidden
-  // PDF-export window (URL `?print=1`), skip ALL the app chrome init and run
-  // a minimal render-only flow that emits a `print-ready` event when the
-  // resume is laid out and ready for capture. See initPrintMode below.
-  if (typeof location !== 'undefined') {
-    const params = new URLSearchParams(location.search);
-    if (params.get('print') === '1') {
-      return initPrintMode();
-    }
+export async function init() {
+  // FIRST: bring up the storage facade, THEN pull in any legacy Electron
+  // data — and only after BOTH settle, open the React mount gate. On the
+  // first Tauri boot after an Electron install the facade comes up empty and
+  // maybeAutoMigrateLegacyData() is what populates it; a component mounted in
+  // between (ChatPanel was the proven case) snapshots the emptiness and its
+  // next save overwrites the migrated data. The finally keeps the gate
+  // deadlock-proof: both steps swallow their own failures internally, and
+  // even an unexpected throw still opens the gate on whatever state we have.
+  //
+  // (Print-mode is a separate framework-free entry — print.html /
+  // src/printEntry.js — so the main window never short-circuits here.)
+  try {
+    await initAppStorage();
+    await maybeAutoMigrateLegacyData();
+  } finally {
+    markStorageReady();
   }
 
-  // FIRST thing after print-mode check: see if there's legacy Electron
-  // data to pull in. Must happen before getSettings() / store
-  // initialization below, since those read from the localStorage we're
-  // about to populate.
-  await maybeAutoMigrateLegacyData();
+  // Seed the job-descriptions module cache from the now-initialized store,
+  // regardless of when JobsDialog mounts. The dialog's own mount effect calls
+  // this again — that second call is a harmless re-read of the same store.
+  initJobDescriptions();
 
   // Tag the html element so CSS can apply desktop-only chrome (traffic light
   // padding on macOS, etc.). Keep the legacy `electron` / `electron-mac`
@@ -322,6 +330,40 @@ async function init() {
       true
     );
 
+    // Flush pending disk writes when the window is closing or backgrounded.
+    // The write-behind queue otherwise drains within ~1 tick, but "quit
+    // immediately after an edit" must never lose the last write.
+    try {
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      const win = getCurrentWebviewWindow();
+      await win.onCloseRequested(async (event) => {
+        // preventDefault() the close, drain the last edit to disk, THEN close
+        // explicitly. The onCloseRequested wrapper already awaits this handler
+        // before its own destroy(), and Tauri defers the native close until the
+        // handler resolves — so the flush completes before the window goes
+        // regardless. Doing it via preventDefault()+destroy() is the documented
+        // Tauri contract, so the "flush before close" ordering no longer relies
+        // on that wrapper internal. destroy() forces the close WITHOUT
+        // re-emitting close-requested, so there is no re-entrancy. The flush is
+        // best-effort: on a full disk we still close (trapping the user in an
+        // un-quittable window is worse, and the failure toast already fired).
+        event.preventDefault();
+        try { store.saveNow(); } catch { /* nothing pending */ }
+        try { await appStorage.flush(); } catch (flushErr) { console.warn('[Storage] close-flush failed:', flushErr); }
+        await win.destroy();
+      });
+    } catch (e) {
+      console.warn('[Storage] close-flush hook unavailable:', e);
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'hidden') return;
+      // Capture a mid-debounce edit too — backgrounding (Cmd+H, minimize) is
+      // often the last event before an OS-level quit, which bypasses
+      // onCloseRequested entirely.
+      try { store.saveNow(); } catch { /* nothing pending */ }
+      appStorage.flush();
+    });
+
     // Make the header bar act as the window's drag region (overlay titlebar).
     // Uses the manual startDragging() handler instead of data-tauri-drag-region,
     // which is unreliable in Tauri v2 (#9901). Fire-and-forget: it resolves the
@@ -353,39 +395,53 @@ async function init() {
   // Initialize photo service
   initPhotoService();
   
-  // Initialize header bar (includes variant management)
-  initHeaderBar(handleVariantChange);
+  // Initialize variant management. The header VIEW is now a React component
+  // (src/components/Header.jsx) that subscribes to this module; main.js only
+  // wires the variant-change callback (re-render + job-panel re-sync). Register
+  // the updater->toast bridge here too, BEFORE startupUpdateCheck() below, so it
+  // catches startup status events. The bridge is loaded lazily because
+  // updateFlow.js statically imports sonner (which pulls React) and main.js is
+  // shared with the React-free print entry (printEntry.js -> initPrintMode);
+  // a static import here would drag react/sonner into the print window's
+  // static chunk graph. init() only runs in the main window.
+  initVariants(handleVariantChange);
+  const { initUpdateFlow } = await import('./updateFlow.js');
+  initUpdateFlow();
 
   // Initialize inline editor
   initInlineEditor();
   
-  // Initialize structure panel with design change callback
-  initStructurePanel(handleStructureChange, handleDesignChange);
-  
-  // Sync design settings to structure panel
-  setDesignSettings(currentPalette, currentLayout, customColor);
-  
+  // The structure panel is now a React component (src/components/structure/
+  // StructurePanel.jsx): it edits the resume directly through the store (the
+  // resume re-renders via the store subscription set up below) and dispatches
+  // rd:design-change for the palette/layout/custom-color changes main.js owns.
+  window.addEventListener('rd:design-change', (e) => handleDesignChange(e.detail));
+
   // Initialize PDF export
   initPdfExport();
   
-  // Initialize chat panel
-  initChatPanel(handleChatApply);
+  // Chat panel is now React (components/chat/ChatPanel.jsx). main.js still owns
+  // the diff/inline-change hosts it drives and wires them with the resume
+  // re-render callback (both apply through the store, which re-renders anyway).
+  initDiffView(handleChatApply);
+  initInlineChanges();
   
   // Initialize zoom controls
   initZoomControls();
   
-  // Initialize job description panel
-  initJobDescriptionPanel();
+  // Job descriptions panel is now React (components/jobs/JobsDialog.jsx), opened
+  // via window.openJobDescriptionPanel below (dispatches rd:open-jobs).
   
-  // Initialize history panel
-  initHistoryPanel();
-  
-  // Initialize user profile panel
-  initUserProfilePanel();
+  // Version history is now a React component (src/components/HistoryDialog.jsx)
+  // that opens on the rd:open-history event (see window.openHistoryPanel below).
+
+  // User profile editor is now React (components/profile/ProfileDialog.jsx),
+  // opened via window.openUserProfilePanel below (dispatches rd:open-profile).
   
   // Expose panel openers and wizards globally
   window.openJobDescriptionPanel = openJobDescriptionPanel;
-  window.openHistoryPanel = openHistoryPanel;
+  // History is React (HistoryDialog) — open it via its window event.
+  window.openHistoryPanel = () => window.dispatchEvent(new CustomEvent('rd:open-history'));
   window.openUserProfilePanel = openUserProfilePanel;
   window.showOnboardingWizard = showOnboardingWizard;
   window.startProfileInterviewFromChat = startProfileInterviewFromPanel;
@@ -402,8 +458,11 @@ async function init() {
   // In desktop builds, expose a function to reset onboarding for debugging.
   if (isTauri) {
     window.resetForTesting = () => {
-      localStorage.clear();
-      location.reload();
+      appStorage.clear();
+      appStorage.flush().finally(() => {
+        localStorage.clear();
+        location.reload();
+      });
     };
     console.log('[Main] Desktop build detected, resetForTesting() available');
   }
@@ -436,12 +495,10 @@ async function init() {
   // Initialize settings modal
   initSettingsModal();
 
-  // Keep settings UI synchronized across onboarding/chat/settings flows.
+  // Keep chat availability in sync when settings change. Settings is now a React
+  // dialog (SettingsDialog.jsx) that reads settings reactively, so the old
+  // #settings-modal refresh is gone.
   window.addEventListener(SETTINGS_UPDATED_EVENT, () => {
-    const modal = document.getElementById('settings-modal');
-    if (modal?.classList.contains('show')) {
-      loadApiKeysToModal();
-    }
     refreshChatPanel();
   });
   
@@ -463,10 +520,15 @@ async function init() {
 
   // Render initial resume
   renderCurrentResume();
+
+  // Defense in depth: boot is fully done — re-broadcast the chat config state
+  // once so any chat UI that somehow captured pre-init storage state (in an
+  // unforeseen mount order) re-reads and heals. Harmless no-op otherwise.
+  refreshChatPanel();
 }
 
 /**
- * Print-mode init for the hidden child window pdf.js spawns at `/?print=1`.
+ * Print-mode init for the hidden child window pdf.js spawns at `/print.html`.
  *
  * Runs ONLY the minimum needed to render the active variant's resume:
  * design services (fonts/spacing/accent/photo/headerStyle) and the renderer
@@ -482,7 +544,7 @@ async function init() {
  * On any failure, emits `print-error` so the main window can surface a
  * meaningful error instead of timing out.
  */
-async function initPrintMode() {
+export async function initPrintMode() {
   // Resolve this print window's own label so every event we emit can be
   // tagged with it. Each PDF export uses a unique label (e.g.
   // `pdf-print-1716234567890`); the main window's listener uses that label
@@ -539,7 +601,7 @@ async function initPrintMode() {
 
     // Load the currently active variant's data into the store so the
     // renderer can read it. skipSave=true because this is a read-only
-    // render — we don't want to mutate localStorage from the print window.
+    // render — we don't want to mutate stored data from the print window.
     const variantId = getCurrentVariantId();
     const variants = getVariants();
     const variant = variantId ? variants[variantId] : null;
@@ -606,11 +668,6 @@ function handleVariantChange(_variant) {
   renderCurrentResume();
   // Update job description panel analysis for new variant
   onJobPanelVariantChange();
-}
-
-// Handle structure panel changes
-function handleStructureChange() {
-  renderCurrentResume();
 }
 
 // Handle chat panel apply actions
@@ -1048,7 +1105,19 @@ function applyTextCommand(command) {
     if (command === 'clear') result = clearInlineFormatting(target.value || '', start, end);
     if (!result) return;
 
-    target.value = result.value;
+    // Write through the prototype's native value setter, not `target.value =`.
+    // React installs a value-tracker on any input it gives an onChange handler
+    // (e.g. the structure panel's summary textarea); a direct assignment updates
+    // that tracker, so the dispatched input event is deduped and onChange never
+    // fires — the format markers would land in the DOM but never reach the store.
+    // The native setter leaves the tracker stale, so React sees a real change.
+    // For plain vanilla inputs this behaves exactly like `target.value =`.
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    if (valueSetter) valueSetter.call(target, result.value);
+    else target.value = result.value;
     target.focus();
     target.setSelectionRange(result.start, result.end);
     target.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1219,5 +1288,5 @@ function renderCurrentResume() {
   updateTextToolbarState();
 }
 
-// Start the app
-init();
+// init() is invoked by the React entry (src/main.jsx -> App.jsx) after mount;
+// the print window (src/printEntry.js) calls initPrintMode() directly.

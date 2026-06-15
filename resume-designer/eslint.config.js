@@ -1,5 +1,7 @@
 import js from '@eslint/js';
 import globals from 'globals';
+import reactHooks from 'eslint-plugin-react-hooks';
+import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
   { ignores: ['dist/', 'node_modules/', 'src-tauri/'] },
@@ -21,11 +23,25 @@ export default [
     },
   },
   {
-    files: ['src/**/*.js'],
+    files: ['src/**/*.{js,jsx}'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
+      parserOptions: { ecmaFeatures: { jsx: true } },
       globals: { ...globals.browser },
+    },
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
+  },
+  {
+    // Fast-Refresh hygiene applies only to the React component files.
+    files: ['src/**/*.jsx'],
+    plugins: { 'react-refresh': reactRefresh },
+    rules: {
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
   {
@@ -35,5 +51,13 @@ export default [
       sourceType: 'module',
       globals: { ...globals.node },
     },
+  },
+  {
+    // Vendored shadcn primitives (and the dev-only preview harness) legitimately
+    // export variant helpers alongside their components; Fast-Refresh hygiene
+    // doesn't apply to generated/throwaway files.
+    files: ['src/components/ui/**/*.jsx', 'src/dev/**/*.jsx'],
+    plugins: { 'react-refresh': reactRefresh },
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
 ];

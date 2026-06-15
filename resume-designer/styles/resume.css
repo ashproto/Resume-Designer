@@ -198,6 +198,14 @@
   opacity: 0.5;
 }
 
+/* Bulleted tools (toolsDisplay === 'list') — a self-contained block list (each
+   tool a .highlight-bullet) that overrides whichever inline-tag flex container
+   hosts it, so tools render as a vertical bulleted list in every layout. */
+.tools-bulleted {
+  display: block;
+  width: 100%;
+}
+
 /* Skill tag style variants */
 .resume[data-skill-tag-style="filled"] .skill-tag {
   background: var(--resume-accent);

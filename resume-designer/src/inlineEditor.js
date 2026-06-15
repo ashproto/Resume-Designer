@@ -7,6 +7,7 @@ import { store } from './store.js';
 import { openChatWithContext, addContextChip } from './chatPanel.js';
 import { getPendingChange, applyInlineChange, rejectInlineChange, getCurrentChangeSet, getOriginalContent } from './inlineChanges.js';
 import { showDiffView } from './diffView.js';
+import { appStorage } from './appStorage.js';
 
 let isInitialized = false;
 let activeElement = null;
@@ -17,6 +18,7 @@ let aiButton = null;
 let aiMenu = null;
 let hideButtonTimeout = null;
 let isMenuVisible = false;
+let resumeScroller = null;
 
 // Check if hint was previously dismissed
 const HINT_DISMISSED_KEY = 'resume-edit-hint-dismissed';
@@ -26,8 +28,8 @@ export function initInlineEditor() {
   if (isInitialized) return;
   isInitialized = true;
   
-  // Check localStorage for hint dismissal
-  hintDismissed = localStorage.getItem(HINT_DISMISSED_KEY) === 'true';
+  // Check storage for hint dismissal
+  hintDismissed = appStorage.getItem(HINT_DISMISSED_KEY) === 'true';
   
   const resumeContainer = document.getElementById('resume');
   if (!resumeContainer) return;
@@ -50,6 +52,16 @@ export function initInlineEditor() {
   // Handle hover for AI button using mouseover/mouseout for better stability
   resumeContainer.addEventListener('mouseover', handleMouseOver, true);
   resumeContainer.addEventListener('mouseout', handleMouseOut, true);
+
+  // Hide the (fixed-position) AI button when the resume scrolls or the window
+  // resizes — otherwise it orphans at a stale coordinate, floating over other UI.
+  resumeScroller = resumeContainer.closest('.resume-scroller');
+  resumeScroller?.addEventListener('scroll', handleResumeScroll, { passive: true });
+  window.addEventListener('scroll', handleResumeScroll, { passive: true });
+  window.addEventListener('resize', handleResumeScroll, { passive: true });
+
+  // Escape dismisses a stuck button/menu.
+  document.addEventListener('keydown', handleEditorKeydown);
   
   // Setup hint close button
   setupHintDismissal();
@@ -117,7 +129,17 @@ function createAIButton() {
   container.addEventListener('mousedown', (e) => {
     e.stopPropagation();
   });
-  
+
+  // Keep the button alive while the pointer is on it (it lives at body level, so
+  // the resume's mouseout fires when the cursor crosses onto it); hide once the
+  // pointer leaves the button itself and no menu is open.
+  container.addEventListener('mouseenter', () => {
+    if (hideButtonTimeout) { clearTimeout(hideButtonTimeout); hideButtonTimeout = null; }
+  });
+  container.addEventListener('mouseleave', () => {
+    if (!isMenuVisible) scheduleHideButton();
+  });
+
   // Prevent menu clicks from reaching elements behind
   aiMenu.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -283,13 +305,11 @@ function closeMenuOnClickOutside(e) {
   document.removeEventListener('click', closeMenuOnClickOutside);
   menuTargetElement = null;
   
-  // Also hide the button after menu closes if not hovering
-  setTimeout(() => {
-    if (!hoveredElement || !hoveredElement.matches(':hover')) {
-      hideAIButton();
-      hoveredElement = null;
-    }
-  }, 100);
+  // Menu dismissed by an outside click — hide the button too. If the pointer is
+  // still over the text, the next mouseover re-shows it (no unreliable :hover
+  // probe, which was the source of stuck buttons after the menu closed).
+  hideAIButton();
+  hoveredElement = null;
 }
 
 // Hide AI menu
@@ -577,12 +597,36 @@ function handleMouseOut(e) {
   }
   
   // Use a small delay to prevent flickering
+  scheduleHideButton();
+}
+
+// Hide the button after a short grace period unless a menu is open. Shared by
+// mouseout, the button's own mouseleave, and (immediately) scroll/Escape.
+function scheduleHideButton() {
+  if (hideButtonTimeout) clearTimeout(hideButtonTimeout);
   hideButtonTimeout = setTimeout(() => {
     if (!isMenuVisible) {
       hideAIButton();
       hoveredElement = null;
     }
-  }, 100);
+  }, 150);
+}
+
+// The button/menu use fixed positioning, so a scroll or resize leaves them at a
+// stale coordinate over unrelated UI — hide immediately; the next hover re-shows.
+function handleResumeScroll() {
+  if (hoveredElement || isMenuVisible) {
+    hideAIButton();
+    hoveredElement = null;
+  }
+}
+
+// Escape dismisses a stuck button/menu.
+function handleEditorKeydown(e) {
+  if (e.key === 'Escape' && (hoveredElement || isMenuVisible)) {
+    hideAIButton();
+    hoveredElement = null;
+  }
 }
 
 // Show the AI button on an element
@@ -611,8 +655,18 @@ function showAIButton(element) {
     `;
   }
   
-  // Position the container using fixed positioning (no DOM changes to element)
+  // Position the container using fixed positioning (no DOM changes to element).
   const rect = element.getBoundingClientRect();
+
+  // Bounds guard: only show when the anchored text is within the resume
+  // scroller's visible area. Without this the fixed-position button paints over
+  // the header / panels when its element scrolls out of (or under) the viewport.
+  const bounds = resumeScroller?.getBoundingClientRect();
+  if (bounds && (rect.bottom < bounds.top || rect.top > bounds.bottom)) {
+    hideAIButton();
+    return;
+  }
+
   container.style.top = `${rect.top - 8}px`;
   container.style.left = `${rect.right - 8}px`;
   container.classList.add('visible');
@@ -649,7 +703,7 @@ function setupHintDismissal() {
 // Dismiss the hint permanently
 function dismissHintPermanently() {
   hintDismissed = true;
-  localStorage.setItem(HINT_DISMISSED_KEY, 'true');
+  appStorage.setItem(HINT_DISMISSED_KEY, 'true');
   updateHintVisibility();
 }
 
@@ -719,7 +773,15 @@ function startEditing(element) {
   element.dataset.originalEditValue = element.textContent || '';
 
   const path = element.dataset.editable;
-  const isInlineToolToken = path === 'tools' && element.matches('.tool-token, .skill-tag, .skill-tag-inline');
+  // Tool chips — inline (.tool-token/.skill-tag) OR bulleted (.highlight-bullet) —
+  // all share data-editable="tools" because `tools` is a single `•`-joined string.
+  // Treat a click on one chip as editing JUST that chip: skip the whole-field
+  // textContent swap below and let extractEditedValue re-join the siblings on save.
+  // Without including .highlight-bullet here, clicking a bulleted tool replaced the
+  // chip's text with the ENTIRE tools string (it looked like it "captured" every
+  // adjacent tool).
+  const isInlineToolToken = path === 'tools'
+    && element.matches('.tool-token, .skill-tag, .skill-tag-inline, .highlight-bullet');
   if (path && !isInlineToolToken) {
     const sourceValue = store.get(path);
     if (typeof sourceValue === 'string') {
@@ -791,6 +853,18 @@ function finishEditing(element) {
   }
 }
 
+// Re-apply markdown emphasis (**bold**, _italic_, ++underline++) onto an element's
+// plain text from its rendered <strong>/<em>/<u> children, so a round-trip through
+// contentEditable doesn't silently drop formatting. Shared by bullet lists and tool
+// chips.
+function serializeEmphasis(el) {
+  let result = (el.textContent || '').trim();
+  el.querySelectorAll('strong').forEach((n) => { const t = n.textContent; if (t) result = result.replace(t, `**${t}**`); });
+  el.querySelectorAll('em').forEach((n) => { const t = n.textContent; if (t) result = result.replace(t, `_${t}_`); });
+  el.querySelectorAll('u').forEach((n) => { const t = n.textContent; if (t) result = result.replace(t, `++${t}++`); });
+  return result;
+}
+
 // Extract the edited value, preserving format for special content types
 function extractEditedValue(element, path) {
   // Check for skill tags (rendered as separate spans that need to be joined with •)
@@ -803,36 +877,24 @@ function extractEditedValue(element, path) {
   // Check for highlight bullets (need to restore the "- " prefix)
   const highlightBullets = element.querySelectorAll('.highlight-bullet');
   if (highlightBullets.length > 0) {
-    const serialized = Array.from(highlightBullets).map((bulletEl) => {
-      const content = bulletEl.textContent.trim();
-      const strongTags = bulletEl.querySelectorAll('strong');
-      const italicTags = bulletEl.querySelectorAll('em');
-      const underlineTags = bulletEl.querySelectorAll('u');
-      let result = content;
-      strongTags.forEach((strong) => {
-        const boldText = strong.textContent;
-        result = result.replace(boldText, `**${boldText}**`);
-      });
-      italicTags.forEach((italic) => {
-        const italicText = italic.textContent;
-        result = result.replace(italicText, `_${italicText}_`);
-      });
-      underlineTags.forEach((underline) => {
-        const underlineText = underline.textContent;
-        result = result.replace(underlineText, `++${underlineText}++`);
-      });
-      return result ? `- ${result}` : '';
-    }).filter(Boolean);
-
-    return serialized.join(' • ');
+    return Array.from(highlightBullets)
+      .map((bulletEl) => { const r = serializeEmphasis(bulletEl); return r ? `- ${r}` : ''; })
+      .filter(Boolean)
+      .join(' • ');
   }
   
-  // For tools field, also check for skill tags
+  // Tools are a single `•`-joined string rendered as many chips (inline tags OR a
+  // bulleted list), all sharing data-editable="tools". Re-join EVERY sibling chip —
+  // not just the edited one — so editing one tool doesn't drop the others, and keep
+  // each chip's bold/italic.
   if (path === 'tools') {
-    const toolScope = element.closest('.tools-list') || element.closest('.skill-tag-row') || element.parentElement;
-    const toolTags = toolScope?.querySelectorAll('.tool-token, .skill-tag[data-editable="tools"], .skill-tag-inline[data-editable="tools"]');
+    const toolScope = element.closest('.tools-bulleted') || element.closest('.tools-list')
+      || element.closest('.skill-tag-row') || element.parentElement;
+    const toolTags = toolScope?.querySelectorAll(
+      '.tool-token, .skill-tag[data-editable="tools"], .skill-tag-inline[data-editable="tools"], .highlight-bullet[data-editable="tools"]'
+    );
     if (toolTags && toolTags.length > 0) {
-      return Array.from(toolTags).map(tag => tag.textContent.trim()).filter(t => t).join(' • ');
+      return Array.from(toolTags).map((tag) => serializeEmphasis(tag)).filter(Boolean).join(' • ');
     }
   }
   

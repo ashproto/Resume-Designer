@@ -7,6 +7,13 @@
  * of the renderer keeps working unchanged.
  */
 
+// Deliberate exception to this module's no-static-app-imports style: the
+// update-channel / auto-update-check getters below are synchronous, so the
+// lazy dynamic-import pattern used for the Tauri plugins can't apply.
+// appStorage is tiny and has zero static app imports, so this cannot form a
+// cycle (appStorage itself dodges importing native.js for the same reason).
+import { appStorage } from './appStorage.js';
+
 // Detect Tauri without statically importing tauri APIs at the web entry
 // (so `npm run dev` outside Tauri doesn't blow up at import time).
 // Per Tauri 2.5 release notes (v2.tauri.app/release/@tauri-apps/api/v2.5.0),
@@ -157,14 +164,14 @@ export function onUpdateProgress(callback) {
   if (typeof callback === 'function') updateProgressListeners.push(callback);
 }
 
-// Update channel: 'stable' (default) or 'beta'. Persisted in localStorage so
+// Update channel: 'stable' (default) or 'beta'. Persisted via appStorage so
 // the choice survives restarts; it's an owned key (see persistence.js) so it
 // rides along in backup/restore. The actual endpoint switch happens in the
 // Rust `check_update_on_channel` command — the JS just supplies the channel.
 const UPDATE_CHANNEL_KEY = 'resume-designer-update-channel';
 export function getUpdateChannel() {
   try {
-    return localStorage.getItem(UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable';
+    return appStorage.getItem(UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable';
   } catch {
     return 'stable';
   }
@@ -172,7 +179,7 @@ export function getUpdateChannel() {
 export function setUpdateChannel(channel) {
   const normalized = channel === 'beta' ? 'beta' : 'stable';
   try {
-    localStorage.setItem(UPDATE_CHANNEL_KEY, normalized);
+    appStorage.setItem(UPDATE_CHANNEL_KEY, normalized);
   } catch {
     /* ignore storage errors — falls back to the default on next read */
   }
@@ -188,7 +195,7 @@ export function setUpdateChannel(channel) {
  */
 async function seedUpdateChannelFromBuild() {
   try {
-    if (localStorage.getItem(UPDATE_CHANNEL_KEY) !== null) return;
+    if (appStorage.getItem(UPDATE_CHANNEL_KEY) !== null) return;
     const { version } = await getAppInfo();
     if (typeof version === 'string' && version.includes('-')) {
       setUpdateChannel('beta');
@@ -205,21 +212,21 @@ async function seedUpdateChannelFromBuild() {
 const AUTO_UPDATE_CHECK_KEY = 'resume-designer-auto-update-check';
 export function getAutoUpdateCheck() {
   try {
-    return localStorage.getItem(AUTO_UPDATE_CHECK_KEY) !== 'false';
+    return appStorage.getItem(AUTO_UPDATE_CHECK_KEY) !== 'false';
   } catch {
     return true;
   }
 }
 export function setAutoUpdateCheck(enabled) {
   try {
-    localStorage.setItem(AUTO_UPDATE_CHECK_KEY, enabled ? 'true' : 'false');
+    appStorage.setItem(AUTO_UPDATE_CHECK_KEY, enabled ? 'true' : 'false');
   } catch {
     /* ignore storage errors — falls back to the default on next read */
   }
   return !!enabled;
 }
 
-export async function checkForUpdates(source = 'manual') {
+export async function checkForUpdates(source = 'manual', { notifyOnly = false } = {}) {
   if (!isTauri) {
     return {
       checking: false,
@@ -270,8 +277,17 @@ export async function checkForUpdates(source = 'manual') {
       source,
       version: update.version,
       currentVersion,
+      notifyOnly,
       message: `Version ${update.version} is available.`,
     });
+
+    // Background poll (notify-only): surface the toast and stop here — no
+    // download dialog. The user acts via the toast's "Update" action (which runs
+    // the manual flow) or Settings → Check for Updates.
+    if (notifyOnly) {
+      isCheckingForUpdates = false;
+      return { checking: true, available: true, version: update.version };
+    }
 
     const wantsDownload = await dialog.ask(
       `A new version (${update.version}) is available. Would you like to download it now?`,
@@ -337,6 +353,43 @@ export async function checkForUpdates(source = 'manual') {
       { title: 'Update Ready', okLabel: 'Restart Now', cancelLabel: 'Later' }
     );
     if (wantsRestart) {
+      // Relaunch is an in-app process exit, but unlike a plain quit the updated
+      // app immediately boots BACK from disk — so an edit still only in the
+      // write-behind cache would be lost to a stale on-disk value. Drain the
+      // debounced edit + the queue FIRST and gate the relaunch on durability,
+      // exactly as the PDF/backup-import paths do. Dynamic imports keep this
+      // module static-import-free (both are already in the module cache).
+      let durable = true;
+      try {
+        const [{ store }, { appStorage }] = await Promise.all([
+          import('./store.js'),
+          import('./appStorage.js'),
+        ]);
+        try { store.saveNow(); } catch { /* nothing pending */ }
+        durable = await appStorage.flush();
+      } catch (e) {
+        console.warn('[Update] pre-relaunch flush failed:', e);
+        durable = false;
+      }
+      if (!durable) {
+        // The last change could not be written to disk (disk full /
+        // permissions). Relaunching now would boot the updated app from stale
+        // files and silently drop it. Hold the restart — the update is already
+        // downloaded and installs on the next launch anyway — and tell the user
+        // to free space first. (appStorage already fired the generic failure
+        // toast.)
+        emitStatus({
+          status: 'error',
+          source,
+          version: update.version,
+          message:
+            'Update downloaded, but your latest change could not be saved to disk, '
+            + 'so the restart was held off to avoid losing it. Free up disk space, '
+            + 'then restart the app to finish installing.',
+        });
+        isCheckingForUpdates = false;
+        return { checking: false, error: 'flush-not-durable' };
+      }
       emitStatus({
         status: 'installing',
         source,
@@ -423,7 +476,7 @@ export async function pickPdfSavePath(defaultName = 'Resume.pdf') {
 /**
  * Invoke the Rust capture command against a SPECIFIC window's web view
  * (identified by label). Used by pdf.js after spawning a hidden print window
- * at `/?print=1` and receiving its `print-ready` event.
+ * at `/print.html` and receiving its `print-ready` event.
  *
  * Notice there is NO `savePath` parameter: the destination path is bound
  * server-side by the prior `pickPdfSavePath` call (which stashes the

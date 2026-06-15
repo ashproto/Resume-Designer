@@ -16,7 +16,10 @@ function splitByBulletSeparators(line) {
 }
 
 function stripLeadingBulletMarker(text) {
-  return text.replace(/^[-*•]\s*/, '').trim();
+  // Strip ONE leading bullet glyph (-, •, or a lone *) but never the ** that opens a
+  // markdown bold span, so emphasis that starts a line — e.g. "**40% faster** delivery"
+  // — survives instead of being mangled into "*40% faster**".
+  return text.replace(/^(?:[-•]\s*|\*(?!\*)\s*)/, '').trim();
 }
 
 function normalizeLineItems(line, mode) {
@@ -131,6 +134,38 @@ function renderToolsInline(tools, editablePath = null) {
   if (tokens.length === 0) return '';
   const editableAttr = editablePath ? ` data-editable="${editablePath}"` : '';
   return `<span class="skill-tag-row">${tokens.map(token => `<span class="skill-tag tool-token"${editableAttr}>${formatInlineMarkdown(token)}</span>`).join('<span class="skill-sep">•</span>')}</span>`;
+}
+
+// Tools as a vertical bulleted list (toolsDisplay === 'list'). Each tool is a
+// .highlight-bullet block (the same bullet skills/highlights use), wrapped in a
+// .tools-bulleted block so it overrides whatever inline-tag flex the host tools
+// container uses — a consistent bulleted list in every layout.
+function renderToolsBulleted(tools, editablePath = null) {
+  const tokens = normalizeTools(tools);
+  if (tokens.length === 0) return '';
+  const editableAttr = editablePath ? ` data-editable="${editablePath}"` : '';
+  return `<div class="tools-bulleted">${tokens
+    .map(token => `<span class="highlight-bullet"${editableAttr}>${formatInlineMarkdown(stripLeadingBulletMarker(token))}</span>`)
+    .join('')}</div>`;
+}
+
+// Inline-tag tools for stacked layouts: the same .skill-tag-inline visual as the
+// shared stacked skills renderer, but each chip carries data-editable so the inline
+// editor edits it individually (parity with renderToolsInline) instead of the wrapper
+// <p> swallowing the click into a whole-field edit.
+function renderToolsInlineStacked(tools, editablePath = null) {
+  const tokens = normalizeTools(tools);
+  if (tokens.length === 0) return '';
+  const editableAttr = editablePath ? ` data-editable="${editablePath}"` : '';
+  return tokens
+    .map((token) => `<span class="skill-tag-inline"${editableAttr}>${formatInlineMarkdown(token)}</span>`)
+    .join('<span class="skill-sep">•</span>');
+}
+
+// Bulleted is the default tools display; only an explicit 'skills' opts into the
+// inline tag row.
+function toolsAreBulleted(data) {
+  return data?.toolsDisplay !== 'skills';
 }
 
 // Sidebar layout (default)
@@ -279,7 +314,7 @@ function renderStackedVerticalSections(data) {
         <div class="section stacked-vertical-section">
           <h3 class="section-title">Tools</h3>
           <div class="stacked-vertical-content">
-            <p data-editable="tools">${formatSkillsLineStacked(data.tools)}</p>
+            ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p>${renderToolsInlineStacked(data.tools, 'tools')}</p>`}
           </div>
         </div>
       `;
@@ -319,7 +354,7 @@ function renderStackedVerticalSections(data) {
       <div class="section stacked-vertical-section">
         <h3 class="section-title">Tools</h3>
         <div class="stacked-vertical-content">
-          <p data-editable="tools">${formatSkillsLineStacked(data.tools)}</p>
+          ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p>${renderToolsInlineStacked(data.tools, 'tools')}</p>`}
         </div>
       </div>
     `;
@@ -410,7 +445,7 @@ function renderStackedSections(data) {
         <div class="stacked-skill-section">
           <h3 class="section-title">Tools</h3>
           <div class="stacked-skill-content tools-list">
-            <p data-editable="tools">${formatSkillsLineStacked(data.tools)}</p>
+            ${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : `<p>${renderToolsInlineStacked(data.tools, 'tools')}</p>`}
           </div>
         </div>
       `;
@@ -465,7 +500,9 @@ function renderSidebar(data) {
   
   // Render tools - always render as inline skill tags
   if (data.tools) {
-    const toolTags = renderToolsInline(data.tools, 'tools');
+    const toolTags = toolsAreBulleted(data)
+      ? renderToolsBulleted(data.tools, 'tools')
+      : renderToolsInline(data.tools, 'tools');
     
     html += `
       <div class="sidebar-section">
@@ -744,7 +781,7 @@ export function renderResumeClassic(data) {
           ${data.tools ? `
             <div class="section">
               <h2 class="section-title">Tools</h2>
-              <div class="classic-skill-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
+              <div class="classic-skill-content tools-list">${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : renderToolsInline(data.tools, 'tools')}</div>
             </div>
           ` : ''}
         </div>
@@ -820,7 +857,7 @@ export function renderResumeClassicFeatured(data) {
           ${data.tools ? `
             <div class="section">
               <h2 class="section-title">Tools</h2>
-              <div class="classic-skill-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
+              <div class="classic-skill-content tools-list">${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : renderToolsInline(data.tools, 'tools')}</div>
             </div>
           ` : ''}
         </div>
@@ -1022,7 +1059,7 @@ export function renderResumeCreative(data) {
           ${data.tools ? `
             <div class="creative-card">
               <h3 class="creative-card-title">Tools</h3>
-              <div class="creative-card-content tools-list">${renderToolsInline(data.tools, 'tools')}</div>
+              <div class="creative-card-content tools-list">${toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : renderToolsInline(data.tools, 'tools')}</div>
             </div>
           ` : ''}
         </div>

@@ -1,0 +1,231 @@
+import { useState, useRef, useReducer, useEffect, useCallback } from 'react';
+import {
+  Contact, User, Briefcase, Star, BookOpen, FolderGit2, Plus,
+  Upload, Download, Sparkles, Check, X,
+} from 'lucide-react';
+import { toast } from 'sonner';
+
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+
+import { getUserProfile, saveUserProfile } from '../../persistence.js';
+import { DEFAULT_PROFILE, profileToMarkdown, markdownToProfile } from '../../profileMarkdown.js';
+import { ProfileTabContent } from './ProfileTabs.jsx';
+
+const SAVE_DELAY = 500;
+
+// The 7 profile sections, rendered as a left nav rail of `buttonVariants` items
+// with lucide icons — the same idiom SettingsDialog uses for its tabs.
+const PROFILE_TABS = [
+  { id: 'contact', label: 'Contact', Icon: Contact },
+  { id: 'summary', label: 'Summary', Icon: User },
+  { id: 'experience', label: 'Experience', Icon: Briefcase },
+  { id: 'skills', label: 'Skills', Icon: Star },
+  { id: 'education', label: 'Education', Icon: BookOpen },
+  { id: 'projects', label: 'Projects', Icon: FolderGit2 },
+  { id: 'more', label: 'More', Icon: Plus },
+];
+
+// A deep, shape-complete clone of the stored profile to edit against (so edits
+// never mutate the persisted object until saved, and every key/array exists).
+function buildWorkingCopy() {
+  const stored = getUserProfile() || {};
+  const cloned = JSON.parse(JSON.stringify(stored));
+  return {
+    ...DEFAULT_PROFILE,
+    ...cloned,
+    contactInfo: { ...DEFAULT_PROFILE.contactInfo, ...(cloned.contactInfo || {}) },
+  };
+}
+
+/**
+ * The User Profile editor — a genuine shadcn rail dialog matching SettingsDialog:
+ * a glass `DialogContent` with the built-in close suppressed (the header carries
+ * its own ghost X), a left `<nav>` rail of `buttonVariants` section items, and a
+ * scrolling content pane. Always mounted (like Settings) so the
+ * `rd:profile-flush` listener is present even when closed: that flush is
+ * dispatched synchronously by backupFlow.js right before a backup import to win
+ * the autosave-clobbers-import race.
+ *
+ * Edits mutate an in-memory working copy (a ref) and debounce-save to
+ * persistence; a remount key (`version`) refreshes the uncontrolled inputs after
+ * add/delete/import without disturbing the caret during typing.
+ */
+export default function ProfileDialog() {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState('contact');
+  const [saved, setSaved] = useState(false);
+  const [version, bump] = useReducer((x) => x + 1, 0);
+
+  const profileRef = useRef(null);
+  if (profileRef.current === null) profileRef.current = buildWorkingCopy();
+  const saveTimeoutRef = useRef(null);
+  const savedTimeoutRef = useRef(null);
+
+  const scheduleSave = useCallback(() => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      saveUserProfile(profileRef.current);
+      saveTimeoutRef.current = null;
+      setSaved(true);
+      if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current);
+      savedTimeoutRef.current = setTimeout(() => setSaved(false), 1500);
+    }, SAVE_DELAY);
+  }, []);
+
+  // Cancel the pending debounce and write immediately. No-op when nothing is
+  // pending — safe to call unconditionally (the backupFlow flush contract).
+  const flush = useCallback(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+      saveUserProfile(profileRef.current);
+    }
+  }, []);
+
+  // Save + remount the tab so a structural change (add/delete) shows.
+  const refresh = useCallback(() => { scheduleSave(); bump(); }, [scheduleSave]);
+
+  useEffect(() => {
+    const onOpen = () => { profileRef.current = buildWorkingCopy(); bump(); setOpen(true); };
+    const onFlush = () => flush();
+    window.addEventListener('rd:open-profile', onOpen);
+    window.addEventListener('rd:profile-flush', onFlush);
+    return () => {
+      window.removeEventListener('rd:open-profile', onOpen);
+      window.removeEventListener('rd:profile-flush', onFlush);
+    };
+  }, [flush]);
+
+  const handleOpenChange = (next) => {
+    if (!next) flush(); // persist pending edits on close (ESC / click-outside / X)
+    setOpen(next);
+  };
+
+  const handleExport = () => {
+    const md = profileToMarkdown(profileRef.current);
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'user-profile.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (file) => {
+    file.text().then((text) => {
+      const imported = markdownToProfile(text);
+      profileRef.current = {
+        ...DEFAULT_PROFILE,
+        ...imported,
+        contactInfo: { ...DEFAULT_PROFILE.contactInfo, ...(imported.contactInfo || {}) },
+      };
+      saveUserProfile(profileRef.current);
+      bump();
+    }).catch((err) => {
+      console.error('Failed to import profile:', err);
+      toast.error(`Failed to import profile: ${err.message}`);
+    });
+  };
+
+  const startInterview = () => {
+    setOpen(false);
+    // Let the dialog close before the chat panel takes over (matches the old flow).
+    setTimeout(() => window.startProfileInterviewFromChat?.(), 200);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="flex max-h-[85vh] w-[90vw] max-w-[740px] flex-col gap-0 overflow-hidden p-0 glass-card"
+      >
+        <DialogDescription className="sr-only">Background information for AI assistance</DialogDescription>
+
+        {/* Header — mockup .dlg-head: 20px 22px 16px, title 17px, desc 13px. */}
+        <div className="flex shrink-0 items-start justify-between gap-3 px-[22px] pb-4 pt-5">
+          <div className="space-y-1">
+            <DialogTitle>User Profile</DialogTitle>
+            <p className="text-[13px] text-muted-foreground">Background info for AI assistance</p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {saved && (
+              <Badge className="mr-1 gap-1 border-transparent bg-success-bg text-success">
+                <Check className="h-3 w-3" />
+                Saved
+              </Badge>
+            )}
+            <Button asChild variant="outline" size="sm">
+              <label className="cursor-pointer" title="Import profile from markdown file">
+                <Upload className="h-4 w-4" />
+                Import
+                <input
+                  type="file"
+                  accept=".md,.markdown,.txt"
+                  hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleImport(f); }}
+                />
+              </label>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              title="Export profile to markdown file"
+              onClick={handleExport}
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </Button>
+            <Button type="button" size="sm" title="Fill profile via AI interview" onClick={startInterview}>
+              <Sparkles className="h-4 w-4" />
+              AI Interview
+            </Button>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={() => handleOpenChange(false)}
+              className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Body: nav rail + content. Rail mirrors SettingsDialog — active item is
+            terracotta-tinted (bg-primary/10 text-primary) per the mockup .rail;
+            geometry pinned to .rail (172px col, 14px/10px pad) + .rail-item
+            (13.5px/500, gap-9px, py-[7px]/px-2.5, rounded-md). */}
+        <div className="grid min-h-0 flex-1 grid-cols-[172px_1fr] border-t">
+          <nav className="flex flex-col gap-0.5 bg-muted/30 px-2.5 py-3.5">
+            {PROFILE_TABS.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left text-[13.5px] font-medium transition-colors [&_svg]:size-4 [&_svg]:shrink-0',
+                  tab === id
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                <Icon /> {label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="min-h-0 overflow-y-auto px-[22px] py-[18px]">
+            <div key={`${tab}-${version}`}>
+              <ProfileTabContent tab={tab} profile={profileRef.current} scheduleSave={scheduleSave} refresh={refresh} />
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

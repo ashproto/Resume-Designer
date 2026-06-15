@@ -3,6 +3,8 @@
  * Handles header background styles including gradients, patterns, textures, and custom images
  */
 
+import { appStorage } from './appStorage.js';
+
 // Gradient style definitions
 export const GRADIENT_STYLES = {
   'linear-135': {
@@ -244,7 +246,7 @@ function adjustBrightness(hex, factor) {
 
 // Get current header style settings
 export function getHeaderStyleSettings() {
-  const stored = localStorage.getItem('resume-header-style');
+  const stored = appStorage.getItem('resume-header-style');
   if (stored) {
     try {
       return JSON.parse(stored);
@@ -265,7 +267,7 @@ export function getHeaderStyleSettings() {
 
 // Save header style settings
 export function saveHeaderStyleSettings(settings) {
-  localStorage.setItem('resume-header-style', JSON.stringify(settings));
+  appStorage.setItem('resume-header-style', JSON.stringify(settings));
 }
 
 /**

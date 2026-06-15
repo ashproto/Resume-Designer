@@ -4,6 +4,7 @@
  */
 
 import { randomSuffix } from './store.js';
+import { appStorage } from './appStorage.js';
 
 const STORAGE_KEY = 'resume-designer-token-usage';
 
@@ -17,6 +18,7 @@ const DEFAULT_STORAGE = {
   summary: {
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    totalReasoningTokens: 0,
     totalCost: 0,
     byModel: {},
     byFeature: {}
@@ -31,11 +33,11 @@ function generateEventId() {
 }
 
 /**
- * Load usage data from localStorage
+ * Load usage data from storage
  */
 export function loadUsageData() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = appStorage.getItem(STORAGE_KEY);
     if (raw) {
       const data = JSON.parse(raw);
       // Ensure structure is valid
@@ -51,11 +53,11 @@ export function loadUsageData() {
 }
 
 /**
- * Save usage data to localStorage
+ * Save usage data to storage
  */
 function saveUsageData(data) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    appStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     return true;
   } catch (e) {
     console.error('[TokenTracking] Failed to save usage data:', e);
@@ -66,7 +68,7 @@ function saveUsageData(data) {
 /**
  * Track a usage event
  */
-export function trackUsage({ provider, model, feature, inputTokens, outputTokens, cacheRead = 0, cacheCreation = 0, cost: reportedCost }) {
+export function trackUsage({ provider, model, feature, inputTokens, outputTokens, cacheRead = 0, cacheCreation = 0, reasoningTokens = 0, cost: reportedCost }) {
   const data = loadUsageData();
 
   // Cost comes from OpenRouter's reported usage.cost (requested via
@@ -86,6 +88,7 @@ export function trackUsage({ provider, model, feature, inputTokens, outputTokens
     outputTokens: outputTokens || 0,
     cacheRead: cacheRead || 0,
     cacheCreation: cacheCreation || 0,
+    reasoningTokens: reasoningTokens || 0,
     cost
   };
   
@@ -95,6 +98,7 @@ export function trackUsage({ provider, model, feature, inputTokens, outputTokens
   // Update summary
   data.summary.totalInputTokens += event.inputTokens;
   data.summary.totalOutputTokens += event.outputTokens;
+  data.summary.totalReasoningTokens = (data.summary.totalReasoningTokens || 0) + event.reasoningTokens;
   data.summary.totalCost += cost;
   
   // Update by model. The slug already encodes the provider (provider/model) and
@@ -106,12 +110,16 @@ export function trackUsage({ provider, model, feature, inputTokens, outputTokens
       model,
       inputTokens: 0,
       outputTokens: 0,
+      reasoningTokens: 0,
       cost: 0,
       calls: 0
     };
   }
   data.summary.byModel[modelKey].inputTokens += event.inputTokens;
   data.summary.byModel[modelKey].outputTokens += event.outputTokens;
+  // Guard with `|| 0`: entries persisted before reasoningTokens existed lack the
+  // key, so a bare `+=` would write a sticky NaN (rendered in the usage panel).
+  data.summary.byModel[modelKey].reasoningTokens = (data.summary.byModel[modelKey].reasoningTokens || 0) + event.reasoningTokens;
   data.summary.byModel[modelKey].cost += cost;
   data.summary.byModel[modelKey].calls += 1;
   
@@ -120,12 +128,14 @@ export function trackUsage({ provider, model, feature, inputTokens, outputTokens
     data.summary.byFeature[feature] = {
       inputTokens: 0,
       outputTokens: 0,
+      reasoningTokens: 0,
       cost: 0,
       calls: 0
     };
   }
   data.summary.byFeature[feature].inputTokens += event.inputTokens;
   data.summary.byFeature[feature].outputTokens += event.outputTokens;
+  data.summary.byFeature[feature].reasoningTokens = (data.summary.byFeature[feature].reasoningTokens || 0) + event.reasoningTokens;
   data.summary.byFeature[feature].cost += cost;
   data.summary.byFeature[feature].calls += 1;
   
