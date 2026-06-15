@@ -84,4 +84,17 @@ describe('store (model-native)', () => {
   it('updateSilent is gone', () => {
     expect(store.updateSilent).toBeUndefined();
   });
+
+  it('getPageSize defaults to auto; setPageSize round-trips through the model', () => {
+    expect(store.getPageSize()).toBe('auto');
+    store.setPageSize('a4');
+    expect(store.getPageSize()).toBe('a4');
+    expect(store.getModel().attrs.pageSize).toBe('a4');
+  });
+
+  it('setPageSize pushes a history entry', () => {
+    const before = store.getHistoryLength();
+    store.setPageSize('letter');
+    expect(store.getHistoryLength()).toBe(before + 1);
+  });
 });

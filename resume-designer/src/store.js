@@ -133,6 +133,14 @@ function createStore() {
       return currentVariantId;
     },
 
+    // --- page size (per-document; thin wrappers over the round-tripping get/update) ---
+    getPageSize() {
+      return this.get('pageSize') ?? 'auto';
+    },
+    setPageSize(value) {
+      this.update('pageSize', value);
+    },
+
     // --- whole-document set (accepts flat OR model) ---
     setData(newData, skipSave = false, variantId = null) {
       model = toModel(newData);
