@@ -19,20 +19,43 @@ function renderRuns(nodes = []) {
 }
 
 const PAPER = { letter: 'us-letter', a4: 'a4', legal: 'us-legal' };
-function pageRule(pageSize, t) {
-  const margin = `(top: ${t.marginTopIn}in, bottom: ${t.marginBottomIn}in, left: ${t.marginLeftIn}in, right: ${t.marginRightIn}in)`;
+// Full-bleed: no outer page margin, so colored headers/sidebars reach the paper
+// edge (matching the on-screen design). The configured margins are applied as
+// INTERNAL padding via pagePad/headerPad and the sidebar grid insets below.
+function pageRule(pageSize) {
   return PAPER[pageSize]
-    ? `#set page(paper: "${PAPER[pageSize]}", margin: ${margin})`
-    : `#set page(width: 8.5in, height: auto, margin: ${margin})`;
+    ? `#set page(paper: "${PAPER[pageSize]}", margin: 0pt)`
+    : `#set page(width: 8.5in, height: auto, margin: 0pt)`;
 }
 
 function preamble(model, t) {
   return [
-    pageRule(model.attrs?.pageSize ?? 'auto', t),
+    pageRule(model.attrs?.pageSize ?? 'auto'),
     `#set text(font: "${t.fontBody}", size: ${t.baseSizePt}pt, fill: rgb("${t.textColor}"))`,
     `#set par(leading: ${(t.lineHeight - 1).toFixed(3)}em, justify: false)`,
     `#let accent = rgb("${t.accent}")`,
   ].join('\n');
+}
+
+// Full-bleed page model helpers: the configured margins become INTERNAL padding.
+const pagePad = (t) => `(top: ${t.marginTopIn}in, bottom: ${t.marginBottomIn}in, left: ${t.marginLeftIn}in, right: ${t.marginRightIn}in)`;
+const headerPad = (t) => `(top: ${t.marginTopIn}in, bottom: 0.28in, left: ${t.marginLeftIn}in, right: ${t.marginRightIn}in)`;
+// Wrap single-column body content so its text is padded by the margins while
+// colored headers above it stay full-bleed.
+function bodyWrap(content, t) {
+  return `#block(width: 100%, inset: ${pagePad(t)})[
+${content}
+]`;
+}
+// Per-column inset for two-column (sidebar) grids: POSITION-based — the LEFT
+// column gets the left page margin + an inner gutter; the RIGHT column the inner
+// gutter + the right page margin. Which column is the colored sidebar is decided
+// by the grid's `fill`, independent of these insets.
+function gridInset(t) {
+  const inner = '0.18in';
+  const left = `(top: ${t.marginTopIn}in, bottom: ${t.marginBottomIn}in, left: ${t.marginLeftIn}in, right: ${inner})`;
+  const right = `(top: ${t.marginTopIn}in, bottom: ${t.marginBottomIn}in, left: ${inner}, right: ${t.marginRightIn}in)`;
+  return `(col, row) => if col == 0 { ${left} } else { ${right} }`;
 }
 
 function renderHeader(header, t) {
@@ -118,7 +141,8 @@ function stackedLayout(model, theme) {
   const nodes = model.content ?? [];
   const header = nodes.find((n) => n.type === 'header');
   const sections = nodes.filter((n) => n.type === 'section').map((s) => renderSection(s, theme));
-  return [preamble(model, theme), renderHeader(header, theme), ...sections, ''].join('\n\n');
+  const body = bodyWrap([renderHeader(header, theme), ...sections].join('\n\n'), theme);
+  return [preamble(model, theme), body, ''].join('\n\n');
 }
 
 // Bucket sections by kind, preserving model order within each bucket.
@@ -142,7 +166,7 @@ function renderGradientHeader(header, t) {
   const contacts = (childOfType(header, 'contactList')?.content ?? [])
     .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean)
     .join(' #" • " ');
-  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: 16pt)[
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)})[
   #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
 
   #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
@@ -167,11 +191,13 @@ function sidebarLayout(model, t) {
   const g = groupSections(model);
   const sidebarCell = [...g.customs, ...g.tools].map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
   const mainCell = [...g.summary, ...g.experience, ...g.education].map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
-  const grid = `#grid(columns: (${t.sidebarWidthIn}in, 1fr), column-gutter: 14pt,
-  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+  const grid = `#grid(columns: (${t.sidebarWidthIn}in, 1fr),
+  fill: (col, row) => if col == 0 { rgb("${t.sidebarBg}") } else { none },
+  inset: ${gridInset(t)},
+  [
 ${sidebarCell}
 ],
-  block(inset: (left: 4pt))[
+  [
 ${mainCell}
 ])`;
   return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
@@ -188,7 +214,7 @@ function renderSolidCenteredHeader(header, t) {
   const tagline = renderRuns(childContent(header, 'tagline'));
   const contacts = (childOfType(header, 'contactList')?.content ?? [])
     .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean).join(' #" • " ');
-  return `#block(width: 100%, fill: rgb("${t.headerBg}"), inset: 16pt)[#align(center)[
+  return `#block(width: 100%, fill: rgb("${t.headerBg}"), inset: ${headerPad(t)})[#align(center)[
   #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
 
   #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
@@ -213,7 +239,7 @@ function classicLayout(model, t) {
   const header = (model.content ?? []).find((n) => n.type === 'header');
   const g = groupSections(model);
   const ordered = [...g.summary, ...g.experience, ...g.education, ...g.customs, ...g.tools];
-  const body = ordered.map((s) => renderClassicSection(s, t)).filter(Boolean).join('\n\n');
+  const body = bodyWrap(ordered.map((s) => renderClassicSection(s, t)).filter(Boolean).join('\n\n'), t);
   return [preamble(model, t), renderSolidCenteredHeader(header, t), body, ''].join('\n\n');
 }
 
@@ -222,11 +248,13 @@ function rightSidebarLayout(model, t) {
   const g = groupSections(model);
   const mainCell = [...g.summary, ...g.experience, ...g.education].map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
   const sidebarCell = [...g.customs, ...g.tools].map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
-  const grid = `#grid(columns: (1fr, ${t.sidebarWidthIn}in), column-gutter: 14pt,
-  block(inset: (right: 4pt))[
+  const grid = `#grid(columns: (1fr, ${t.sidebarWidthIn}in),
+  fill: (col, row) => if col == 1 { rgb("${t.sidebarBg}") } else { none },
+  inset: ${gridInset(t)},
+  [
 ${mainCell}
 ],
-  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+  [
 ${sidebarCell}
 ])`;
   return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
@@ -250,7 +278,7 @@ function renderModernGradientHeader(header, t) {
     : '';
   const leftCell = `[${nameBlock}\n\n${taglineBlock}]`;
   const rightCell = contactBlock ? `[${contactBlock}]` : '[]';
-  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: 16pt)[
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)})[
   #grid(columns: (1fr, auto), column-gutter: 12pt, ${leftCell}, ${rightCell})
 ]`;
 }
@@ -262,11 +290,13 @@ function modernLayout(model, t) {
     .map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
   const mainCell = [...g.summary, ...g.experience]
     .map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
-  const grid = `#grid(columns: (1.8in, 1fr), column-gutter: 14pt,
-  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+  const grid = `#grid(columns: (1.8in, 1fr),
+  fill: (col, row) => if col == 0 { rgb("${t.sidebarBg}") } else { none },
+  inset: ${gridInset(t)},
+  [
 ${sidebarCell}
 ],
-  block(inset: (left: 4pt))[
+  [
 ${mainCell}
 ])`;
   return [preamble(model, t), renderModernGradientHeader(header, t), grid, ''].join('\n\n');
@@ -293,11 +323,13 @@ function compactLayout(model, t) {
     .map((s) => renderSection(s, ct)).filter(Boolean).join('\n\n');
   const sidebarCell = [...g.customs, ...g.tools, ...g.education]
     .map((s) => renderSidebarSection(s, ct)).filter(Boolean).join('\n\n');
-  const grid = `#grid(columns: (1fr, ${ct.sidebarWidthIn}in), column-gutter: 12pt,
-  block(inset: (right: 4pt))[
+  const grid = `#grid(columns: (1fr, ${ct.sidebarWidthIn}in),
+  fill: (col, row) => if col == 1 { rgb("${ct.sidebarBg}") } else { none },
+  inset: ${gridInset(ct)},
+  [
 ${mainCell}
 ],
-  block(fill: rgb("${ct.sidebarBg}"), inset: 10pt, width: 100%, height: 100%)[
+  [
 ${sidebarCell}
 ])`;
   return [preamble(model, ct), renderGradientHeader(header, ct), grid, ''].join('\n\n');
@@ -336,8 +368,9 @@ function stackedVerticalLayout(model, t) {
   const g = groupSections(model);
   const { highlights, skills } = splitCustoms(g.customs);
   const ordered = [...g.summary, ...highlights, ...skills, ...g.experience, ...g.education, ...g.tools];
-  const body = ordered.map((s) => renderBoxedSection(s, t)).filter(Boolean).join('\n\n');
-  return [preamble(model, t), renderHeader(header, t), body, ''].join('\n\n');
+  const sections = ordered.map((s) => renderBoxedSection(s, t)).filter(Boolean).join('\n\n');
+  const body = bodyWrap([renderHeader(header, t), sections].join('\n\n'), t);
+  return [preamble(model, t), body, ''].join('\n\n');
 }
 
 // Classic-featured layout: solid centered header (same as classic), single column.
@@ -357,7 +390,7 @@ function classicFeaturedLayout(model, t) {
     ...skills.map((s) => renderClassicSection(s, t)),
     ...g.tools.map((s) => renderSection(s, t)),
   ].filter(Boolean);
-  return [preamble(model, t), renderSolidCenteredHeader(header, t), ...parts, ''].join('\n\n');
+  return [preamble(model, t), renderSolidCenteredHeader(header, t), bodyWrap(parts.join('\n\n'), t), ''].join('\n\n');
 }
 
 // Executive layout: centered gradient header, pulled-out italic summary block (sidebar-bg),
@@ -381,7 +414,7 @@ function executiveLayout(model, t) {
       })
       .filter(Boolean)
       .join(' ');
-    summaryBlock = `#block(fill: rgb("${t.sidebarBg}"), inset: 10pt, width: 100%)[#align(center)[#emph[${paragraphs}]]]`;
+    summaryBlock = `#block(fill: rgb("${t.sidebarBg}"), inset: ${headerPad(t)}, width: 100%)[#align(center)[#emph[${paragraphs}]]]`;
   }
 
   // Main cell: experience labeled "Professional Experience" (via renderClassicSection).
@@ -391,11 +424,13 @@ function executiveLayout(model, t) {
   const sideCell = [...g.customs, ...g.tools, ...g.education]
     .map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
 
-  const grid = `#grid(columns: (1fr, 2.2in), column-gutter: 14pt,
-  block(inset: (right: 4pt))[
+  const grid = `#grid(columns: (1fr, 2.2in),
+  fill: (col, row) => if col == 1 { rgb("${t.sidebarBg}") } else { none },
+  inset: ${gridInset(t)},
+  [
 ${mainCell}
 ],
-  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+  [
 ${sideCell}
 ])`;
 
@@ -441,11 +476,13 @@ function timelineLayout(model, t) {
   ].filter(Boolean).join('\n\n');
   const sidebarCell = [...g.customs, ...g.tools]
     .map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
-  const grid = `#grid(columns: (1fr, ${t.sidebarWidthIn}in), column-gutter: 14pt,
-  block(inset: (right: 4pt))[
+  const grid = `#grid(columns: (1fr, ${t.sidebarWidthIn}in),
+  fill: (col, row) => if col == 1 { rgb("${t.sidebarBg}") } else { none },
+  inset: ${gridInset(t)},
+  [
 ${mainCell}
 ],
-  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+  [
 ${sidebarCell}
 ])`;
   return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
@@ -457,7 +494,7 @@ function renderGradientCenteredHeader(header, t) {
   const tagline = renderRuns(childContent(header, 'tagline'));
   const contacts = (childOfType(header, 'contactList')?.content ?? [])
     .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean).join(' #" • " ');
-  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: 16pt)[#align(center)[
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)})[#align(center)[
   #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
 
   #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
@@ -527,7 +564,8 @@ ${cards.join(',\n')}
   const exp = g.experience.map((s) => renderCreativeSection(s, t)).filter(Boolean).join('\n\n');
   const edu = g.education.map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
 
-  return [preamble(model, t), renderGradientCenteredHeader(header, t), summaryBlock, gridBlock, exp, edu, '']
+  const bodyContent = [summaryBlock, gridBlock, exp, edu].filter(Boolean).join('\n\n');
+  return [preamble(model, t), renderGradientCenteredHeader(header, t), bodyWrap(bodyContent, t), '']
     .filter(Boolean).join('\n\n');
 }
 

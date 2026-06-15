@@ -1,11 +1,12 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`modelToTypst — blocks, sections, stacked > matches the recorded stacked snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
+#block(width: 100%, inset: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))[
 #text(font: "Cormorant Garamond", size: 27pt, weight: "bold")[#"Ada"]
 
 #text(size: 11.399999999999999pt, fill: rgb("#6b6560"))[#"P"]
@@ -38,17 +39,18 @@ exports[`modelToTypst — blocks, sections, stacked > matches the recorded stack
 #line(length: 100%, stroke: 0.5pt + accent)
 
 [#"Figma" #h(0.6em) #"git"]
+]
 
 "
 `;
 
 exports[`modelToTypst — classic > matches the recorded classic snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: rgb("#2d2a26"), inset: 16pt)[#align(center)[
+#block(width: 100%, fill: rgb("#2d2a26"), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[#align(center)[
   #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada"]
 
   #text(size: 11.399999999999999pt, fill: white)[#"P"]
@@ -56,6 +58,7 @@ exports[`modelToTypst — classic > matches the recorded classic snapshot 1`] = 
   #text(size: 8.00pt, fill: white)[#"a@x.com"]
 ]]
 
+#block(width: 100%, inset: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Professional Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -88,17 +91,18 @@ exports[`modelToTypst — classic > matches the recorded classic snapshot 1`] = 
 #line(length: 100%, stroke: 0.5pt + accent)
 
 [#"Figma"]
+]
 
 "
 `;
 
 exports[`modelToTypst — classic-featured > matches the recorded classic-featured snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: rgb("#2d2a26"), inset: 16pt)[#align(center)[
+#block(width: 100%, fill: rgb("#2d2a26"), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[#align(center)[
   #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada"]
 
   #text(size: 11.399999999999999pt, fill: white)[#"P"]
@@ -106,6 +110,7 @@ exports[`modelToTypst — classic-featured > matches the recorded classic-featur
   #text(size: 8.00pt, fill: white)[#"a@x.com"]
 ]]
 
+#block(width: 100%, inset: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Professional Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -144,17 +149,18 @@ exports[`modelToTypst — classic-featured > matches the recorded classic-featur
 #line(length: 100%, stroke: 0.5pt + accent)
 
 [#"Figma"]
+]
 
 "
 `;
 
 exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 7.92pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[
   #text(font: "Cormorant Garamond", size: 22.95pt, weight: "bold", fill: white)[#"Ada"]
 
   #text(size: 9.689999999999998pt, fill: white)[#"P"]
@@ -162,8 +168,10 @@ exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = 
   #text(size: 8.00pt, fill: white)[#"a@x.com"]
 ]
 
-#grid(columns: (1fr, 2.4in), column-gutter: 12pt,
-  block(inset: (right: 4pt))[
+#grid(columns: (1fr, 2.4in),
+  fill: (col, row) => if col == 1 { rgb("#f4e8e4") } else { none },
+  inset: (col, row) => if col == 0 { (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.18in) } else { (top: 0.5in, bottom: 0.5in, left: 0.18in, right: 0.5in) },
+  [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -179,7 +187,7 @@ exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = 
 #text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
 #list(marker: [#"•"], [#"v2"])
 ],
-  block(fill: rgb("#f4e8e4"), inset: 10pt, width: 100%, height: 100%)[
+  [
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
 
 #line(length: 100%, stroke: 1pt + accent)
@@ -203,12 +211,12 @@ exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = 
 `;
 
 exports[`modelToTypst — creative > matches the recorded creative snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[#align(center)[
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[#align(center)[
   #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada Lovelace"]
 
   #text(size: 11.399999999999999pt, fill: white)[#"Pioneer"]
@@ -216,6 +224,7 @@ exports[`modelToTypst — creative > matches the recorded creative snapshot 1`] 
   #text(size: 8.00pt, fill: white)[#"ada@x.com"]
 ]]
 
+#block(width: 100%, inset: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))[
 #align(center)[#emph[#"S."]]
 
 #grid(columns: (1fr, 1fr), column-gutter: 10pt, row-gutter: 10pt,
@@ -244,16 +253,17 @@ block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, stroke: (left: 3pt + accent
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"BSc"]"
+[#"BSc"]
+]"
 `;
 
 exports[`modelToTypst — executive > matches the recorded executive snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[
   #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada Lovelace"]
 
   #text(size: 11.399999999999999pt, fill: white)[#"Pioneer"]
@@ -261,10 +271,12 @@ exports[`modelToTypst — executive > matches the recorded executive snapshot 1`
   #text(size: 8.00pt, fill: white)[#"ada@x.com"]
 ]
 
-#block(fill: rgb("#f4e8e4"), inset: 10pt, width: 100%)[#align(center)[#emph[#"S."]]]
+#block(fill: rgb("#f4e8e4"), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in), width: 100%)[#align(center)[#emph[#"S."]]]
 
-#grid(columns: (1fr, 2.2in), column-gutter: 14pt,
-  block(inset: (right: 4pt))[
+#grid(columns: (1fr, 2.2in),
+  fill: (col, row) => if col == 1 { rgb("#f4e8e4") } else { none },
+  inset: (col, row) => if col == 0 { (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.18in) } else { (top: 0.5in, bottom: 0.5in, left: 0.18in, right: 0.5in) },
+  [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Professional Experience"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -274,7 +286,7 @@ exports[`modelToTypst — executive > matches the recorded executive snapshot 1`
 #text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
 #list(marker: [#"•"], [#"v2"])
 ],
-  block(fill: rgb("#f4e8e4"), inset: 12pt, width: 100%, height: 100%)[
+  [
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
 
 #line(length: 100%, stroke: 1pt + accent)
@@ -296,19 +308,21 @@ exports[`modelToTypst — executive > matches the recorded executive snapshot 1`
 `;
 
 exports[`modelToTypst — modern > matches the recorded modern snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[
   #grid(columns: (1fr, auto), column-gutter: 12pt, [#text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada"]
 
 #text(size: 11.399999999999999pt, fill: white)[#"P"]], [#align(right)[#text(size: 8.00pt, fill: white)[#"a@x.com"]]])
 ]
 
-#grid(columns: (1.8in, 1fr), column-gutter: 14pt,
-  block(fill: rgb("#f4e8e4"), inset: 12pt, width: 100%, height: 100%)[
+#grid(columns: (1.8in, 1fr),
+  fill: (col, row) => if col == 0 { rgb("#f4e8e4") } else { none },
+  inset: (col, row) => if col == 0 { (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.18in) } else { (top: 0.5in, bottom: 0.5in, left: 0.18in, right: 0.5in) },
+  [
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
 
 #line(length: 100%, stroke: 1pt + accent)
@@ -327,7 +341,7 @@ exports[`modelToTypst — modern > matches the recorded modern snapshot 1`] = `
 
 [#"BSc — MIT"]
 ],
-  block(inset: (left: 4pt))[
+  [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -348,12 +362,12 @@ exports[`modelToTypst — modern > matches the recorded modern snapshot 1`] = `
 `;
 
 exports[`modelToTypst — right-sidebar > matches the recorded right-sidebar snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[
   #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada"]
 
   #text(size: 11.399999999999999pt, fill: white)[#"P"]
@@ -361,8 +375,10 @@ exports[`modelToTypst — right-sidebar > matches the recorded right-sidebar sna
   #text(size: 8.00pt, fill: white)[#"a@x.com"]
 ]
 
-#grid(columns: (1fr, 2.4in), column-gutter: 14pt,
-  block(inset: (right: 4pt))[
+#grid(columns: (1fr, 2.4in),
+  fill: (col, row) => if col == 1 { rgb("#f4e8e4") } else { none },
+  inset: (col, row) => if col == 0 { (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.18in) } else { (top: 0.5in, bottom: 0.5in, left: 0.18in, right: 0.5in) },
+  [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -378,7 +394,7 @@ exports[`modelToTypst — right-sidebar > matches the recorded right-sidebar sna
 #text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
 #list(marker: [#"•"], [#"v2"])
 ],
-  block(fill: rgb("#f4e8e4"), inset: 12pt, width: 100%, height: 100%)[
+  [
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
 
 #line(length: 100%, stroke: 1pt + accent)
@@ -396,12 +412,12 @@ exports[`modelToTypst — right-sidebar > matches the recorded right-sidebar sna
 `;
 
 exports[`modelToTypst — sidebar > matches the recorded sidebar snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[
   #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada"]
 
   #text(size: 11.399999999999999pt, fill: white)[#"P"]
@@ -409,8 +425,10 @@ exports[`modelToTypst — sidebar > matches the recorded sidebar snapshot 1`] = 
   #text(size: 8.00pt, fill: white)[#"a@x.com"]
 ]
 
-#grid(columns: (2.4in, 1fr), column-gutter: 14pt,
-  block(fill: rgb("#f4e8e4"), inset: 12pt, width: 100%, height: 100%)[
+#grid(columns: (2.4in, 1fr),
+  fill: (col, row) => if col == 0 { rgb("#f4e8e4") } else { none },
+  inset: (col, row) => if col == 0 { (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.18in) } else { (top: 0.5in, bottom: 0.5in, left: 0.18in, right: 0.5in) },
+  [
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
 
 #line(length: 100%, stroke: 1pt + accent)
@@ -423,7 +441,7 @@ exports[`modelToTypst — sidebar > matches the recorded sidebar snapshot 1`] = 
 
 [#"Figma" #h(0.6em) #"git"]
 ],
-  block(inset: (left: 4pt))[
+  [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -444,11 +462,12 @@ exports[`modelToTypst — sidebar > matches the recorded sidebar snapshot 1`] = 
 `;
 
 exports[`modelToTypst — stacked-vertical > matches the recorded stacked-vertical snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
+#block(width: 100%, inset: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))[
 #text(font: "Cormorant Garamond", size: 27pt, weight: "bold")[#"Ada"]
 
 #text(size: 11.399999999999999pt, fill: rgb("#6b6560"))[#"P"]
@@ -493,17 +512,18 @@ exports[`modelToTypst — stacked-vertical > matches the recorded stacked-vertic
 
 [#"Figma"]
 ]
+]
 
 "
 `;
 
 exports[`modelToTypst — timeline > matches the recorded timeline snapshot 1`] = `
-"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+"#set page(width: 8.5in, height: auto, margin: 0pt)
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
 #set par(leading: 0.450em, justify: false)
 #let accent = rgb("#c45c3e")
 
-#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: (top: 0.5in, bottom: 0.28in, left: 0.5in, right: 0.5in))[
   #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada Lovelace"]
 
   #text(size: 11.399999999999999pt, fill: white)[#"Pioneer"]
@@ -511,8 +531,10 @@ exports[`modelToTypst — timeline > matches the recorded timeline snapshot 1`] 
   #text(size: 8.00pt, fill: white)[#"ada@x.com"]
 ]
 
-#grid(columns: (1fr, 2.4in), column-gutter: 14pt,
-  block(inset: (right: 4pt))[
+#grid(columns: (1fr, 2.4in),
+  fill: (col, row) => if col == 1 { rgb("#f4e8e4") } else { none },
+  inset: (col, row) => if col == 0 { (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.18in) } else { (top: 0.5in, bottom: 0.5in, left: 0.18in, right: 0.5in) },
+  [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
@@ -541,7 +563,7 @@ block(width: 100%)[
 
 [#"BSc"]
 ],
-  block(fill: rgb("#f4e8e4"), inset: 12pt, width: 100%, height: 100%)[
+  [
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
 
 #line(length: 100%, stroke: 1pt + accent)
