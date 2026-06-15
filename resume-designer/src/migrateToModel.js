@@ -63,7 +63,16 @@ export function flatToModel(flat) {
 
   if (flat.tools) content.push(section('tools', 'Tools', 'text', [tagGroup(splitTools(flat.tools))]));
 
-  return { type: 'doc', attrs: { schemaVersion: SCHEMA_VERSION, docType: 'resume', toolsDisplay: flat.toolsDisplay ?? '' }, content };
+  return {
+    type: 'doc',
+    attrs: {
+      schemaVersion: SCHEMA_VERSION,
+      docType: 'resume',
+      toolsDisplay: flat.toolsDisplay ?? '',
+      pageSize: flat.pageSize ?? 'auto',
+    },
+    content,
+  };
 }
 
 const textOf = (node) => serializeInlineMarks((node?.content ?? []).filter((c) => c.type === 'text'));
@@ -129,12 +138,13 @@ export function modelToFlat(model) {
     }
   }
   if (model.attrs?.toolsDisplay) flat.toolsDisplay = model.attrs.toolsDisplay;
+  if (model.attrs?.pageSize && model.attrs.pageSize !== 'auto') flat.pageSize = model.attrs.pageSize;
   return flat;
 }
 
 const FLAT_DEFAULTS = {
   name: '', tagline: '', contact: {}, summary: '',
-  sections: [], experience: [], education: [], tools: '',
+  sections: [], experience: [], education: [], tools: '', pageSize: 'auto',
 };
 
 // Compute a document model for a stored variant on demand. Pure; persists nothing.

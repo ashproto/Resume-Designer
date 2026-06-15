@@ -180,3 +180,19 @@ describe('experience relevanceRank', () => {
     expect(back.experience[0]._relevanceRank).toBe(0);
   });
 });
+
+describe('pageSize in the migration', () => {
+  it('defaults pageSize to auto when absent', () => {
+    expect(flatToModel(POPULATED).attrs.pageSize).toBe('auto');
+  });
+  it('carries an explicit pageSize into the doc attr', () => {
+    expect(flatToModel({ ...POPULATED, pageSize: 'a4' }).attrs.pageSize).toBe('a4');
+  });
+  it('round-trips a non-default pageSize losslessly', () => {
+    const sample = { ...POPULATED, pageSize: 'letter' };
+    expect(modelToFlat(flatToModel(sample))).toEqual(sample);
+  });
+  it('omits pageSize from flat output when auto (keeps golden samples clean)', () => {
+    expect('pageSize' in modelToFlat(flatToModel(POPULATED))).toBe(false);
+  });
+});
