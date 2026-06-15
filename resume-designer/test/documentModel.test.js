@@ -62,6 +62,16 @@ describe('resumeSchema', () => {
     };
     expect(() => validateModel(doc)).not.toThrow();
   });
+  it('doc carries a pageSize attr defaulting to auto', () => {
+    expect(resumeSchema.nodeFromJSON(validDoc).attrs.pageSize).toBe('auto');
+  });
+  it('createEmptyModel carries pageSize auto', () => {
+    expect(createEmptyModel().attrs.pageSize).toBe('auto');
+  });
+  it('preserves an explicit pageSize through the schema', () => {
+    const doc = { ...validDoc, attrs: { pageSize: 'a4' } };
+    expect(resumeSchema.nodeFromJSON(doc).attrs.pageSize).toBe('a4');
+  });
   it('serializes to DOM in model order', async () => {
     const { DOMSerializer } = await import('prosemirror-model');
     const { JSDOM } = await import('jsdom');
