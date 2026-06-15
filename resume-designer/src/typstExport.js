@@ -7,8 +7,8 @@ import { buildTheme } from './typst/theme.js';
 import { modelToTypst } from './typst/generate.js';
 import { typstRenderPreview, typstExportPdf, pickPdfSavePath } from './native.js';
 
-// Layouts the Typst generator covers today (PR 3.2-3.3). Others fall back to capture.
-export const TYPST_LAYOUTS = new Set(['sidebar', 'stacked', 'classic', 'right-sidebar', 'modern']);
+// Layouts the Typst generator covers today (PR 3.2-3.6). Others fall back to capture.
+export const TYPST_LAYOUTS = new Set(['sidebar', 'stacked', 'classic', 'right-sidebar', 'modern', 'compact']);
 
 function resumeTheme() {
   const s = getSettings();

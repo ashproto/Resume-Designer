@@ -139,6 +139,44 @@ describe('modelToTypst — right-sidebar', () => {
   });
 });
 
+describe('modelToTypst — compact', () => {
+  const t = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+    summary: 'S.',
+    sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust'] }],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc — MIT'],
+    tools: 'Figma',
+  });
+  it('emits a #grid( and main (Summary, Experience) precedes sidebar (Skills) in source order', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'compact' });
+    expect(typ).toContain('#grid(');
+    const iSummary = typ.indexOf('#"Summary"');
+    const iExp = typ.indexOf('#"Experience"');
+    const iSkills = typ.indexOf('#"Skills"');
+    expect(iSummary).toBeGreaterThanOrEqual(0);
+    expect(iExp).toBeGreaterThanOrEqual(0);
+    expect(iSkills).toBeGreaterThanOrEqual(0);
+    // main-left: main cell emitted first, sidebar cell second
+    expect(iSummary).toBeLessThan(iSkills);
+    expect(iExp).toBeLessThan(iSkills);
+  });
+  it('uses scaled-down sizes relative to default theme', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'compact' });
+    // Compact preamble should have a smaller base size than the default 9pt
+    // Default: 9 * 1 = 9pt; compact scales by 0.88 → 7.92pt (rounds to something < 9pt)
+    expect(typ).toContain('#set text(');
+    // The compact preamble size should be less than the default 9pt
+    const match = typ.match(/#set text\(font: "[^"]+", size: ([\d.]+)pt/);
+    expect(match).not.toBeNull();
+    expect(parseFloat(match[1])).toBeLessThan(9);
+  });
+  it('matches the recorded compact snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'compact' })).toMatchSnapshot();
+  });
+});
+
 describe('modelToTypst — modern', () => {
   const t = buildTheme({});
   const m = flatToModel({

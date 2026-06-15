@@ -108,4 +108,28 @@ describe.skipIf(!typstAvailable())('ATS reading order (stacked)', () => {
       expect(positions[i].at, `"${positions[i].tok}" should follow "${positions[i - 1].tok}"`).toBeGreaterThan(positions[i - 1].at);
     }
   });
+
+  it('compact reads main-then-sidebar (Summary/Experience before SKILLS/Rust)', async () => {
+    const model = flatToModel({
+      name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },
+      summary: 'First programmer.',
+      sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust', 'Go'] }],
+      experience: [{ id: 'e', title: 'Collaborator', company: 'Analytical Engine', dates: '1842', bullets: ['Authored Note G.'] }],
+      tools: 'Figma',
+    });
+    const typ = modelToTypst(model, { theme: buildTheme({}), layout: 'compact' });
+    const dir = mkdtempSync(join(tmpdir(), 'rd-ats-cmp-'));
+    const typPath = join(dir, 'r.typ'); const pdfPath = join(dir, 'r.pdf');
+    writeFileSync(typPath, typ);
+    execFileSync('typst', ['compile', typPath, pdfPath]);
+    const text = await extractText(pdfPath);
+    // compact: main-left (emitted first) → main section titles appear before sidebar titles
+    // sidebar titles use #upper[...] → appear UPPERCASE in PDF text stream
+    const order = ['Ada Lovelace', 'Summary', 'Experience', 'Collaborator', 'SKILLS', 'Rust'];
+    const positions = order.map((tok) => ({ tok, at: text.indexOf(tok) }));
+    for (const { tok, at } of positions) expect(at, `"${tok}" missing from PDF text`).toBeGreaterThanOrEqual(0);
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i].at, `"${positions[i].tok}" should follow "${positions[i - 1].tok}"`).toBeGreaterThan(positions[i - 1].at);
+    }
+  });
 });

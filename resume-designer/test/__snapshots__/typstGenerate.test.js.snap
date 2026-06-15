@@ -92,6 +92,60 @@ exports[`modelToTypst — classic > matches the recorded classic snapshot 1`] = 
 "
 `;
 
+exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = `
+"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+#set text(font: "DM Sans", size: 7.92pt, fill: rgb("#2d2a26"))
+#set par(leading: 0.450em, justify: false)
+#let accent = rgb("#c45c3e")
+
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[
+  #text(font: "Cormorant Garamond", size: 22.95pt, weight: "bold", fill: white)[#"Ada"]
+
+  #text(size: 9.689999999999998pt, fill: white)[#"P"]
+
+  #text(size: 8.00pt, fill: white)[#"a@x.com"]
+]
+
+#grid(columns: (1fr, 2.4in), column-gutter: 12pt,
+  block(inset: (right: 4pt))[
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"S."]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+#text(font: "Cormorant Garamond", weight: "bold")[#"Eng"]
+#text(fill: rgb("#c45c3e"))[#"Acme"]
+#text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
+#list(marker: [#"•"], [#"v2"])
+],
+  block(fill: rgb("#f4e8e4"), inset: 10pt, width: 100%, height: 100%)[
+#text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
+
+#line(length: 100%, stroke: 1pt + accent)
+
+[#"Rust"]
+
+#text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
+
+#line(length: 100%, stroke: 1pt + accent)
+
+[#"Figma"]
+
+#text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Education"]]
+
+#line(length: 100%, stroke: 1pt + accent)
+
+[#"BSc — MIT"]
+])
+
+"
+`;
+
 exports[`modelToTypst — modern > matches the recorded modern snapshot 1`] = `
 "#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))

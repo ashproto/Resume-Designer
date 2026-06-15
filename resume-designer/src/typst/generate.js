@@ -272,7 +272,38 @@ ${mainCell}
   return [preamble(model, t), renderModernGradientHeader(header, t), grid, ''].join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout };
+// Compact layout: sidebar layout SCALED DOWN (smaller fonts, tighter margins/spacing).
+// Mirrors renderResumeCompact in renderer.js + .compact-* in resume.css:
+//   grid-template-columns: 1fr var(--sidebar-width, 2in)  → main LEFT, sidebar RIGHT
+//   compact-main emitted first in HTML → main cell FIRST in Typst source order.
+// Partition: main = summary + experience; sidebar = customs + tools + education.
+// Reduced sizes: base ×0.88, name/tagline ×0.85, sectionGap ×0.75, tighter insets.
+function compactLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  // Scale-down theme for compact sizing (mirrors .compact-* CSS size reductions)
+  const ct = {
+    ...t,
+    baseSizePt:    t.baseSizePt * 0.88,
+    nameSizePt:    t.nameSizePt * 0.85,
+    taglineSizePt: t.taglineSizePt * 0.85,
+    sectionGapPt:  t.sectionGapPt * 0.75,
+  };
+  const mainCell = [...g.summary, ...g.experience]
+    .map((s) => renderSection(s, ct)).filter(Boolean).join('\n\n');
+  const sidebarCell = [...g.customs, ...g.tools, ...g.education]
+    .map((s) => renderSidebarSection(s, ct)).filter(Boolean).join('\n\n');
+  const grid = `#grid(columns: (1fr, ${ct.sidebarWidthIn}in), column-gutter: 12pt,
+  block(inset: (right: 4pt))[
+${mainCell}
+],
+  block(fill: rgb("${ct.sidebarBg}"), inset: 10pt, width: 100%, height: 100%)[
+${sidebarCell}
+])`;
+  return [preamble(model, ct), renderGradientHeader(header, ct), grid, ''].join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;
