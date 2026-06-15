@@ -232,7 +232,47 @@ ${sidebarCell}
   return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout };
+// Modern layout: narrow 1.8in sidebar (left) + main (right), horizontal gradient header
+// (name/tagline on the left, contacts on the right). Mirrors renderResumeModern in
+// renderer.js + .modern-* rules in resume.css (grid-template-columns: 1.8in 1fr; flex-row header).
+// Sidebar partition: customs + tools + education (same as renderSidebar + education in renderer.js).
+// Sidebar cell is emitted first (sidebar-then-main reading order).
+function renderModernGradientHeader(header, t) {
+  const name = renderRuns(childContent(header, 'name'));
+  const tagline = renderRuns(childContent(header, 'tagline'));
+  const contacts = (childOfType(header, 'contactList')?.content ?? [])
+    .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean)
+    .join(' #" • " ');
+  const nameBlock = `#text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]`;
+  const taglineBlock = `#text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]`;
+  const contactBlock = contacts
+    ? `#align(right)[#text(size: ${(8 * t.fontScale).toFixed(2)}pt, fill: white)[${contacts}]]`
+    : '';
+  const leftCell = `[${nameBlock}\n\n${taglineBlock}]`;
+  const rightCell = contactBlock ? `[${contactBlock}]` : '[]';
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: 16pt)[
+  #grid(columns: (1fr, auto), column-gutter: 12pt, ${leftCell}, ${rightCell})
+]`;
+}
+
+function modernLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  const sidebarCell = [...g.customs, ...g.tools, ...g.education]
+    .map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
+  const mainCell = [...g.summary, ...g.experience]
+    .map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
+  const grid = `#grid(columns: (1.8in, 1fr), column-gutter: 14pt,
+  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+${sidebarCell}
+],
+  block(inset: (left: 4pt))[
+${mainCell}
+])`;
+  return [preamble(model, t), renderModernGradientHeader(header, t), grid, ''].join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;

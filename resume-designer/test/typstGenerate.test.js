@@ -138,3 +138,42 @@ describe('modelToTypst — right-sidebar', () => {
     expect(modelToTypst(m, { theme: t, layout: 'right-sidebar' })).toMatchSnapshot();
   });
 });
+
+describe('modelToTypst — modern', () => {
+  const t = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+    summary: 'S.',
+    sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust'] }],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc — MIT'],
+    tools: 'Figma',
+  });
+  it('emits a #grid( and sidebar (Skills, Tools, Education) precedes main (Summary, Experience)', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'modern' });
+    expect(typ).toContain('#grid(');
+    // sidebar titles use renderSidebarSection → #upper[...] so #"Skills" appears in source
+    const iSkills = typ.indexOf('#"Skills"');
+    const iTools  = typ.indexOf('#"Tools"');
+    const iEduc   = typ.indexOf('#"Education"');
+    const iSummary = typ.indexOf('#"Summary"');
+    const iExp    = typ.indexOf('#"Experience"');
+    expect(iSkills).toBeGreaterThanOrEqual(0);
+    expect(iTools).toBeGreaterThanOrEqual(0);
+    expect(iEduc).toBeGreaterThanOrEqual(0);
+    // sidebar content before main content in source order
+    expect(iSkills).toBeLessThan(iSummary);
+    expect(iTools).toBeLessThan(iSummary);
+    expect(iEduc).toBeLessThan(iSummary);
+    expect(iSummary).toBeLessThan(iExp);
+  });
+  it('uses the gradient.linear header', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'modern' })).toContain('gradient.linear');
+  });
+  it('uses 1.8in for the sidebar column width', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'modern' })).toContain('1.8in');
+  });
+  it('matches the recorded modern snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'modern' })).toMatchSnapshot();
+  });
+});
