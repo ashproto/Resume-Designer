@@ -62,11 +62,11 @@ describe('resumeSchema', () => {
     };
     expect(() => validateModel(doc)).not.toThrow();
   });
-  it('doc carries a pageSize attr defaulting to auto', () => {
-    expect(resumeSchema.nodeFromJSON(validDoc).attrs.pageSize).toBe('auto');
+  it('doc carries a pageSize attr defaulting to continuous', () => {
+    expect(resumeSchema.nodeFromJSON(validDoc).attrs.pageSize).toBe('continuous');
   });
-  it('createEmptyModel carries pageSize auto', () => {
-    expect(createEmptyModel().attrs.pageSize).toBe('auto');
+  it('createEmptyModel carries pageSize continuous', () => {
+    expect(createEmptyModel().attrs.pageSize).toBe('continuous');
   });
   it('preserves an explicit pageSize through the schema', () => {
     const doc = { ...validDoc, attrs: { pageSize: 'a4' } };

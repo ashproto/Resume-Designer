@@ -133,12 +133,24 @@ function createStore() {
       return currentVariantId;
     },
 
-    // --- page size (per-document; thin wrappers over the round-tripping get/update) ---
+    // --- page setup (per-document; thin wrappers over the round-tripping get/update) ---
     getPageSize() {
-      return this.get('pageSize') ?? 'auto';
+      return this.get('pageSize') ?? 'continuous';
     },
     setPageSize(value) {
       this.update('pageSize', value);
+    },
+    getOrientation() {
+      return this.get('orientation') ?? 'portrait';
+    },
+    setOrientation(value) {
+      this.update('orientation', value);
+    },
+    getPageWidthIn() {
+      return this.get('pageWidthIn') ?? 8.5;
+    },
+    setPageWidthIn(value) {
+      this.update('pageWidthIn', value);
     },
 
     // --- whole-document set (accepts flat OR model) ---

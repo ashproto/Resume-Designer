@@ -85,8 +85,8 @@ describe('store (model-native)', () => {
     expect(store.updateSilent).toBeUndefined();
   });
 
-  it('getPageSize defaults to auto; setPageSize round-trips through the model', () => {
-    expect(store.getPageSize()).toBe('auto');
+  it('getPageSize defaults to continuous; setPageSize round-trips through the model', () => {
+    expect(store.getPageSize()).toBe('continuous');
     store.setPageSize('a4');
     expect(store.getPageSize()).toBe('a4');
     expect(store.getModel().attrs.pageSize).toBe('a4');

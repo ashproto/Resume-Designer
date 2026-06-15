@@ -181,19 +181,36 @@ describe('experience relevanceRank', () => {
   });
 });
 
-describe('pageSize in the migration', () => {
-  it('defaults pageSize to auto when absent', () => {
-    expect(flatToModel(POPULATED).attrs.pageSize).toBe('auto');
+describe('pageSize / orientation / pageWidthIn in the migration', () => {
+  it('defaults pageSize to continuous when absent', () => {
+    expect(flatToModel(POPULATED).attrs.pageSize).toBe('continuous');
+  });
+  it('migrates a legacy pageSize of "auto" to "continuous"', () => {
+    expect(flatToModel({ ...POPULATED, pageSize: 'auto' }).attrs.pageSize).toBe('continuous');
   });
   it('carries an explicit pageSize into the doc attr', () => {
-    expect(flatToModel({ ...POPULATED, pageSize: 'a4' }).attrs.pageSize).toBe('a4');
+    expect(flatToModel({ ...POPULATED, pageSize: 'tabloid' }).attrs.pageSize).toBe('tabloid');
   });
-  it('round-trips a non-default pageSize losslessly', () => {
-    const sample = { ...POPULATED, pageSize: 'letter' };
+  it('defaults orientation to portrait and pageWidthIn to 8.5', () => {
+    const attrs = flatToModel(POPULATED).attrs;
+    expect(attrs.orientation).toBe('portrait');
+    expect(attrs.pageWidthIn).toBe(8.5);
+  });
+  it('round-trips a non-default page setup losslessly', () => {
+    const sample = { ...POPULATED, pageSize: 'a4', orientation: 'landscape', pageWidthIn: 7.5 };
     expect(modelToFlat(flatToModel(sample))).toEqual(sample);
   });
-  it('omits pageSize from flat output when auto (keeps golden samples clean)', () => {
-    expect('pageSize' in modelToFlat(flatToModel(POPULATED))).toBe(false);
+  it('omits page-setup fields from flat output at their defaults (keeps golden samples clean)', () => {
+    const back = modelToFlat(flatToModel(POPULATED));
+    expect('pageSize' in back).toBe(false);
+    expect('orientation' in back).toBe(false);
+    expect('pageWidthIn' in back).toBe(false);
+  });
+  it('emits only the non-default page-setup fields', () => {
+    const back = modelToFlat(flatToModel({ ...POPULATED, pageWidthIn: 7 }));
+    expect(back).toMatchObject({ pageWidthIn: 7 });
+    expect('pageSize' in back).toBe(false);      // still continuous (default)
+    expect('orientation' in back).toBe(false);   // still portrait (default)
   });
 });
 

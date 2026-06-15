@@ -1,5 +1,6 @@
 import { SCHEMA_VERSION } from './documentModel.js';
 import { parseInlineMarks, serializeInlineMarks } from './inlineMarkdown.js';
+import { normalizePageSize } from './pageSetup.js';
 
 const text = (s) => parseInlineMarks(s);
 const field = (type, s) => ({ type, content: text(s) });
@@ -74,7 +75,9 @@ export function flatToModel(flat) {
       schemaVersion: SCHEMA_VERSION,
       docType: 'resume',
       toolsDisplay: flat.toolsDisplay ?? '',
-      pageSize: flat.pageSize ?? 'auto',
+      pageSize: normalizePageSize(flat.pageSize),
+      orientation: flat.orientation ?? 'portrait',
+      pageWidthIn: Number.isFinite(flat.pageWidthIn) ? flat.pageWidthIn : 8.5,
     },
     content,
   };
@@ -145,13 +148,15 @@ export function modelToFlat(model) {
     }
   }
   if (model.attrs?.toolsDisplay) flat.toolsDisplay = model.attrs.toolsDisplay;
-  if (model.attrs?.pageSize && model.attrs.pageSize !== 'auto') flat.pageSize = model.attrs.pageSize;
+  if (model.attrs?.pageSize && model.attrs.pageSize !== 'continuous') flat.pageSize = model.attrs.pageSize;
+  if (model.attrs?.orientation && model.attrs.orientation !== 'portrait') flat.orientation = model.attrs.orientation;
+  if (Number.isFinite(model.attrs?.pageWidthIn) && model.attrs.pageWidthIn !== 8.5) flat.pageWidthIn = model.attrs.pageWidthIn;
   return flat;
 }
 
 const FLAT_DEFAULTS = {
   name: '', tagline: '', contact: {}, summary: '',
-  sections: [], experience: [], education: [], tools: '', pageSize: 'auto',
+  sections: [], experience: [], education: [], tools: '', pageSize: 'continuous',
 };
 
 // Compute a document model for a stored variant on demand. Pure; persists nothing.

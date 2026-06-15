@@ -16,7 +16,9 @@ export const resumeSchema = new Schema({
         schemaVersion: { default: SCHEMA_VERSION },
         docType: { default: 'resume' },
         toolsDisplay: { default: '' },
-        pageSize: { default: 'auto' },
+        pageSize: { default: 'continuous' },
+        orientation: { default: 'portrait' },
+        pageWidthIn: { default: 8.5 },
       },
     },
     header: {
@@ -96,7 +98,7 @@ export function validateModel(json) {
 export function createEmptyModel() {
   return {
     type: 'doc',
-    attrs: { schemaVersion: SCHEMA_VERSION, docType: 'resume', toolsDisplay: '', pageSize: 'auto' },
+    attrs: { schemaVersion: SCHEMA_VERSION, docType: 'resume', toolsDisplay: '', pageSize: 'continuous', orientation: 'portrait', pageWidthIn: 8.5 },
     content: [{
       type: 'header',
       content: [
