@@ -25,10 +25,11 @@ import { isTauri } from '../native.js';
 pdfjsLib.GlobalWorkerOptions.workerSrc = worker;
 
 const PAGE_SIZE_OPTIONS = [
-  { value: 'auto', label: 'Auto' },
+  { value: 'continuous', label: 'Continuous' },
   { value: 'letter', label: 'Letter' },
   { value: 'a4', label: 'A4' },
   { value: 'legal', label: 'Legal' },
+  { value: 'tabloid', label: 'Tabloid' },
 ];
 
 // Preview state machine: 'idle' | 'loading' | 'ready' | 'error' | 'unavailable'
@@ -36,7 +37,7 @@ const PAGE_SIZE_OPTIONS = [
 export default function TypstExportDialog() {
   const [open, setOpen] = useState(false);
   const [filename, setFilename] = useState('Resume');
-  const [pageSize, setPageSize] = useState('auto');
+  const [pageSize, setPageSize] = useState('continuous');
   // preview state
   const [previewState, setPreviewState] = useState('idle'); // 'idle'|'loading'|'ready'|'error'|'unavailable'
   const [previewError, setPreviewError] = useState('');

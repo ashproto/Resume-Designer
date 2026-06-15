@@ -20,6 +20,7 @@ import { Image as ImageIcon, RotateCcw, Trash2, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Segmented as SegmentedTrack, SegmentedItem } from '@/components/ui/segmented';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
@@ -508,6 +509,8 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
   const [accent, setAccent] = useState(() => getAccentSettings());
   const [photo, setPhoto] = useState(() => getPhotoSettings());
   const [pageSize, setPageSizeState] = useState(() => store.getPageSize());
+  const [orientation, setOrientationState] = useState(() => store.getOrientation());
+  const [pageWidthIn, setPageWidthState] = useState(() => store.getPageWidthIn());
 
   // ----- Derived color values (mirrors vanilla getCurrentColors) -----------
   function getCurrentColors() {
@@ -1316,24 +1319,58 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
           </div>
         </ControlGroup>
 
-        {/* Page size */}
-        <ControlGroup label="Page Size">
-          <Segmented
-            stretch
-            itemClassName="px-1"
-            options={[
-              { value: 'auto', label: 'Auto' },
-              { value: 'letter', label: 'Letter' },
-              { value: 'a4', label: 'A4' },
-              { value: 'legal', label: 'Legal' },
-            ]}
+        {/* Page setup */}
+        <ControlGroup label="Page Setup">
+          <Select
             value={pageSize}
-            onChange={(v) => {
-              setPageSizeState(v);
-              store.setPageSize(v);
-            }}
-          />
-          <p className="text-xs text-muted-foreground">Applies to the exported PDF.</p>
+            onValueChange={(v) => { setPageSizeState(v); store.setPageSize(v); }}
+          >
+            <SelectTrigger className="h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="continuous">Continuous</SelectItem>
+              <SelectItem value="letter">Letter</SelectItem>
+              <SelectItem value="a4">A4</SelectItem>
+              <SelectItem value="legal">Legal</SelectItem>
+              <SelectItem value="tabloid">Tabloid</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {pageSize === 'continuous' ? (
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Width</Label>
+              <Input
+                type="number"
+                step="0.5"
+                min="4"
+                max="24"
+                className="h-8 px-2"
+                value={pageWidthIn}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  if (!Number.isFinite(v)) return;
+                  setPageWidthState(v);
+                  store.setPageWidthIn(v);
+                }}
+              />
+              <span className="text-xs text-muted-foreground">in</span>
+            </div>
+          ) : (
+            <Segmented
+              stretch
+              options={[
+                { value: 'portrait', label: 'Portrait' },
+                { value: 'landscape', label: 'Landscape' },
+              ]}
+              value={orientation}
+              onChange={(v) => { setOrientationState(v); store.setOrientation(v); }}
+            />
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            Continuous is one open-ended page; fixed sizes paginate into sheets.
+          </p>
         </ControlGroup>
       </PanelSection>
 
