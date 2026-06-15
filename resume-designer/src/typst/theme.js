@@ -4,7 +4,7 @@
  * into absolute Typst tokens (pt / in / hex). Service-reading wiring lands in PR 3.4.
  */
 
-import { COLOR_PALETTES } from './palettes.js';
+import { COLOR_PALETTES, generatePaletteFromColor } from './palettes.js';
 import { FONT_PAIRINGS } from '../fontService.js';
 import { escapeTypstString } from './escape.js';
 
@@ -16,7 +16,7 @@ const DEFAULT_PAIRING = 'classic-elegant';
 
 function resolvePalette(colorPalette = 'terracotta', customColor = '#c45c3e') {
   if (colorPalette === 'custom') {
-    return { ...COLOR_PALETTES.terracotta, accent: customColor, accentLight: customColor };
+    return generatePaletteFromColor(customColor);
   }
   return COLOR_PALETTES[colorPalette] ?? COLOR_PALETTES.terracotta;
 }

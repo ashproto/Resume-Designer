@@ -47,6 +47,21 @@ describe('buildTheme', () => {
   });
 });
 
+import { generatePaletteFromColor } from '../src/typst/palettes.js';
+
+describe('buildTheme custom palette', () => {
+  it('derives the full palette from the custom color (not terracotta defaults)', () => {
+    const t = buildTheme({ colorPalette: 'custom', customColor: '#3366cc' });
+    const p = generatePaletteFromColor('#3366cc');
+    expect(t.accent).toBe('#3366cc');
+    expect(t.headerBg).toBe(p.headerBg);
+    expect(t.sidebarBg).toBe(p.sidebarBg);
+    expect(t.headerBgEnd).toBe(p.headerBgEnd);
+    // must NOT be terracotta's bundled background
+    expect(t.sidebarBg).not.toBe('#f4e8e4');
+  });
+});
+
 describe('getSelectedFontFamilies', () => {
   it('returns {} for preset mode (buildTheme resolves the pairing)', () => {
     expect(getSelectedFontFamilies({ mode: 'preset', pairingId: 'classic-elegant' })).toEqual({});
