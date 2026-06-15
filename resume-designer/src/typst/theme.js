@@ -59,6 +59,9 @@ export function buildTheme({
   const remPt = (rem)   => rem * REM_PT * fontScale;
 
   return {
+    // Scale factor (exposed for layout size scaling)
+    fontScale,
+
     // Typography
     fontDisplay:    pairing.display.family,
     fontBody:       pairing.body.family,

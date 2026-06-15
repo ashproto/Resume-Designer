@@ -26,6 +26,11 @@ describe('modelToTypst — preamble & header', () => {
     const typ = modelToTypst(model('auto'), { theme });
     expect(typ).toContain('#strong[#"builder"]'); // bold mark carried on the header tagline
   });
+  it('defaults to the stacked layout and falls back for an unknown layout', () => {
+    const base = modelToTypst(model('auto'), { theme });
+    expect(modelToTypst(model('auto'), { theme, layout: 'stacked' })).toBe(base);
+    expect(modelToTypst(model('auto'), { theme, layout: 'nope' })).toBe(base); // unknown → stacked
+  });
 });
 
 describe('modelToTypst — blocks, sections, stacked', () => {

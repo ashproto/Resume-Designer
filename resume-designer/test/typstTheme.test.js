@@ -27,4 +27,8 @@ describe('buildTheme', () => {
     const t = buildTheme({ colorPalette: 'custom', customColor: '#123456' });
     expect(t.accent).toBe('#123456');
   });
+  it('exposes fontScale for layout size scaling', () => {
+    expect(buildTheme({}).fontScale).toBe(1);
+    expect(buildTheme({ spacing: { fontScale: 1.5 } }).fontScale).toBe(1.5);
+  });
 });

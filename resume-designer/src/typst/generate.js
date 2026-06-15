@@ -114,9 +114,30 @@ function renderSection(section, t) {
   ].join('\n\n');
 }
 
-export function modelToTypst(model, { theme } = {}) {
+function stackedLayout(model, theme) {
   const nodes = model.content ?? [];
   const header = nodes.find((n) => n.type === 'header');
   const sections = nodes.filter((n) => n.type === 'section').map((s) => renderSection(s, theme));
   return [preamble(model, theme), renderHeader(header, theme), ...sections, ''].join('\n\n');
+}
+
+// Bucket sections by kind, preserving model order within each bucket.
+// eslint-disable-next-line no-unused-vars
+function groupSections(model) {
+  const sections = (model.content ?? []).filter((n) => n.type === 'section');
+  const byKind = (k) => sections.filter((s) => s.attrs?.sectionKind === k);
+  return {
+    summary: byKind('summary'),
+    customs: byKind('custom'),
+    experience: byKind('experience'),
+    education: byKind('education'),
+    tools: byKind('tools'),
+  };
+}
+
+const LAYOUTS = { stacked: stackedLayout };
+
+export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
+  const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;
+  return fn(model, theme);
 }
