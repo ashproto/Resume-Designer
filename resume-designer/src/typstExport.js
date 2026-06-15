@@ -7,10 +7,6 @@ import { buildTheme } from './typst/theme.js';
 import { modelToTypst } from './typst/generate.js';
 import { typstRenderPreview, typstExportPdf, pickPdfSavePath } from './native.js';
 
-// Résumé layouts that export via the Typst generator. As of PR 3.8 this covers
-// all 11 layouts; any id NOT in this Set falls back to capture (none today).
-export const TYPST_LAYOUTS = new Set(['sidebar', 'stacked', 'classic', 'right-sidebar', 'modern', 'compact', 'stacked-vertical', 'executive', 'classic-featured', 'timeline', 'creative']);
-
 function resumeTheme() {
   const s = getSettings();
   return buildTheme({

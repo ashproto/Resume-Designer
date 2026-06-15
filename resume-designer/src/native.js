@@ -36,7 +36,7 @@ let _appInfoCache = null;
 //
 // `@tauri-apps/plugin-fs` is intentionally NOT loaded here. No renderer
 // code reads or writes via fs anymore — PDF export goes through the
-// dedicated Rust commands (pick_pdf_save_path + capture_pdf_from_window),
+// dedicated Rust command (pick_pdf_save_path),
 // JSON/Markdown import/export use the browser's File API and `<a download>`.
 // Keeping fs out of the renderer means a compromised script can't reach
 // the filesystem even if `@tauri-apps/plugin-fs` were re-introduced in
@@ -471,34 +471,6 @@ export async function pickPdfSavePath(defaultName = 'Resume.pdf') {
   if (!isTauri) return null;
   const { core } = await tauri();
   return await core.invoke('pick_pdf_save_path', { defaultName });
-}
-
-/**
- * Invoke the Rust capture command against a SPECIFIC window's web view
- * (identified by label). Used by pdf.js after spawning a hidden print window
- * at `/print.html` and receiving its `print-ready` event.
- *
- * Notice there is NO `savePath` parameter: the destination path is bound
- * server-side by the prior `pickPdfSavePath` call (which stashes the
- * user-confirmed path in Rust state). This prevents the renderer from
- * writing PDFs to arbitrary filesystem locations even under XSS / a
- * compromised dependency.
- *
- * - `pageSize` (inches) is consumed by the Windows WebView2 PrintToPdfAsync path.
- * - `captureRect` (CSS pixels, doc-relative; in the new flow the print window
- *   anchors the resume at origin so x/y are always 0) is consumed by the
- *   macOS WKWebView createPDF path.
- */
-export async function capturePdfFromWindow(windowLabel, pageSize = null, captureRect = null) {
-  if (!isTauri) {
-    return { success: false, error: 'Native PDF generation not available in browser' };
-  }
-  const { core } = await tauri();
-  return await core.invoke('capture_pdf_from_window', {
-    windowLabel,
-    pageSize,
-    captureRect,
-  });
 }
 
 /**
