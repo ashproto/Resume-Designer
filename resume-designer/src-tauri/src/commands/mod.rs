@@ -36,6 +36,11 @@ pub mod storage;
 #[cfg(desktop)]
 pub mod updater;
 
+// Desktop-only: Typst → PDF compilation backed by bundled fonts.
+// `typst-as-lib` / `typst-pdf` are cfg(not(android, ios)) dependencies.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod typst_compile;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
