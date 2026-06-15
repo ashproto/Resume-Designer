@@ -1,0 +1,43 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`modelToTypst — blocks, sections, stacked > matches the recorded stacked snapshot 1`] = `
+"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+#set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
+#set par(leading: 0.450em, justify: false)
+#let accent = rgb("#c45c3e")
+
+#text(font: "Cormorant Garamond", size: 27pt, weight: "bold")[#"Ada"]
+
+#text(size: 11.399999999999999pt, fill: rgb("#6b6560"))[#"P"]
+
+#text(fill: rgb("#6b6560"))[#"a@x.com"]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"Led "#emph[#"growth"]#"."]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Skills"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"Rust" #h(0.6em) #"Go"]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+#text(font: "Cormorant Garamond", weight: "bold")[#"Eng"]
+#text(fill: rgb("#c45c3e"))[#"Acme"]
+#text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
+#list(marker: [#"•"], [#"Shipped v2."])
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Tools"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"Figma" #h(0.6em) #"git"]
+
+"
+`;

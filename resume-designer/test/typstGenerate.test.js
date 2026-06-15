@@ -27,3 +27,36 @@ describe('modelToTypst — preamble & header', () => {
     expect(typ).toContain('#strong[#"builder"]'); // bold mark carried on the header tagline
   });
 });
+
+describe('modelToTypst — blocks, sections, stacked', () => {
+  const full = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+    summary: 'Led _growth_.',
+    sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust', 'Go'] }],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['Shipped v2.'] }],
+    tools: 'Figma • git',
+  });
+  it('preserves model reading order (name → Skills → Experience → Tools)', () => {
+    const typ = modelToTypst(m, { theme: full });
+    const iName = typ.indexOf('#"Ada"');
+    const iSkills = typ.indexOf('#"Skills"');
+    const iExp = typ.indexOf('#"Experience"');
+    const iTools = typ.indexOf('#"Tools"');
+    expect(iName).toBeGreaterThanOrEqual(0);
+    expect(iName).toBeLessThan(iSkills);
+    expect(iSkills).toBeLessThan(iExp);
+    expect(iExp).toBeLessThan(iTools);
+  });
+  it('renders a bulletList as a Typst #list', () => {
+    expect(modelToTypst(m, { theme: full })).toContain('#list(');
+  });
+  it('renders a tagGroup (skills/tools) as joined tags', () => {
+    const typ = modelToTypst(m, { theme: full });
+    expect(typ).toContain('#"Rust"');
+    expect(typ).toContain('#"Go"');
+  });
+  it('matches the recorded stacked snapshot', () => {
+    expect(modelToTypst(m, { theme: full })).toMatchSnapshot();
+  });
+});

@@ -51,8 +51,72 @@ function renderHeader(header, t) {
   ].filter((s) => s !== '').join('\n\n');
 }
 
+// --- block renderers ---
+
+const blocksOf = (node) => (node?.content ?? []);
+
+function renderBullets(listNode, t) {
+  const items = (listNode.content ?? [])
+    .filter((li) => li.type === 'listItem')
+    .map((li) => `[${renderRuns((li.content?.[0]?.content) ?? [])}]`);
+  return items.length
+    ? `#list(marker: [${t.bulletChar ? `#"${t.bulletChar}"` : ''}], ${items.join(', ')})`
+    : '';
+}
+
+function renderTags(tagGroup) {
+  return (tagGroup.content ?? [])
+    .filter((n) => n.type === 'tag')
+    .map((tg) => renderRuns(tg.content))
+    .filter(Boolean)
+    .join(' #h(0.6em) ');
+}
+
+// Mirror renderResumeStacked / resume.css experience-item:
+//   .experience-title  → font-display, weight bold (resume.css line 399–404)
+//   .experience-company → accent color (resume.css line 407–410)
+//   .experience-dates   → muted, italic (resume.css line 414–419)
+function renderExperienceItem(it, t) {
+  const parts = [
+    `#text(font: "${t.fontDisplay}", weight: "bold")[${renderRuns(childContent(it, 'jobTitle'))}]`,
+    `#text(fill: rgb("${t.accent}"))[${renderRuns(childContent(it, 'company'))}]`,
+    `#text(style: "italic", fill: rgb("${t.mutedColor}"))[${renderRuns(childContent(it, 'dates'))}]`,
+  ];
+  const bl = childOfType(it, 'bulletList');
+  if (bl) parts.push(renderBullets(bl, t));
+  return parts.join('\n');
+}
+
+function renderBlock(node, t) {
+  switch (node.type) {
+    case 'paragraph':      return `[${renderRuns(node.content)}]`;
+    case 'bulletList':     return renderBullets(node, t);
+    case 'tagGroup':       return `[${renderTags(node)}]`;
+    case 'experienceItem': return renderExperienceItem(node, t);
+    case 'educationItem':  return `[${renderRuns(node.content)}]`;
+    default: return '';
+  }
+}
+
+// Mirror resume.css .section-title:
+//   font-display, weight bold, accent color, followed by a full-width accent rule
+//   (resume.css lines 299–323: border-bottom + ::after in accent color, full-width in stacked)
+function renderSection(section, t) {
+  const heading = renderRuns(childContent(section, 'heading'));
+  const body = blocksOf(section)
+    .filter((n) => n.type !== 'heading')
+    .map((b) => renderBlock(b, t))
+    .filter(Boolean);
+  return [
+    `#text(font: "${t.fontDisplay}", weight: "bold", fill: accent)[${heading}]`,
+    '#line(length: 100%, stroke: 0.5pt + accent)',
+    ...body,
+  ].join('\n\n');
+}
+
 export function modelToTypst(model, { theme } = {}) {
-  const header = (model.content ?? []).find((n) => n.type === 'header');
-  // Sections are added in Task 5; for now emit preamble + header.
-  return [preamble(model, theme), renderHeader(header, theme), ''].join('\n\n');
+  const nodes = model.content ?? [];
+  const header = nodes.find((n) => n.type === 'header');
+  const sections = nodes.filter((n) => n.type === 'section').map((s) => renderSection(s, theme));
+  return [preamble(model, theme), renderHeader(header, theme), ...sections, ''].join('\n\n');
 }
