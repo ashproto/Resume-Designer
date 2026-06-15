@@ -236,17 +236,17 @@ exports[`modelToTypst — executive > matches the recorded executive snapshot 1`
 
 [#"Rust"]
 
-#text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Education"]]
-
-#line(length: 100%, stroke: 1pt + accent)
-
-[#"BSc — MIT"]
-
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
 [#"Figma"]
+
+#text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Education"]]
+
+#line(length: 100%, stroke: 1pt + accent)
+
+[#"BSc — MIT"]
 ])"
 `;
 

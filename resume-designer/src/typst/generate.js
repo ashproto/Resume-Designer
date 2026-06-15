@@ -387,8 +387,8 @@ function executiveLayout(model, t) {
   // Main cell: experience labeled "Professional Experience" (via renderClassicSection).
   const mainCell = g.experience.map((s) => renderClassicSection(s, t)).filter(Boolean).join('\n\n');
 
-  // Side cell: customs + education + tools rendered as sidebar sections.
-  const sideCell = [...g.customs, ...g.education, ...g.tools]
+  // Side cell: customs + tools + education (matches the renderer + modern/compact order).
+  const sideCell = [...g.customs, ...g.tools, ...g.education]
     .map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
 
   const grid = `#grid(columns: (1fr, 2.2in), column-gutter: 14pt,
