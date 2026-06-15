@@ -1,9 +1,6 @@
 // React entry for the app chrome. Replaces the vanilla src/main.js as the
 // index.html script. Renders <App/>, which hosts the still-vanilla chrome
 // skeleton and boots it via init(), and mounts the Sonner toaster.
-//
-// The hidden PDF-capture window uses a separate framework-free entry
-// (print.html / src/printEntry.js) so React never loads in the capture graph.
 import '@fontsource/geist-sans/400.css';
 import '@fontsource/geist-sans/500.css';
 import '@fontsource/geist-sans/600.css';

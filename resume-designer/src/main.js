@@ -32,8 +32,6 @@ import {
   saveSettings,
   getSettings,
   SETTINGS_UPDATED_EVENT,
-  getCurrentVariantId,
-  getVariants,
   importFullBackupFromEnvelope,
 } from './persistence.js';
 import {
@@ -50,7 +48,7 @@ import { initJobDescriptions } from './jobDescriptions.js';
 import { openUserProfilePanel } from './userProfilePanel.js';
 import { shouldShowOnboarding, showOnboardingWizard } from './onboarding.js';
 import { initFontService } from './fontService.js';
-import { initHeaderStyleService, applyHeaderStyle, getHeaderStyleSettings } from './headerStyleService.js';
+import { applyHeaderStyle, getHeaderStyleSettings } from './headerStyleService.js';
 import { initSpacingService, applySpacingSettings, getSpacingSettings, saveSpacingSettings } from './spacingService.js';
 import { initAccentService } from './accentService.js';
 import { initPhotoService } from './photoService.js';
@@ -142,7 +140,7 @@ async function maybeAutoMigrateLegacyData() {
 /**
  * Non-blocking "your data was imported" toast. Reuses the existing
  * `.update-status-toast` class so it inherits styling, dark-mode
- * support, and the print-mode hide rule.
+ * support.
  *
  * `result` is optional; when present and `result.historySkipped > 0`,
  * the toast appends a second sentence noting how many undo/redo
@@ -196,9 +194,6 @@ export async function init() {
   // next save overwrites the migrated data. The finally keeps the gate
   // deadlock-proof: both steps swallow their own failures internally, and
   // even an unexpected throw still opens the gate on whatever state we have.
-  //
-  // (Print-mode is a separate framework-free entry — print.html /
-  // src/printEntry.js — so the main window never short-circuits here.)
   try {
     await initAppStorage();
     await maybeAutoMigrateLegacyData();
@@ -314,9 +309,9 @@ export async function init() {
   // the updater->toast bridge here too, BEFORE startupUpdateCheck() below, so it
   // catches startup status events. The bridge is loaded lazily because
   // updateFlow.js statically imports sonner (which pulls React) and main.js is
-  // shared with the React-free print entry (printEntry.js -> initPrintMode);
-  // a static import here would drag react/sonner into the print window's
-  // static chunk graph. init() only runs in the main window.
+  // updateFlow.js statically imports sonner (which pulls React); a lazy import
+  // here keeps react/sonner out of the initial parse cost. init() only runs
+  // in the main window.
   initVariants(handleVariantChange);
   const { initUpdateFlow } = await import('./updateFlow.js');
   initUpdateFlow();
@@ -438,142 +433,6 @@ export async function init() {
   // once so any chat UI that somehow captured pre-init storage state (in an
   // unforeseen mount order) re-reads and heals. Harmless no-op otherwise.
   refreshChatPanel();
-}
-
-/**
- * Print-mode init for the hidden child window pdf.js spawns at `/print.html`.
- *
- * Runs ONLY the minimum needed to render the active variant's resume:
- * design services (fonts/spacing/accent/photo/headerStyle) and the renderer
- * itself, with no chat panel / structure panel / undo-redo / onboarding /
- * autoupdate. Applies `html.pdf-export-mode` so the resume sits at the
- * document origin with no surrounding chrome (the chrome elements are still
- * in the DOM from index.html but get `display: none`).
- *
- * When layout is settled and fonts are ready, emits a global Tauri event
- * `print-ready` carrying the resume's measured bounds. pdf.js (running in
- * the main window) listens for this, then invokes the Rust capture command.
- *
- * On any failure, emits `print-error` so the main window can surface a
- * meaningful error instead of timing out.
- */
-export async function initPrintMode() {
-  // Resolve this print window's own label so every event we emit can be
-  // tagged with it. Each PDF export uses a unique label (e.g.
-  // `pdf-print-1716234567890`); the main window's listener uses that label
-  // to filter — otherwise two overlapping exports could cross-resolve and
-  // capture the wrong window's `print-ready`.
-  let printLabel = '';
-  try {
-    const winMod = await import('@tauri-apps/api/window');
-    printLabel = winMod.getCurrentWindow().label;
-  } catch (e) {
-    console.warn('[PrintMode] could not resolve own window label:', e);
-  }
-
-  // Step emitter: lets the main-window pdf.js see exactly where we are in
-  // the print-mode boot sequence. Each step is a global Tauri event the
-  // main window listens for and console.logs. Critical for debugging when
-  // print-ready never fires — pinpoints the hanging step instead of timing
-  // out blindly.
-  let emit;
-  const step = async (name, extra = {}) => {
-    try {
-      if (!emit) {
-        const mod = await import('@tauri-apps/api/event');
-        emit = mod.emit;
-      }
-      await emit('print-step', { label: printLabel, step: name, ...extra });
-    } catch (e) {
-      console.warn('[PrintMode] step emit failed:', name, e);
-    }
-  };
-
-  try {
-    await step('started');
-    document.documentElement.classList.add('pdf-export-mode');
-    await step('class-applied');
-
-    // Load saved palette/layout settings.
-    const settings = getSettings();
-    currentPalette = settings.colorPalette || 'terracotta';
-    currentLayout = settings.layout || 'sidebar';
-    customColor = settings.customColor || '#c45c3e';
-    await step('settings-loaded', { palette: currentPalette, layout: currentLayout });
-
-    // Init only the services that affect resume rendering. No chat, no
-    // header bar, no structure panel, no undo/redo, no onboarding — those
-    // would mount UI we don't need and might fire network calls.
-    initTheme();
-    await initFontService();
-    initSpacingService();
-    initAccentService();
-    initPhotoService();
-    initHeaderStyleService();
-    await step('services-inited');
-
-    // Load the currently active variant's data into the store so the
-    // renderer can read it. skipSave=true because this is a read-only
-    // render — we don't want to mutate stored data from the print window.
-    const variantId = getCurrentVariantId();
-    const variants = getVariants();
-    const variant = variantId ? variants[variantId] : null;
-    if (variant?.data) {
-      store.setData(variant.data, true, variantId);
-    }
-    await step('data-loaded', { variantId, hasData: !!variant?.data });
-
-    // Render the resume into #resume (defined in index.html).
-    renderCurrentResume();
-    await step('rendered');
-
-    // Wait for fonts and layout to settle — same logic pdf.js used to do
-    // around its capture, now living here in the print window.
-    if (document.fonts && document.fonts.ready) {
-      await document.fonts.ready;
-    }
-    await step('fonts-ready');
-
-    const resumeEl = document.getElementById('resume');
-    if (!resumeEl) {
-      throw new Error('Print window: #resume not found after renderCurrentResume');
-    }
-    // Force synchronous layout. `offsetHeight` triggers a reflow so
-    // getBoundingClientRect() below sees up-to-date geometry. We deliberately
-    // DON'T use requestAnimationFrame here: this window lives off-screen
-    // (x=-10000, y=-10000) and macOS does not run the compositor for
-    // windows positioned outside any display, so rAF callbacks never fire.
-    // A small setTimeout is enough — fonts.ready has already resolved above,
-    // so there's nothing async left to wait on; the 50ms is just a safety
-    // margin for any pending microtask work.
-    void resumeEl.offsetHeight;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await step('layout-settled');
-
-    const bounds = resumeEl.getBoundingClientRect();
-    await step('measured', { width: bounds.width, height: bounds.height });
-
-    // Emit print-ready globally. Main window's pdf.js is the listener; it
-    // filters on `label` so overlapping exports don't cross-resolve.
-    await emit('print-ready', {
-      label: printLabel,
-      width: bounds.width,
-      height: bounds.height,
-    });
-  } catch (err) {
-    console.error('[PrintMode] init failed:', err);
-    await step('error', { error: err?.message ?? String(err) });
-    try {
-      if (!emit) {
-        const mod = await import('@tauri-apps/api/event');
-        emit = mod.emit;
-      }
-      await emit('print-error', {
-        label: printLabel,
-        error: err?.message ?? String(err),
-      });
-    } catch (_) { /* swallow */ }
-  }
 }
 
 // Handle variant change from header bar
@@ -1201,5 +1060,4 @@ function renderCurrentResume() {
   updateTextToolbarState();
 }
 
-// init() is invoked by the React entry (src/main.jsx -> App.jsx) after mount;
-// the print window (src/printEntry.js) calls initPrintMode() directly.
+// init() is invoked by the React entry (src/main.jsx -> App.jsx) after mount.

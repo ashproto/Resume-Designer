@@ -9,8 +9,8 @@ const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   // React powers the app chrome (entry becomes src/main.jsx in Step 4). The
-  // resume document and the hidden PDF print window stay vanilla. The plugin
-  // provides the JSX transform + Fast Refresh.
+  // resume document stays vanilla. The plugin provides the JSX transform +
+  // Fast Refresh.
   plugins: [react()],
   // `@` -> src/ so shadcn's generated `@/components/ui/*` and `@/lib/utils`
   // imports resolve. Mirrors jsconfig.json `paths`.
@@ -21,8 +21,6 @@ export default defineConfig({
     // "Invalid hook call". (Rollup already dedupes for `vite build`.)
     dedupe: ['react', 'react-dom'],
   },
-  // NOTE: the second `print.html` rollup input is added in Step 4 (when the
-  // file exists) to keep the PDF-capture window React-free.
   root: '.',
   publicDir: 'public',
   // Expose Tauri's build-time env (TAURI_ENV_PLATFORM, etc.) to the bundle so
@@ -39,12 +37,10 @@ export default defineConfig({
     emptyOutDir: true,
     // Tauri's webview baseline supports modern JS.
     target: 'es2021',
-    // Two entries: the React app shell (index.html) and the framework-free
-    // PDF-capture window (print.html), each with its own hashed asset graph.
+    // Single entry: the React app shell (index.html).
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        print: fileURLToPath(new URL('./print.html', import.meta.url)),
       },
     },
   },
