@@ -363,3 +363,43 @@ describe('modelToTypst — stacked-vertical', () => {
     expect(modelToTypst(m, { theme: t, layout: 'stacked-vertical' })).toMatchSnapshot();
   });
 });
+
+describe('modelToTypst — timeline', () => {
+  const t = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },
+    summary: 'First programmer.',
+    sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust'] }],
+    experience: [{ id: 'e', title: 'Collaborator', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc'],
+    tools: 'Figma',
+  });
+
+  it('emits a 2-column #grid(', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'timeline' })).toContain('#grid(');
+  });
+
+  it('draws a dot (#circle) and a left-stroke rail for the experience section', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'timeline' });
+    expect(typ).toContain('#circle(');
+    expect(typ).toContain('stroke: (left:');
+  });
+
+  it('reads main-then-sidebar in source order (Summary → Experience → sidebar Skills)', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'timeline' });
+    const at = (s) => typ.indexOf(s);
+    expect(at('#"Summary"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Experience"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Skills"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Summary"')).toBeLessThan(at('#"Experience"'));
+    expect(at('#"Experience"')).toBeLessThan(at('#"Skills"'));
+  });
+
+  it('uses a gradient (not solid) header', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'timeline' })).toContain('gradient.linear');
+  });
+
+  it('matches the recorded timeline snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'timeline' })).toMatchSnapshot();
+  });
+});

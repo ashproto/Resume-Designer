@@ -402,7 +402,56 @@ ${sideCell}
   return [preamble(model, t), renderGradientHeader(header, t), summaryBlock, grid, ''].filter(Boolean).join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout, executive: executiveLayout, 'classic-featured': classicFeaturedLayout };
+// Timeline experience section: heading + accent rule, then a continuous accent
+// rail. The rail is one #block with a left stroke; each experience item is a
+// child block that #place()s its dot (#circle) out-of-flow onto the rail (the
+// dot overflows left into the inset — no dynamic-height math needed).
+// Mirrors .timeline-container/.timeline-marker/.timeline-dot/.timeline-line +
+// renderTimelineExperience (renderer.js).
+function renderTimelineSection(section, t) {
+  const heading = renderRuns(childContent(section, 'heading'));
+  const items = blocksOf(section).filter((n) => n.type === 'experienceItem');
+  const rail = items
+    .map((it) => `block(width: 100%)[
+#place(top + left, dx: -18pt, dy: 2pt)[#circle(radius: 3.5pt, fill: accent)]
+${renderExperienceItem(it, t)}
+]`)
+    .join(',\n');
+  return [
+    `#text(font: "${t.fontDisplay}", weight: "bold", fill: accent)[${heading}]`,
+    '#line(length: 100%, stroke: 0.5pt + accent)',
+    `#block(width: 100%, inset: (left: 14pt), stroke: (left: 1.5pt + accent))[
+#stack(spacing: 10pt,
+${rail}
+)
+]`,
+  ].join('\n\n');
+}
+
+// Timeline layout: gradient header, main-left (1fr) / sidebar-right grid (same
+// shape as right-sidebar). Main = summary + experience-as-timeline + education;
+// sidebar = customs + tools. Mirrors renderResumeTimeline + .timeline-* CSS.
+function timelineLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  const mainCell = [
+    ...g.summary.map((s) => renderSection(s, t)),
+    ...g.experience.map((s) => renderTimelineSection(s, t)),
+    ...g.education.map((s) => renderSection(s, t)),
+  ].filter(Boolean).join('\n\n');
+  const sidebarCell = [...g.customs, ...g.tools]
+    .map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
+  const grid = `#grid(columns: (1fr, ${t.sidebarWidthIn}in), column-gutter: 14pt,
+  block(inset: (right: 4pt))[
+${mainCell}
+],
+  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+${sidebarCell}
+])`;
+  return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout, executive: executiveLayout, 'classic-featured': classicFeaturedLayout, timeline: timelineLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;
