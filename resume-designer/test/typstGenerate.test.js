@@ -65,3 +65,31 @@ describe('modelToTypst — blocks, sections, stacked', () => {
     expect(modelToTypst(m, { theme: full })).toMatchSnapshot();
   });
 });
+
+describe('modelToTypst — sidebar', () => {
+  const theme2 = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+    summary: 'S.', sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust', 'Go'] }],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    tools: 'Figma • git',
+  });
+  it('emits a grid and puts the sidebar (Skills, Tools) before main (Summary, Experience)', () => {
+    const typ = modelToTypst(m, { theme: theme2, layout: 'sidebar' });
+    expect(typ).toContain('#grid(');
+    const iSkills = typ.indexOf('#"Skills"');
+    const iTools = typ.indexOf('#"Tools"');
+    const iSummary = typ.indexOf('#"Summary"');
+    const iExp = typ.indexOf('#"Experience"');
+    expect(iSkills).toBeGreaterThanOrEqual(0);
+    expect(iSkills).toBeLessThan(iSummary);
+    expect(iTools).toBeLessThan(iSummary);
+    expect(iSummary).toBeLessThan(iExp);
+  });
+  it('uses the gradient header fill', () => {
+    expect(modelToTypst(m, { theme: theme2, layout: 'sidebar' })).toContain('gradient.linear');
+  });
+  it('matches the recorded sidebar snapshot', () => {
+    expect(modelToTypst(m, { theme: theme2, layout: 'sidebar' })).toMatchSnapshot();
+  });
+});

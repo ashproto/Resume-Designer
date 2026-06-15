@@ -122,7 +122,6 @@ function stackedLayout(model, theme) {
 }
 
 // Bucket sections by kind, preserving model order within each bucket.
-// eslint-disable-next-line no-unused-vars
 function groupSections(model) {
   const sections = (model.content ?? []).filter((n) => n.type === 'section');
   const byKind = (k) => sections.filter((s) => s.attrs?.sectionKind === k);
@@ -135,7 +134,50 @@ function groupSections(model) {
   };
 }
 
-const LAYOUTS = { stacked: stackedLayout };
+// Gradient header (white text on linear-gradient background) — mirrors
+// resume.css: linear-gradient(135deg, var(--header-bg), var(--header-bg-end)) with white text.
+function renderGradientHeader(header, t) {
+  const name = renderRuns(childContent(header, 'name'));
+  const tagline = renderRuns(childContent(header, 'tagline'));
+  const contacts = (childOfType(header, 'contactList')?.content ?? [])
+    .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean)
+    .join(' #" • " ');
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: 16pt)[
+  #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
+
+  #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
+${contacts ? `\n  #text(size: ${(8 * t.fontScale).toFixed(2)}pt, fill: white)[${contacts}]` : ''}
+]`;
+}
+
+// Sidebar section: h3-style title — display font, uppercase, accent, smaller.
+// Mirrors resume.css .sidebar-title: font-display, 0.8rem, uppercase, accent, accent border-bottom.
+function renderSidebarSection(section, t) {
+  const heading = renderRuns(childContent(section, 'heading'));
+  const body = (section.content ?? []).filter((n) => n.type !== 'heading').map((b) => renderBlock(b, t)).filter(Boolean);
+  return [
+    `#text(font: "${t.fontDisplay}", size: ${(0.8 * 12 * t.fontScale).toFixed(2)}pt, weight: "bold", fill: accent)[#upper[${heading}]]`,
+    '#line(length: 100%, stroke: 1pt + accent)',
+    ...body,
+  ].join('\n\n');
+}
+
+function sidebarLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  const sidebarCell = [...g.customs, ...g.tools].map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
+  const mainCell = [...g.summary, ...g.experience, ...g.education].map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
+  const grid = `#grid(columns: (${t.sidebarWidthIn}in, 1fr), column-gutter: 14pt,
+  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+${sidebarCell}
+],
+  block(inset: (left: 4pt))[
+${mainCell}
+])`;
+  return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;
