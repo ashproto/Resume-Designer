@@ -80,7 +80,7 @@ export const POPULAR_GOOGLE_FONTS = [
   { family: 'Libre Baskerville', category: 'serif', weights: [400, 700] },
   { family: 'IBM Plex Serif', category: 'serif', weights: [300, 400, 500, 600, 700] },
   { family: 'Crimson Text', category: 'serif', weights: [400, 600, 700] },
-  { family: 'Source Serif Pro', category: 'serif', weights: [400, 600, 700] },
+  { family: 'Source Serif 4', category: 'serif', weights: [400, 600, 700] },
   { family: 'PT Serif', category: 'serif', weights: [400, 700] },
   { family: 'Bitter', category: 'serif', weights: [400, 500, 600, 700] },
   

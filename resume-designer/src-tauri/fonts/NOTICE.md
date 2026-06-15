@@ -32,6 +32,32 @@ Full license text: `OFL.txt` in this directory.
   a modification the OFL expressly permits for fonts without a reserved name.
 - Poppins — Indian Type Foundry, Jonny Pinhorn
 - Work Sans — Wei Huang
+- Crimson Text — Sebastian Kosch (latin subset via gwfh)
+- Source Serif 4 — Adobe Systems (formerly "Source Serif Pro"; renamed in v4; latin subset
+  via gwfh; no Reserved Font Name)
+- Bitter — Solmatas (latin subset via gwfh). The OFL-1.1 reserves the name "Bitter Pro",
+  NOT "Bitter", so a subset embedding "Bitter" as the family name is fully compliant.
+  regular + italic + 700; gwfh files embed nameID1 as "Bitter Thin" (variable-font
+  artifact) but Typst resolves the "Bitter" family correctly via its weight-suffix
+  stripping.)
+- Montserrat — Julieta Ulanovsky (latin subset via gwfh; no Reserved Font Name). Same
+  variable-font nameID1 artifact as Bitter ("Montserrat Thin"); Typst resolves "Montserrat"
+  correctly. regular + italic + 700.
+- Rubik — Hubert and Fischer, Meir Sadan (latin subset via gwfh; no Reserved Font Name).
+  Same nameID1 artifact ("Rubik Light"); Typst resolves "Rubik" correctly.
+  regular + italic + 700.
+- Bebas Neue — Ryoichi Tsunekawa / Dharma Type (latin subset via gwfh; no Reserved Font
+  Name; regular-only — no italic or bold variant exists for this display font).
+- PT Serif — ParaType Ltd. Has Reserved Font Names "PT Sans", "PT Serif", and "ParaType",
+  so it is bundled UNMODIFIED as the upstream static TTFs (PT_Serif-Web-Regular.ttf,
+  PT_Serif-Web-Bold.ttf, PT_Serif-Web-Italic.ttf) from github.com/google/fonts — they
+  cannot be subsetted or name-edited without violating the OFL reserved-name clause.
+- Abril Fatface — TypeTogether. Has Reserved Font Names "Abril" and "Abril Fatface", so
+  it is bundled UNMODIFIED as the upstream static TTF (AbrilFatface-Regular.ttf) from
+  github.com/google/fonts. Regular-only display font.
+- Righteous — Brian J. Bonislawsky / Astigmatic. Has Reserved Font Name "Righteous", so
+  it is bundled UNMODIFIED as the upstream static TTF (Righteous-Regular.ttf) from
+  github.com/google/fonts. Regular-only display font.
 
 ## Apache License 2.0
 
