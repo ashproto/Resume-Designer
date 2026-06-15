@@ -35,9 +35,9 @@ let _appInfoCache = null;
 // branch never tries to resolve `@tauri-apps/*` packages.
 //
 // `@tauri-apps/plugin-fs` is intentionally NOT loaded here. No renderer
-// code reads or writes via fs anymore — PDF export goes through the
-// dedicated Rust command (pick_pdf_save_path),
-// JSON/Markdown import/export use the browser's File API and `<a download>`.
+// code reads or writes via fs anymore — PDF export goes through the dedicated
+// Rust command (pick_pdf_save_path); JSON/Markdown import/export use the
+// browser's File API and `<a download>`.
 // Keeping fs out of the renderer means a compromised script can't reach
 // the filesystem even if `@tauri-apps/plugin-fs` were re-introduced in
 // Cargo without a matching capability.
