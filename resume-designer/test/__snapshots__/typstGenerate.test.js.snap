@@ -42,6 +42,56 @@ exports[`modelToTypst — blocks, sections, stacked > matches the recorded stack
 "
 `;
 
+exports[`modelToTypst — classic > matches the recorded classic snapshot 1`] = `
+"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+#set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
+#set par(leading: 0.450em, justify: false)
+#let accent = rgb("#c45c3e")
+
+#block(width: 100%, fill: rgb("#2d2a26"), inset: 16pt)[#align(center)[
+  #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada"]
+
+  #text(size: 11.399999999999999pt, fill: white)[#"P"]
+
+  #text(size: 8.00pt, fill: white)[#"a@x.com"]
+]]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Professional Summary"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"S."]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Professional Experience"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+#text(font: "Cormorant Garamond", weight: "bold")[#"Eng"]
+#text(fill: rgb("#c45c3e"))[#"Acme"]
+#text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
+#list(marker: [#"•"], [#"v2"])
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Education"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"BSc — MIT — 2018"]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Skills"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"Rust"]
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Tools"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"Figma"]
+
+"
+`;
+
 exports[`modelToTypst — sidebar > matches the recorded sidebar snapshot 1`] = `
 "#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))

@@ -177,7 +177,47 @@ ${mainCell}
   return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout };
+// Classic layout: solid centered header (no gradient), single column ordered
+// summary → experience → education → custom sections → tools.
+// Mirrors renderResumeClassic in renderer.js + .classic-header in resume.css:923-929.
+
+const CLASSIC_LABELS = { summary: 'Professional Summary', experience: 'Professional Experience' };
+
+function renderSolidCenteredHeader(header, t) {
+  const name = renderRuns(childContent(header, 'name'));
+  const tagline = renderRuns(childContent(header, 'tagline'));
+  const contacts = (childOfType(header, 'contactList')?.content ?? [])
+    .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean).join(' #" • " ');
+  return `#block(width: 100%, fill: rgb("${t.headerBg}"), inset: 16pt)[#align(center)[
+  #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
+
+  #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
+${contacts ? `\n  #text(size: ${(8 * t.fontScale).toFixed(2)}pt, fill: white)[${contacts}]` : ''}
+]]`;
+}
+
+// Like renderSection but honoring the classic label override for summary/experience.
+function renderClassicSection(section, t) {
+  const kind = section.attrs?.sectionKind;
+  const label = CLASSIC_LABELS[kind];
+  const heading = label ? `#"${label}"` : renderRuns(childContent(section, 'heading'));
+  const body = (section.content ?? []).filter((n) => n.type !== 'heading').map((b) => renderBlock(b, t)).filter(Boolean);
+  return [
+    `#text(font: "${t.fontDisplay}", weight: "bold", fill: accent)[${heading}]`,
+    '#line(length: 100%, stroke: 0.5pt + accent)',
+    ...body,
+  ].join('\n\n');
+}
+
+function classicLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  const ordered = [...g.summary, ...g.experience, ...g.education, ...g.customs, ...g.tools];
+  const body = ordered.map((s) => renderClassicSection(s, t)).filter(Boolean).join('\n\n');
+  return [preamble(model, t), renderSolidCenteredHeader(header, t), body, ''].join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;

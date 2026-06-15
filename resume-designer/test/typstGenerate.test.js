@@ -93,3 +93,30 @@ describe('modelToTypst — sidebar', () => {
     expect(modelToTypst(m, { theme: theme2, layout: 'sidebar' })).toMatchSnapshot();
   });
 });
+
+describe('modelToTypst — classic', () => {
+  const t3 = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+    summary: 'S.', sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust'] }],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc — MIT — 2018'], tools: 'Figma',
+  });
+  it('uses the Professional Summary/Experience labels and a solid (non-gradient) header', () => {
+    const typ = modelToTypst(m, { theme: t3, layout: 'classic' });
+    expect(typ).toContain('#"Professional Summary"');
+    expect(typ).toContain('#"Professional Experience"');
+    expect(typ).not.toContain('gradient.linear');
+  });
+  it('orders summary → experience → education → custom → tools', () => {
+    const typ = modelToTypst(m, { theme: t3, layout: 'classic' });
+    const at = (s) => typ.indexOf(s);
+    expect(at('#"Professional Summary"')).toBeLessThan(at('#"Professional Experience"'));
+    expect(at('#"Professional Experience"')).toBeLessThan(at('#"Education"'));
+    expect(at('#"Education"')).toBeLessThan(at('#"Skills"'));
+    expect(at('#"Skills"')).toBeLessThan(at('#"Tools"'));
+  });
+  it('matches the recorded classic snapshot', () => {
+    expect(modelToTypst(m, { theme: t3, layout: 'classic' })).toMatchSnapshot();
+  });
+});
