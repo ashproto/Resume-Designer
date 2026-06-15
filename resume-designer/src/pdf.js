@@ -10,6 +10,7 @@
  */
 
 import { isElectron, pickPdfSavePath, capturePdfFromWindow } from './native.js';
+import { TYPST_LAYOUTS, activeLayout } from './typstExport.js';
 import { getCurrentId, getVariantList } from './variantManager.js';
 import { store } from './store.js';
 import { appStorage } from './appStorage.js';
@@ -52,6 +53,12 @@ function showPdfDialog() {
   const selectedLabel = current?.name || 'Resume';
   const defaultFilename = selectedLabel.trim().replace(/\s+/g, '-');
 
+  // Typst path: desktop app + a layout the generator covers (sidebar/stacked/classic).
+  if (isElectron && TYPST_LAYOUTS.has(activeLayout())) {
+    window.dispatchEvent(new CustomEvent('rd:open-typst-export', { detail: { defaultFilename } }));
+    return;
+  }
+  // Fallback (unchanged): filename dialog -> WKWebView capture / html2pdf.
   window.dispatchEvent(new CustomEvent('rd:open-pdf-dialog', {
     detail: { defaultFilename, onDownload: handleDownloadPdf },
   }));
