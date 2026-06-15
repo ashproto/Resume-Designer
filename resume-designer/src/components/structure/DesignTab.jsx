@@ -26,6 +26,7 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { PanelSection } from './PanelSection.jsx';
+import { store } from '../../store.js';
 import { getSettings } from '../../persistence.js';
 import {
   FONT_PAIRINGS,
@@ -506,6 +507,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
   const [spacing, setSpacing] = useState(() => getSpacingSettings());
   const [accent, setAccent] = useState(() => getAccentSettings());
   const [photo, setPhoto] = useState(() => getPhotoSettings());
+  const [pageSize, setPageSizeState] = useState(() => store.getPageSize());
 
   // ----- Derived color values (mirrors vanilla getCurrentColors) -----------
   function getCurrentColors() {
@@ -1312,6 +1314,26 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
               </div>
             ))}
           </div>
+        </ControlGroup>
+
+        {/* Page size */}
+        <ControlGroup label="Page Size">
+          <Segmented
+            stretch
+            itemClassName="px-1"
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'letter', label: 'Letter' },
+              { value: 'a4', label: 'A4' },
+              { value: 'legal', label: 'Legal' },
+            ]}
+            value={pageSize}
+            onChange={(v) => {
+              setPageSizeState(v);
+              store.setPageSize(v);
+            }}
+          />
+          <p className="text-xs text-muted-foreground">Applies to the exported PDF.</p>
         </ControlGroup>
       </PanelSection>
 
