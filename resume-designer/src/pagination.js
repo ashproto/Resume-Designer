@@ -8,6 +8,7 @@
  */
 
 import { pageDimsIn } from './pageSetup.js';
+import { getZoom } from './zoomControls.js';
 
 const PX_PER_IN = 96;
 
@@ -55,33 +56,82 @@ export function assignBlocksToPages(blockHeightsPx, { firstPageContentPx, pageCo
   return pages;
 }
 
-// --- measurement (offsetTop/offsetHeight are layout px — unaffected by the zoom
-// CSS transform on .resume-container, so no scale math is needed) ---
+// --- measurement (getBoundingClientRect is VISUAL px; divide by the zoom scale
+// on .resume-container to recover layout px) ---
 
 function computedV(el, prop) {
   const v = parseFloat(getComputedStyle(el)[prop]);
   return Number.isFinite(v) ? v : 0;
 }
-// Outer box height incl. vertical margins (for the header / lead band).
-function blockOuterHeight(el) {
-  return el.offsetHeight + computedV(el, 'marginTop') + computedV(el, 'marginBottom');
-}
 // Vertical padding of a content wrapper (column/body), applied on every sheet.
 function vPadding(el) {
   return computedV(el, 'paddingTop') + computedV(el, 'paddingBottom');
 }
-// Per-block "slot" heights via offsetTop deltas (captures margins AND flex/grid
-// gaps); the last block uses its own border-box + bottom margin. Siblings share
-// an offsetParent, so the deltas are valid regardless of what it is.
-function measureBlocks(blocks) {
-  const n = blocks.length;
-  if (!n) return [];
-  const tops = blocks.map((b) => b.offsetTop);
+// Outer height incl. vertical margins (for the header / lead band).
+function rectOuterH(el, scale) {
+  return el.getBoundingClientRect().height / scale + computedV(el, 'marginTop') + computedV(el, 'marginBottom');
+}
+
+// --- flow units: break long sections (experience/education) between their items
+// so pages fill tightly. The section heading rides with its first item so it
+// never orphans; every other child is one whole-block unit. ---
+function splittableInfo(el) {
+  if (!el.classList) return null;
+  if (el.classList.contains('experience-section')) return { itemSel: ':scope > .experience-item', itemWrap: null };
+  if (el.classList.contains('education-section')) return { itemSel: ':scope > p', itemWrap: '.education-content' };
+  return null;
+}
+function flowUnits(containerEl) {
+  const leaves = [];
+  for (const child of Array.from(containerEl.children)) {
+    const info = splittableInfo(child);
+    if (!info) { leaves.push({ node: child, section: null }); continue; }
+    const itemsParent = info.itemWrap ? child.querySelector(`:scope > ${info.itemWrap}`) : child;
+    const items = itemsParent ? Array.from(itemsParent.querySelectorAll(info.itemSel)) : [];
+    if (!items.length) { leaves.push({ node: child, section: null }); continue; }
+    const heading = child.querySelector(':scope > .section-title');
+    items.forEach((item, i) => {
+      leaves.push({ node: item, section: child, info, heading: i === 0 ? heading : null, first: i === 0 });
+    });
+  }
+  return leaves;
+}
+// The first item of a section is measured from the SECTION top, so its slot
+// includes the heading + the section's top padding.
+function leafTopEl(l) { return (l.first && l.section) ? l.section : l.node; }
+function measureLeaves(leaves, scale) {
+  const tops = leaves.map((l) => leafTopEl(l).getBoundingClientRect().top);
   const out = [];
-  for (let i = 0; i < n; i++) {
-    out.push(i < n - 1 ? tops[i + 1] - tops[i] : blocks[i].offsetHeight + computedV(blocks[i], 'marginBottom'));
+  for (let i = 0; i < leaves.length; i++) {
+    out.push(i < leaves.length - 1
+      ? (tops[i + 1] - tops[i]) / scale
+      : (leaves[i].node.getBoundingClientRect().bottom - tops[i]) / scale);
   }
   return out;
+}
+// Rebuild a column/body from the leaves assigned to one page. Consecutive items
+// of the same section are regrouped under a cloned section wrapper; the heading
+// appears only on the page where the section begins.
+function buildColumn(targetEl, leaves) {
+  let curSection = null;
+  let itemsParent = null;
+  for (const l of leaves) {
+    if (!l.section) { targetEl.appendChild(l.node); curSection = null; continue; }
+    if (l.section !== curSection) {
+      curSection = l.section;
+      const sectionClone = l.section.cloneNode(false);
+      if (l.heading) sectionClone.appendChild(l.heading);
+      if (l.info && l.info.itemWrap) {
+        const wrap = l.section.querySelector(`:scope > ${l.info.itemWrap}`).cloneNode(false);
+        sectionClone.appendChild(wrap);
+        itemsParent = wrap;
+      } else {
+        itemsParent = sectionClone;
+      }
+      targetEl.appendChild(sectionClone);
+    }
+    itemsParent.appendChild(l.node);
+  }
 }
 
 // --- sheet builders ---
@@ -112,6 +162,7 @@ export function paginate(resumeEl, setup, layoutId) {
   const { widthIn, heightIn } = pageDimsIn(setup);
   const widthPx = Math.round(widthIn * PX_PER_IN);
   const heightPx = heightIn == null ? null : Math.round(heightIn * PX_PER_IN);
+  const scale = getZoom() || 1;
 
   // Enter paginated state (idempotent; persists across re-renders on the
   // long-lived #resume / #resume-container elements).
@@ -121,8 +172,8 @@ export function paginate(resumeEl, setup, layoutId) {
   resumeEl.style.width = `${widthPx}px`;
 
   if (heightPx == null) { paginateContinuous(resumeEl, widthPx); return; }
-  if (cfg.family === 'single') paginateSingle(resumeEl, cfg, widthPx, heightPx);
-  else paginateTwo(resumeEl, cfg, widthPx, heightPx);
+  if (cfg.family === 'single') paginateSingle(resumeEl, cfg, widthPx, heightPx, scale);
+  else paginateTwo(resumeEl, cfg, widthPx, heightPx, scale);
 }
 
 // Continuous: one open-height sheet, no splitting. Works for every layout.
@@ -135,17 +186,18 @@ function paginateContinuous(resumeEl, widthPx) {
   resumeEl.replaceChildren(pages);
 }
 
-function paginateSingle(resumeEl, cfg, widthPx, heightPx) {
+function paginateSingle(resumeEl, cfg, widthPx, heightPx, scale) {
   const header = resumeEl.querySelector(`:scope > .resume-header`);
   const body = resumeEl.querySelector(`:scope > ${cfg.body}`);
   if (!body) { paginateContinuous(resumeEl, widthPx); return; }
 
-  const blocks = Array.from(body.children);
-  const headerH = header ? blockOuterHeight(header) : 0;
+  const leaves = flowUnits(body);
+  if (!leaves.length) { paginateContinuous(resumeEl, widthPx); return; }
+  const heights = measureLeaves(leaves, scale);
+  const headerH = header ? rectOuterH(header, scale) : 0;
   const pad = vPadding(body);
   const pageContentPx = Math.max(1, heightPx - pad);
   const firstPageContentPx = Math.max(1, pageContentPx - headerH);
-  const heights = measureBlocks(blocks);
   const assign = assignBlocksToPages(heights, { firstPageContentPx, pageContentPx });
   const numPages = Math.max(1, (assign[assign.length - 1] ?? 0) + 1);
 
@@ -154,8 +206,8 @@ function paginateSingle(resumeEl, cfg, widthPx, heightPx) {
     const page = makeSheet(widthPx, heightPx);
     if (p === 0 && header) page.appendChild(header);
     const bodyClone = body.cloneNode(false); // shallow: keep classes, drop children
-    blocks.forEach((b, i) => { if (assign[i] === p) bodyClone.appendChild(b); });
     grow(bodyClone);
+    buildColumn(bodyClone, leaves.filter((_, i) => assign[i] === p));
     page.appendChild(bodyClone);
     pages.appendChild(page);
   }
@@ -163,4 +215,4 @@ function paginateSingle(resumeEl, cfg, widthPx, heightPx) {
 }
 
 // TEMPORARY stub — the real two-column implementation is a later task.
-function paginateTwo(resumeEl, _cfg, widthPx, _heightPx) { paginateContinuous(resumeEl, widthPx); }
+function paginateTwo(resumeEl, _cfg, widthPx, _heightPx, _scale) { paginateContinuous(resumeEl, widthPx); }
