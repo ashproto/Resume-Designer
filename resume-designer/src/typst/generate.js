@@ -41,9 +41,17 @@ function preamble(model, t) {
 const pagePad = (t) => `(top: ${t.marginTopIn}in, bottom: ${t.marginBottomIn}in, left: ${t.marginLeftIn}in, right: ${t.marginRightIn}in)`;
 const headerPad = (t) => `(top: ${t.marginTopIn}in, bottom: 0.28in, left: ${t.marginLeftIn}in, right: ${t.marginRightIn}in)`;
 // Wrap single-column body content so its text is padded by the margins while
-// colored headers above it stay full-bleed.
+// colored headers above it stay full-bleed. `above: 0pt` keeps it flush against
+// the header (the colored header sets `below: 0pt`).
 function bodyWrap(content, t) {
-  return `#block(width: 100%, inset: ${pagePad(t)})[
+  return `#block(width: 100%, above: 0pt, inset: ${pagePad(t)})[
+${content}
+]`;
+}
+// Place a (grid) block flush below the full-bleed header — no inter-block gap,
+// still breakable across pages for multi-page résumés.
+function flushBelowHeader(content) {
+  return `#block(width: 100%, above: 0pt, breakable: true)[
 ${content}
 ]`;
 }
@@ -166,7 +174,7 @@ function renderGradientHeader(header, t) {
   const contacts = (childOfType(header, 'contactList')?.content ?? [])
     .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean)
     .join(' #" • " ');
-  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)})[
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)}, below: 0pt)[
   #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
 
   #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
@@ -200,7 +208,7 @@ ${sidebarCell}
   [
 ${mainCell}
 ])`;
-  return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
+  return [preamble(model, t), renderGradientHeader(header, t), flushBelowHeader(grid), ''].join('\n\n');
 }
 
 // Classic layout: solid centered header (no gradient), single column ordered
@@ -214,7 +222,7 @@ function renderSolidCenteredHeader(header, t) {
   const tagline = renderRuns(childContent(header, 'tagline'));
   const contacts = (childOfType(header, 'contactList')?.content ?? [])
     .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean).join(' #" • " ');
-  return `#block(width: 100%, fill: rgb("${t.headerBg}"), inset: ${headerPad(t)})[#align(center)[
+  return `#block(width: 100%, fill: rgb("${t.headerBg}"), inset: ${headerPad(t)}, below: 0pt)[#align(center)[
   #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
 
   #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
@@ -257,7 +265,7 @@ ${mainCell}
   [
 ${sidebarCell}
 ])`;
-  return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
+  return [preamble(model, t), renderGradientHeader(header, t), flushBelowHeader(grid), ''].join('\n\n');
 }
 
 // Modern layout: narrow 1.8in sidebar (left) + main (right), horizontal gradient header
@@ -278,7 +286,7 @@ function renderModernGradientHeader(header, t) {
     : '';
   const leftCell = `[${nameBlock}\n\n${taglineBlock}]`;
   const rightCell = contactBlock ? `[${contactBlock}]` : '[]';
-  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)})[
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)}, below: 0pt)[
   #grid(columns: (1fr, auto), column-gutter: 12pt, ${leftCell}, ${rightCell})
 ]`;
 }
@@ -299,7 +307,7 @@ ${sidebarCell}
   [
 ${mainCell}
 ])`;
-  return [preamble(model, t), renderModernGradientHeader(header, t), grid, ''].join('\n\n');
+  return [preamble(model, t), renderModernGradientHeader(header, t), flushBelowHeader(grid), ''].join('\n\n');
 }
 
 // Compact layout: sidebar layout SCALED DOWN (smaller fonts, tighter margins/spacing).
@@ -332,7 +340,7 @@ ${mainCell}
   [
 ${sidebarCell}
 ])`;
-  return [preamble(model, ct), renderGradientHeader(header, ct), grid, ''].join('\n\n');
+  return [preamble(model, ct), renderGradientHeader(header, ct), flushBelowHeader(grid), ''].join('\n\n');
 }
 
 // Stacked-vertical layout: single column, every section is a boxed card.
@@ -414,7 +422,7 @@ function executiveLayout(model, t) {
       })
       .filter(Boolean)
       .join(' ');
-    summaryBlock = `#block(fill: rgb("${t.sidebarBg}"), inset: ${headerPad(t)}, width: 100%)[#align(center)[#emph[${paragraphs}]]]`;
+    summaryBlock = `#block(fill: rgb("${t.sidebarBg}"), inset: ${headerPad(t)}, width: 100%, below: 0pt)[#align(center)[#emph[${paragraphs}]]]`;
   }
 
   // Main cell: experience labeled "Professional Experience" (via renderClassicSection).
@@ -434,7 +442,7 @@ ${mainCell}
 ${sideCell}
 ])`;
 
-  return [preamble(model, t), renderGradientHeader(header, t), summaryBlock, grid, ''].filter(Boolean).join('\n\n');
+  return [preamble(model, t), renderGradientHeader(header, t), summaryBlock, flushBelowHeader(grid), ''].filter(Boolean).join('\n\n');
 }
 
 // Timeline experience section: heading + accent rule, then a continuous accent
@@ -485,7 +493,7 @@ ${mainCell}
   [
 ${sidebarCell}
 ])`;
-  return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
+  return [preamble(model, t), renderGradientHeader(header, t), flushBelowHeader(grid), ''].join('\n\n');
 }
 
 // Centered gradient header (mirrors .creative-header: text-align center + linear-gradient).
@@ -494,7 +502,7 @@ function renderGradientCenteredHeader(header, t) {
   const tagline = renderRuns(childContent(header, 'tagline'));
   const contacts = (childOfType(header, 'contactList')?.content ?? [])
     .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean).join(' #" • " ');
-  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)})[#align(center)[
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: ${headerPad(t)}, below: 0pt)[#align(center)[
   #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
 
   #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
