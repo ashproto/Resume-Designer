@@ -10,7 +10,10 @@ All fonts are redistributable under their respective open-source licenses.
 Full license text: `OFL.txt` in this directory.
 
 - Cormorant Garamond — Christian Thalmann
-- DM Sans — Colophon Foundry
+- DM Sans — Colophon Foundry. No Reserved Font Name; its name table was normalized
+  to "DM Sans" (the gwfh subset ships it as "DM Sans 9pt", an optical-size suffix
+  Typst does not strip), a modification the OFL permits for fonts without a reserved
+  name — so `font: "DM Sans"` resolves instead of silently falling back.
 - Inter — Rasmus Andersson
 - Playfair Display — Claus Eggers Sørensen
 - Source Sans 3 — Adobe Systems (formerly "Source Sans Pro"; renamed in v3)
