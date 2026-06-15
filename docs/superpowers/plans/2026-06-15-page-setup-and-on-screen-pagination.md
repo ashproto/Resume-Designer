@@ -613,6 +613,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 5: Single-column DOM paginator + the render hook
 
+> **IMPLEMENTED with item-level breaks** (commits `79916ab` scaffold + `f325f6a` upgrade). Per the user's decision, the body's children are flattened into **flow units**: `experience-section`/`education-section` break between their individual items (the section heading rides with the first item and is NOT repeated on continuation pages); every other child is one whole block. Measurement uses `getBoundingClientRect()` ÷ the zoom scale (`getZoom()`), not `offsetHeight`. `buildColumn()` rebuilds each page's section slice by regrouping consecutive same-section items under a cloned section wrapper. Verified live (browser preview) across all 5 single-column layouts + Continuous: correct Letter sheets (816×1056), header on page 1, items flow across pages filling them tightly, no orphaned heading. The code below is the original section-level scaffold; the shipped version is item-level (see `src/pagination.js`).
+
 Add the DOM glue and wire it into `renderCurrentResume()`. Cover the five single-column layouts and Continuous mode (all layouts). Browser/desktop-verified.
 
 **Files:**
@@ -814,6 +816,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ---
 
 ## Task 6: Two-column DOM paginator + adapters
+
+> **IMPLEMENTED with item-level breaks** (commit `a35e53d`). Each column is flowed INDEPENDENTLY using the same item-level flow units from Task 5 (the main column's experience splits across pages; timeline's `.timeline-item`s split via an extended `splittableInfo`). Per-page grids are built from shallow-cloned grid + column nodes so `grid-template-columns`, CSS `order`, and the sidebar `background` are preserved — verified that the sidebar background fills EVERY sheet full-height (ratio 1.0), including pages where the sidebar column is empty. The full-width header and the executive `.executive-summary` lead band sit on sheet 1 only. Verified live across all 6 two-column layouts (sidebar, right-sidebar, modern, compact, executive, timeline): correct column sides, independent splitting, sidebar fill. The code below is the original section-level draft; the shipped version is item-level (see `src/pagination.js`).
 
 Replace the stub with the real two-column path: paginate each column independently, then build per-page grids (sidebar background fills each sheet; full-width header + lead band on sheet 1 only). Covers sidebar, right-sidebar, modern, compact, executive, timeline.
 
