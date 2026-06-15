@@ -20,6 +20,7 @@ const DEFAULT_STORAGE = {
     colorPalette: 'terracotta',
     layout: 'sidebar',
     customColor: '#c45c3e',
+    defaultPageSize: 'auto',
     openrouterKey: '',
     autoFallback: false,
     defaultModel: 'anthropic/claude-sonnet-4.6',
@@ -243,7 +244,7 @@ export function getSettings() {
   // migration. Legacy anthropicKey/openaiKey/geminiKey are simply ignored; a
   // legacy colon-form `defaultModel` is migrated to a slug on read by
   // validateModelId() in aiService.js, so it needs no rewrite here.
-  return { openrouterKey: '', autoFallback: false, customModels: [], ...s };
+  return { openrouterKey: '', autoFallback: false, customModels: [], defaultPageSize: 'auto', ...s };
 }
 
 // Get user profile
