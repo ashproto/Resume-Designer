@@ -157,6 +157,15 @@ function makeSheet(widthPx, heightPx) {
 }
 function grow(el) { el.style.flex = '1 1 auto'; el.style.minHeight = '0'; return el; }
 
+// Remove the paginated state from the long-lived containers — used when the
+// preview falls back to the non-paginated empty state (no résumé loaded).
+export function resetPaginatedState(resumeEl) {
+  if (!resumeEl) return;
+  resumeEl.classList.remove('is-paginated');
+  resumeEl.style.width = '';
+  resumeEl.closest('.resume-container')?.classList.remove('is-paginated');
+}
+
 /**
  * Paginate the just-rendered résumé in place.
  * @param {HTMLElement} resumeEl - the #resume element (its children are header + body).

@@ -53,7 +53,7 @@ import { initSpacingService, applySpacingSettings, getSpacingSettings, saveSpaci
 import { initAccentService } from './accentService.js';
 import { initPhotoService } from './photoService.js';
 import { COLOR_PALETTES, generatePaletteFromColor } from './typst/palettes.js';
-import { paginate } from './pagination.js';
+import { paginate, resetPaginatedState } from './pagination.js';
 
 // Built-in resume variants (for initial migration)
 const BUILT_IN_VARIANTS = [
@@ -896,6 +896,7 @@ function renderCurrentResume() {
   
   const data = store.getData();
   if (!data) {
+    resetPaginatedState(container);
     container.innerHTML = `
       <div class="empty-state">
         <p>No resume loaded</p>
