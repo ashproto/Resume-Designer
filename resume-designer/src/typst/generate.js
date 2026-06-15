@@ -340,6 +340,26 @@ function stackedVerticalLayout(model, t) {
   return [preamble(model, t), renderHeader(header, t), body, ''].join('\n\n');
 }
 
+// Classic-featured layout: solid centered header (same as classic), single column.
+// Order: summary → highlights (boxed non-skills customs) → experience → education
+//        → skills (skills customs, at the bottom) → tools.
+// Mirrors renderResumeClassicFeatured in renderer.js + .classic-featured-* in resume.css.
+// Highlights rendered as boxed cards (renderBoxedSection); skills rendered plain (renderClassicSection).
+function classicFeaturedLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  const { highlights, skills } = splitCustoms(g.customs);
+  const parts = [
+    ...g.summary.map((s) => renderClassicSection(s, t)),
+    ...highlights.map((s) => renderBoxedSection(s, t)),
+    ...g.experience.map((s) => renderClassicSection(s, t)),
+    ...g.education.map((s) => renderClassicSection(s, t)),
+    ...skills.map((s) => renderClassicSection(s, t)),
+    ...g.tools.map((s) => renderSection(s, t)),
+  ].filter(Boolean);
+  return [preamble(model, t), renderSolidCenteredHeader(header, t), ...parts, ''].join('\n\n');
+}
+
 // Executive layout: centered gradient header, pulled-out italic summary block (sidebar-bg),
 // then a wide (1fr, 2.2in) grid. Mirrors renderResumeExecutive in renderer.js +
 // .executive-* in resume.css (linear-gradient header, executive-summary centered italic,
@@ -382,7 +402,7 @@ ${sideCell}
   return [preamble(model, t), renderGradientHeader(header, t), summaryBlock, grid, ''].filter(Boolean).join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout, executive: executiveLayout };
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout, executive: executiveLayout, 'classic-featured': classicFeaturedLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;

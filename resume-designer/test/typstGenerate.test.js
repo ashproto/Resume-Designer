@@ -257,6 +257,57 @@ describe('modelToTypst — executive', () => {
   });
 });
 
+describe('modelToTypst — classic-featured', () => {
+  const t = buildTheme({});
+  // Model with BOTH a type:'list' custom (a highlight) AND a type:'skills' custom
+  const m = flatToModel({
+    name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+    summary: 'S.',
+    sections: [
+      { id: 'h', title: 'Highlights', type: 'list', content: ['Did X'] },
+      { id: 's', title: 'Skills', type: 'skills', content: ['Rust'] },
+    ],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc'],
+    tools: 'Figma',
+  });
+
+  it('orders: Professional Summary → Highlights → Professional Experience → Education → Skills → Tools', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'classic-featured' });
+    const at = (s) => typ.indexOf(s);
+    expect(at('#"Professional Summary"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Highlights"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Professional Experience"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Education"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Skills"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Tools"')).toBeGreaterThanOrEqual(0);
+    // Professional Summary first
+    expect(at('#"Professional Summary"')).toBeLessThan(at('#"Highlights"'));
+    // Highlights (boxed non-skills customs) before Professional Experience
+    expect(at('#"Highlights"')).toBeLessThan(at('#"Professional Experience"'));
+    // Professional Experience before Education
+    expect(at('#"Professional Experience"')).toBeLessThan(at('#"Education"'));
+    // Education before Skills (skills pushed to bottom)
+    expect(at('#"Education"')).toBeLessThan(at('#"Skills"'));
+    // Skills before Tools
+    expect(at('#"Skills"')).toBeLessThan(at('#"Tools"'));
+  });
+
+  it('renders highlights section as a boxed card (fill: rgb(")', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'classic-featured' });
+    expect(typ).toContain('fill: rgb("');
+  });
+
+  it('is single-column (no #grid()', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'classic-featured' });
+    expect(typ).not.toContain('#grid(');
+  });
+
+  it('matches the recorded classic-featured snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'classic-featured' })).toMatchSnapshot();
+  });
+});
+
 describe('modelToTypst — stacked-vertical', () => {
   const t = buildTheme({});
   // Model with BOTH a type:'list' custom (a highlight) AND a type:'skills' custom
