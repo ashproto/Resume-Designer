@@ -68,7 +68,7 @@ export const resumeSchema = new Schema({
     tag: { content: 'text*', toDOM: () => ['li', { class: 'tag' }, 0], parseDOM: [{ tag: 'li.tag' }] },
     experienceItem: {
       group: 'block',
-      attrs: { id: { default: '' }, relevanceRank: { default: null } },
+      attrs: { id: { default: '' }, relevanceRank: { default: null }, startDate: { default: '' }, endDate: { default: '' } },
       content: 'jobTitle company dates bulletList?',
       toDOM: (n) => ['div', { class: 'exp', 'data-id': n.attrs.id }, 0],
       parseDOM: [{ tag: 'div.exp', getAttrs: (el) => ({ id: el.getAttribute('data-id') || '' }) }],

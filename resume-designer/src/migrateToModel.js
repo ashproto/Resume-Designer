@@ -21,7 +21,12 @@ const headerNode = (flat) => ({
 
 const experienceItemNode = (e) => ({
   type: 'experienceItem',
-  attrs: { id: e.id ?? '', relevanceRank: Number.isFinite(e._relevanceRank) ? e._relevanceRank : null },
+  attrs: {
+    id: e.id ?? '',
+    relevanceRank: Number.isFinite(e._relevanceRank) ? e._relevanceRank : null,
+    startDate: e.startDate ?? '',
+    endDate: e.endDate ?? '',
+  },
   content: [
     field('jobTitle', e.title ?? ''),
     field('company', e.company ?? ''),
@@ -123,6 +128,8 @@ export function modelToFlat(model) {
             .map((li) => textOf((li.content ?? [])[0])),
         };
         if (Number.isFinite(it.attrs?.relevanceRank)) e._relevanceRank = it.attrs.relevanceRank;
+        if (it.attrs?.startDate) e.startDate = it.attrs.startDate;
+        if (it.attrs?.endDate) e.endDate = it.attrs.endDate;
         return e;
       });
     } else if (kind === 'education') {

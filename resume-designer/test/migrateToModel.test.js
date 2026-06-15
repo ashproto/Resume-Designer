@@ -196,3 +196,29 @@ describe('pageSize in the migration', () => {
     expect('pageSize' in modelToFlat(flatToModel(POPULATED))).toBe(false);
   });
 });
+
+describe('experience startDate/endDate round-trip', () => {
+  it('preserves machine-readable dates through flat → model → flat', () => {
+    const flat = {
+      name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+      experience: [{
+        id: 'e1', title: 'Eng', company: 'Acme', dates: 'Jan 2020 – Present',
+        startDate: '2020-01', endDate: 'Present', bullets: ['Did X'],
+      }],
+    };
+    const model = flatToModel(flat);
+    const back = modelToFlat(model);
+    expect(back.experience[0].startDate).toBe('2020-01');
+    expect(back.experience[0].endDate).toBe('Present');
+  });
+
+  it('omits the date fields when absent (flat shape unchanged for date-less resumes)', () => {
+    const flat = {
+      name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+      experience: [{ id: 'e1', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['X'] }],
+    };
+    const back = modelToFlat(flatToModel(flat));
+    expect('startDate' in back.experience[0]).toBe(false);
+    expect('endDate' in back.experience[0]).toBe(false);
+  });
+});
