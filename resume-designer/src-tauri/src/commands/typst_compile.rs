@@ -1,15 +1,22 @@
 include!(concat!(env!("OUT_DIR"), "/fonts.rs")); // -> BUNDLED_FONTS
 
 use tauri::State;
+use typst_as_lib::{TypstEngine, typst_kit_options::TypstKitFontOptions};
 use super::{PdfResult, PendingPdfPath};
 
-/// Compile Typst source to PDF bytes using the bundled fonts. Pure; no IO.
+/// Compile Typst source to PDF bytes using the bundled fonts plus any
+/// system-installed fonts, so user-selected system-mode font families render.
 pub fn compile(typ: &str) -> Result<Vec<u8>, String> {
-    use typst_as_lib::TypstEngine;
-
     let engine = TypstEngine::builder()
         .main_file(typ)
         .fonts(BUNDLED_FONTS.iter().copied())
+        .search_fonts_with(
+            // include_embedded_fonts() only exists with the typst-kit-embed-fonts
+            // feature, which we intentionally omit (we ship our own bundled fonts).
+            // The default already sets include_embedded_fonts = false when the
+            // feature is absent, so just set include_system_fonts = true.
+            TypstKitFontOptions::default().include_system_fonts(true),
+        )
         .build();
 
     // Let the compiler infer the concrete document type from typst_pdf::pdf's
