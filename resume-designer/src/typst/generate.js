@@ -340,7 +340,49 @@ function stackedVerticalLayout(model, t) {
   return [preamble(model, t), renderHeader(header, t), body, ''].join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout };
+// Executive layout: centered gradient header, pulled-out italic summary block (sidebar-bg),
+// then a wide (1fr, 2.2in) grid. Mirrors renderResumeExecutive in renderer.js +
+// .executive-* in resume.css (linear-gradient header, executive-summary centered italic,
+// executive-columns: 1fr 2.2in; main = experience, side = customs + education + tools).
+function executiveLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+
+  // Pulled-out summary block — only if there is a summary section.
+  // Mirrors .executive-summary: sidebar-bg background, centered, italic text.
+  let summaryBlock = '';
+  if (g.summary.length) {
+    const summarySection = g.summary[0];
+    const paragraphs = (summarySection.content ?? [])
+      .filter((n) => n.type !== 'heading')
+      .map((b) => {
+        if (b.type === 'paragraph') return renderRuns(b.content ?? []);
+        return renderBlock(b, t);
+      })
+      .filter(Boolean)
+      .join(' ');
+    summaryBlock = `#block(fill: rgb("${t.sidebarBg}"), inset: 10pt, width: 100%)[#align(center)[#emph[${paragraphs}]]]`;
+  }
+
+  // Main cell: experience labeled "Professional Experience" (via renderClassicSection).
+  const mainCell = g.experience.map((s) => renderClassicSection(s, t)).filter(Boolean).join('\n\n');
+
+  // Side cell: customs + education + tools rendered as sidebar sections.
+  const sideCell = [...g.customs, ...g.education, ...g.tools]
+    .map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
+
+  const grid = `#grid(columns: (1fr, 2.2in), column-gutter: 14pt,
+  block(inset: (right: 4pt))[
+${mainCell}
+],
+  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+${sideCell}
+])`;
+
+  return [preamble(model, t), renderGradientHeader(header, t), summaryBlock, grid, ''].filter(Boolean).join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout, executive: executiveLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;

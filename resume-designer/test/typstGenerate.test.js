@@ -216,6 +216,47 @@ describe('modelToTypst — modern', () => {
   });
 });
 
+describe('modelToTypst — executive', () => {
+  const t = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },
+    summary: 'S.',
+    sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust'] }],
+    experience: [{ id: 'e', title: 'Collaborator', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc — MIT'],
+    tools: 'Figma',
+  });
+
+  it('emits a #grid(', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'executive' })).toContain('#grid(');
+  });
+
+  it('places the summary BEFORE the grid, inside #emph and #align(center)', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'executive' });
+    // Summary section contains "S." as text
+    const iSummary = typ.indexOf('#"S."');
+    const iGrid = typ.indexOf('#grid(');
+    expect(iSummary).toBeGreaterThanOrEqual(0);
+    expect(iGrid).toBeGreaterThanOrEqual(0);
+    expect(iSummary).toBeLessThan(iGrid);
+    // The summary block is wrapped in #emph and #align(center)
+    expect(typ).toContain('#emph[');
+    expect(typ).toContain('#align(center)');
+  });
+
+  it('labels experience as "Professional Experience"', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'executive' })).toContain('#"Professional Experience"');
+  });
+
+  it('uses a gradient (not solid) header', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'executive' })).toContain('gradient.linear');
+  });
+
+  it('matches the recorded executive snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'executive' })).toMatchSnapshot();
+  });
+});
+
 describe('modelToTypst — stacked-vertical', () => {
   const t = buildTheme({});
   // Model with BOTH a type:'list' custom (a highlight) AND a type:'skills' custom
