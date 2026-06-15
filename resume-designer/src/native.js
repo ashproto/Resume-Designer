@@ -502,6 +502,24 @@ export async function capturePdfFromWindow(windowLabel, pageSize = null, capture
 }
 
 /**
+ * Compile a .typ string to PDF bytes via the Rust backend (Tauri only).
+ */
+export async function typstRenderPreview(typ) {
+  if (!isTauri) throw new Error('Typst rendering is only available in the desktop app');
+  const { core } = await tauri();
+  return core.invoke('typst_render_preview', { typ }); // -> ArrayBuffer
+}
+
+/**
+ * Compile + write to the path picked by pickPdfSavePath (Tauri only).
+ */
+export async function typstExportPdf(typ) {
+  if (!isTauri) throw new Error('Typst export is only available in the desktop app');
+  const { core } = await tauri();
+  return core.invoke('typst_export_pdf', { typ }); // -> PdfResult { success, filePath?, error? }
+}
+
+/**
  * Check whether a legacy Electron LevelDB exists on disk with this
  * app's data in it. Returns a `ProbeResult` shape: `{ found, sourcePath,
  * keyCount, variantCount, jobDescriptionCount, userProfilePresent }`.
