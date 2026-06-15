@@ -1,0 +1,51 @@
+import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { modelToTypst } from '../src/typst/generate.js';
+import { buildTheme } from '../src/typst/theme.js';
+import { flatToModel } from '../src/migrateToModel.js';
+
+function typstAvailable() {
+  try { execFileSync('typst', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+async function extractText(pdfPath) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const data = new Uint8Array(readFileSync(pdfPath));
+  const doc = await pdfjs.getDocument({ data, useSystemFonts: true }).promise;
+  let out = '';
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    out += content.items.map((i) => i.str).join(' ') + ' ';
+  }
+  return out.replace(/\s+/g, ' ');
+}
+
+describe.skipIf(!typstAvailable())('ATS reading order (stacked)', () => {
+  it('PDF text stream follows model reading order', async () => {
+    const model = flatToModel({
+      name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },
+      summary: 'First programmer.',
+      sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust', 'Go'] }],
+      experience: [{ id: 'e', title: 'Collaborator', company: 'Analytical Engine', dates: '1842', bullets: ['Authored Note G.'] }],
+    });
+    const typ = modelToTypst(model, { theme: buildTheme({}) });
+    const dir = mkdtempSync(join(tmpdir(), 'rd-ats-'));
+    const typPath = join(dir, 'r.typ');
+    const pdfPath = join(dir, 'r.pdf');
+    writeFileSync(typPath, typ);
+    execFileSync('typst', ['compile', typPath, pdfPath]);
+
+    const text = await extractText(pdfPath);
+    const order = ['Ada Lovelace', 'Skills', 'Rust', 'Experience', 'Collaborator', 'Note G'];
+    const positions = order.map((tok) => ({ tok, at: text.indexOf(tok) }));
+    for (const { tok, at } of positions) expect(at, `"${tok}" missing from PDF text`).toBeGreaterThanOrEqual(0);
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i].at, `"${positions[i].tok}" should follow "${positions[i - 1].tok}"`)
+        .toBeGreaterThan(positions[i - 1].at);
+    }
+  });
+});
