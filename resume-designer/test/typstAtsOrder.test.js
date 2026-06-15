@@ -71,4 +71,18 @@ describe.skipIf(!typstAvailable())('ATS reading order (stacked)', () => {
       expect(positions[i].at, `"${positions[i].tok}" should follow "${positions[i - 1].tok}"`).toBeGreaterThan(positions[i - 1].at);
     }
   });
+
+  it('right-sidebar reads main-then-sidebar (not interleaved)', async () => {
+    const model = flatToModel({ name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },
+      summary: 'First programmer.', sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust', 'Go'] }],
+      experience: [{ id: 'e', title: 'Collaborator', company: 'Analytical Engine', dates: '1842', bullets: ['Authored Note G.'] }], tools: 'Figma' });
+    const typ = modelToTypst(model, { theme: buildTheme({}), layout: 'right-sidebar' });
+    const dir = mkdtempSync(join(tmpdir(), 'rd-ats-rs-')); const typPath = join(dir, 'r.typ'); const pdfPath = join(dir, 'r.pdf');
+    writeFileSync(typPath, typ); execFileSync('typst', ['compile', typPath, pdfPath]);
+    const text = await extractText(pdfPath);
+    const order = ['Ada Lovelace', 'Summary', 'Experience', 'Collaborator', 'SKILLS', 'Rust']; // sidebar titles are #upper -> uppercase in the PDF
+    const pos = order.map((tok) => ({ tok, at: text.indexOf(tok) }));
+    for (const { tok, at } of pos) expect(at, `"${tok}" missing`).toBeGreaterThanOrEqual(0);
+    for (let i = 1; i < pos.length; i++) expect(pos[i].at, `"${pos[i].tok}" after "${pos[i-1].tok}"`).toBeGreaterThan(pos[i-1].at);
+  });
 });

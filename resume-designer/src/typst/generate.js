@@ -217,7 +217,22 @@ function classicLayout(model, t) {
   return [preamble(model, t), renderSolidCenteredHeader(header, t), body, ''].join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout };
+function rightSidebarLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  const mainCell = [...g.summary, ...g.experience, ...g.education].map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
+  const sidebarCell = [...g.customs, ...g.tools].map((s) => renderSidebarSection(s, t)).filter(Boolean).join('\n\n');
+  const grid = `#grid(columns: (1fr, ${t.sidebarWidthIn}in), column-gutter: 14pt,
+  block(inset: (right: 4pt))[
+${mainCell}
+],
+  block(fill: rgb("${t.sidebarBg}"), inset: 12pt, width: 100%, height: 100%)[
+${sidebarCell}
+])`;
+  return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;

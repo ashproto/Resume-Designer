@@ -120,3 +120,21 @@ describe('modelToTypst — classic', () => {
     expect(modelToTypst(m, { theme: t3, layout: 'classic' })).toMatchSnapshot();
   });
 });
+
+describe('modelToTypst — right-sidebar', () => {
+  const t = buildTheme({});
+  const m = flatToModel({ name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' }, summary: 'S.',
+    sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust'] }],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['v2'] }], tools: 'Figma' });
+  it('emits a grid; main (Summary, Experience) precedes sidebar (Skills, Tools) in source order', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'right-sidebar' });
+    const at = (s) => typ.indexOf(s);
+    expect(typ).toContain('#grid(');
+    expect(at('#"Summary"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Summary"')).toBeLessThan(at('#"Skills"'));   // main col before sidebar col (sidebar title is #upper[#"Skills"], so #"Skills" IS in the source)
+    expect(at('#"Experience"')).toBeLessThan(at('#"Tools"'));
+  });
+  it('matches the recorded right-sidebar snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'right-sidebar' })).toMatchSnapshot();
+  });
+});
