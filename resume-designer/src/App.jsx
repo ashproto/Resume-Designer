@@ -7,6 +7,7 @@ import SettingsDialog from './components/SettingsDialog.jsx';
 import HistoryDialog from './components/HistoryDialog.jsx';
 import DiffDialog from './components/DiffDialog.jsx';
 import PdfDialog from './components/PdfDialog.jsx';
+import TypstExportDialog from './components/TypstExportDialog.jsx';
 import StructurePanel from './components/structure/StructurePanel.jsx';
 import ChatPanel from './components/chat/ChatPanel.jsx';
 import ProfileDialog from './components/profile/ProfileDialog.jsx';
@@ -95,6 +96,7 @@ export default function App() {
       {storageReady && <OnboardingWizard />}
       {storageReady && <DiffDialog />}
       {storageReady && <PdfDialog />}
+      {storageReady && <TypstExportDialog />}
       <Toaster />
       <ConfirmHost />
     </>
