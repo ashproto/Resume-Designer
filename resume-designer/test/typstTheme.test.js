@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { buildTheme } from '../src/typst/theme.js';
 
+describe('buildTheme font overrides', () => {
+  it('uses explicit fontDisplay/fontBody over the pairing', () => {
+    const t = buildTheme({ pairingId: 'classic-elegant', fontDisplay: 'Montserrat', fontBody: 'Bitter' });
+    expect(t.fontDisplay).toBe('Montserrat');
+    expect(t.fontBody).toBe('Bitter');
+  });
+  it('falls back to the pairing when no overrides', () => {
+    const t = buildTheme({ pairingId: 'classic-elegant' });
+    expect(t.fontDisplay).toBe('Cormorant Garamond');
+    expect(t.fontBody).toBe('DM Sans');
+  });
+});
+
 describe('buildTheme', () => {
   it('resolves the default pairing + palette', () => {
     const t = buildTheme({});

@@ -1,6 +1,6 @@
 import { store } from './store.js';
 import { getSettings } from './persistence.js';
-import { getCurrentFontSettings } from './fontService.js';
+import { getCurrentFontSettings, getSelectedFontFamilies } from './fontService.js';
 import { getSpacingSettings } from './spacingService.js';
 import { getAccentSettings } from './accentService.js';
 import { buildTheme } from './typst/theme.js';
@@ -11,6 +11,7 @@ function resumeTheme() {
   const s = getSettings();
   return buildTheme({
     pairingId: getCurrentFontSettings().pairingId,
+    ...getSelectedFontFamilies(),
     colorPalette: s.colorPalette,
     customColor: s.customColor,
     spacing: getSpacingSettings(),

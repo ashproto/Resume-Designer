@@ -45,6 +45,8 @@ const BULLET_CHARS = {
  */
 export function buildTheme({
   pairingId,
+  fontDisplay,
+  fontBody,
   colorPalette,
   customColor,
   spacing = {},
@@ -63,8 +65,8 @@ export function buildTheme({
     fontScale,
 
     // Typography
-    fontDisplay:    pairing.display.family,
-    fontBody:       pairing.body.family,
+    fontDisplay:    fontDisplay ?? pairing.display.family,
+    fontBody:       fontBody    ?? pairing.body.family,
     baseSizePt:     pt(9),
     nameSizePt:     remPt(2.25),
     taglineSizePt:  remPt(0.95),

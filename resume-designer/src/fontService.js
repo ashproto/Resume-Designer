@@ -92,7 +92,7 @@ export const POPULAR_GOOGLE_FONTS = [
   { family: 'Lato', category: 'sans-serif', weights: [300, 400, 700, 900] },
   { family: 'Poppins', category: 'sans-serif', weights: [300, 400, 500, 600, 700] },
   { family: 'Raleway', category: 'sans-serif', weights: [300, 400, 500, 600, 700] },
-  { family: 'Source Sans Pro', category: 'sans-serif', weights: [300, 400, 600, 700] },
+  { family: 'Source Sans 3', category: 'sans-serif', weights: [300, 400, 600, 700] },
   { family: 'Nunito Sans', category: 'sans-serif', weights: [300, 400, 600, 700] },
   { family: 'Work Sans', category: 'sans-serif', weights: [300, 400, 500, 600, 700] },
   { family: 'Karla', category: 'sans-serif', weights: [400, 500, 600, 700] },
@@ -379,6 +379,23 @@ export function getCurrentFontSettings() {
     mode: 'preset',
     pairingId: 'classic-elegant'
   };
+}
+
+/**
+ * Resolve the currently-selected display/body font FAMILY NAMES (bare, no CSS
+ * stack) for consumers that match fonts by family name — e.g. the Typst export.
+ * Returns {} for preset mode (buildTheme resolves the pairing from pairingId).
+ */
+export function getSelectedFontFamilies() {
+  const s = getCurrentFontSettings();
+  if (s.mode === 'google') {
+    return { fontDisplay: s.displayFont?.family, fontBody: s.bodyFont?.family };
+  }
+  if (s.mode === 'system') {
+    const resolve = (f) => (f && SYSTEM_FONT_STACKS[f]?.family) || f || undefined;
+    return { fontDisplay: resolve(s.displayFont), fontBody: resolve(s.bodyFont) };
+  }
+  return {};
 }
 
 /**
