@@ -26,7 +26,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::pick_pdf_save_path,
-            commands::capture_pdf_from_window,
             commands::migration::probe_legacy_electron_data,
             commands::migration::import_legacy_electron_data,
             commands::storage::storage_load_all,
