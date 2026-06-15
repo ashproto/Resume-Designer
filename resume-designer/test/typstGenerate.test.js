@@ -403,3 +403,50 @@ describe('modelToTypst — timeline', () => {
     expect(modelToTypst(m, { theme: t, layout: 'timeline' })).toMatchSnapshot();
   });
 });
+
+describe('modelToTypst — creative', () => {
+  const t = buildTheme({});
+  const m = flatToModel({
+    name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },
+    summary: 'S.',
+    sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust'] }],
+    experience: [{ id: 'e', title: 'Collaborator', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc'],
+    tools: 'Figma',
+  });
+
+  it('uses a centered gradient header', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'creative' });
+    expect(typ).toContain('gradient.linear');
+    expect(typ).toContain('#align(center)');
+  });
+
+  it('renders the summary centered + italic BEFORE the card grid', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'creative' });
+    const iSummary = typ.indexOf('#"S."');
+    const iGrid = typ.indexOf('#grid(');
+    expect(iSummary).toBeGreaterThanOrEqual(0);
+    expect(iGrid).toBeGreaterThanOrEqual(0);
+    expect(iSummary).toBeLessThan(iGrid);
+    expect(typ).toContain('#emph[');
+  });
+
+  it('emits a fixed-column card grid with a 3pt left accent border', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'creative' });
+    expect(typ).toContain('#grid(');
+    expect(typ).toContain('stroke: (left: 3pt');
+    expect(typ).toContain('radius: 8pt');
+  });
+
+  it('includes a Tools card and orders cards → Experience → Education', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'creative' });
+    const at = (s) => typ.indexOf(s);
+    expect(at('#"Tools"')).toBeGreaterThanOrEqual(0);
+    expect(at('#grid(')).toBeLessThan(at('#"Experience"'));
+    expect(at('#"Experience"')).toBeLessThan(at('#"Education"'));
+  });
+
+  it('matches the recorded creative snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'creative' })).toMatchSnapshot();
+  });
+});

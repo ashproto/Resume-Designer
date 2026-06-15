@@ -202,6 +202,51 @@ exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = 
 "
 `;
 
+exports[`modelToTypst — creative > matches the recorded creative snapshot 1`] = `
+"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+#set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
+#set par(leading: 0.450em, justify: false)
+#let accent = rgb("#c45c3e")
+
+#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("#2d2a26"), rgb("#3d3832")), inset: 16pt)[#align(center)[
+  #text(font: "Cormorant Garamond", size: 27pt, weight: "bold", fill: white)[#"Ada Lovelace"]
+
+  #text(size: 11.399999999999999pt, fill: white)[#"Pioneer"]
+
+  #text(size: 8.00pt, fill: white)[#"ada@x.com"]
+]]
+
+#align(center)[#emph[#"S."]]
+
+#grid(columns: (1fr, 1fr), column-gutter: 10pt, row-gutter: 10pt,
+block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, stroke: (left: 3pt + accent), width: 100%)[
+#text(font: "Cormorant Garamond", size: 10.20pt, weight: "bold", fill: accent)[#"Skills"]
+
+[#"Rust"]
+],
+block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, stroke: (left: 3pt + accent), width: 100%)[
+#text(font: "Cormorant Garamond", size: 10.20pt, weight: "bold", fill: accent)[#"Tools"]
+
+[#"Figma"]
+]
+)
+
+#align(center)[#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+#text(font: "Cormorant Garamond", weight: "bold")[#"Collaborator"]
+#text(fill: rgb("#c45c3e"))[#"Acme"]
+#text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
+#list(marker: [#"•"], [#"v2"])
+
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Education"]
+
+#line(length: 100%, stroke: 0.5pt + accent)
+
+[#"BSc"]"
+`;
+
 exports[`modelToTypst — executive > matches the recorded executive snapshot 1`] = `
 "#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
 #set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))

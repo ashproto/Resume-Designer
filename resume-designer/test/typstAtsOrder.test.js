@@ -153,6 +153,27 @@ describe.skipIf(!typstAvailable())('ATS reading order (stacked)', () => {
     for (let i = 1; i < pos.length; i++) expect(pos[i].at, `"${pos[i].tok}" after "${pos[i-1].tok}"`).toBeGreaterThan(pos[i-1].at);
   });
 
+  it('creative reads: summary → cards → experience → education', async () => {
+    const model = flatToModel({
+      name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },
+      summary: 'First programmer.',
+      sections: [{ id: 's', title: 'Skills', type: 'skills', content: ['Rust', 'Go'] }],
+      experience: [{ id: 'e', title: 'Collaborator', company: 'Analytical Engine', dates: '1842', bullets: ['Authored Note G.'] }],
+      education: ['BSc Cambridge'],
+      tools: 'Figma',
+    });
+    const typ = modelToTypst(model, { theme: buildTheme({}), layout: 'creative' });
+    const dir = mkdtempSync(join(tmpdir(), 'rd-ats-cr-'));
+    const typPath = join(dir, 'r.typ'); const pdfPath = join(dir, 'r.pdf');
+    writeFileSync(typPath, typ);
+    execFileSync('typst', ['compile', typPath, pdfPath]);
+    const text = await extractText(pdfPath);
+    const order = ['Ada Lovelace', 'First programmer', 'Skills', 'Experience', 'Collaborator', 'BSc'];
+    const pos = order.map((tok) => ({ tok, at: text.indexOf(tok) }));
+    for (const { tok, at } of pos) expect(at, `"${tok}" missing`).toBeGreaterThanOrEqual(0);
+    for (let i = 1; i < pos.length; i++) expect(pos[i].at, `"${pos[i].tok}" after "${pos[i-1].tok}"`).toBeGreaterThan(pos[i-1].at);
+  });
+
   it('executive reads: summary → main experience → side sections', async () => {
     const model = flatToModel({
       name: 'Ada Lovelace', tagline: 'Pioneer', contact: { email: 'ada@x.com' },

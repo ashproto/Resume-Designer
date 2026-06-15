@@ -451,7 +451,87 @@ ${sidebarCell}
   return [preamble(model, t), renderGradientHeader(header, t), grid, ''].join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout, executive: executiveLayout, 'classic-featured': classicFeaturedLayout, timeline: timelineLayout };
+// Centered gradient header (mirrors .creative-header: text-align center + linear-gradient).
+function renderGradientCenteredHeader(header, t) {
+  const name = renderRuns(childContent(header, 'name'));
+  const tagline = renderRuns(childContent(header, 'tagline'));
+  const contacts = (childOfType(header, 'contactList')?.content ?? [])
+    .filter((n) => n.type === 'contactItem').map((ci) => renderRuns(ci.content)).filter(Boolean).join(' #" • " ');
+  return `#block(width: 100%, fill: gradient.linear(angle: 135deg, rgb("${t.headerBg}"), rgb("${t.headerBgEnd}")), inset: 16pt)[#align(center)[
+  #text(font: "${t.fontDisplay}", size: ${t.nameSizePt}pt, weight: "bold", fill: white)[${name}]
+
+  #text(size: ${t.taglineSizePt}pt, fill: white)[${tagline}]
+${contacts ? `\n  #text(size: ${(8 * t.fontScale).toFixed(2)}pt, fill: white)[${contacts}]` : ''}
+]]`;
+}
+
+// Creative card: sidebar-bg rounded block with a 3pt left accent border, a
+// display/accent title, then the section body. Returned WITHOUT a leading "#"
+// because it is used as a #grid() cell. Mirrors .creative-card + .creative-card-title.
+function renderCreativeCard(section, t) {
+  const heading = renderRuns(childContent(section, 'heading'));
+  const body = blocksOf(section)
+    .filter((n) => n.type !== 'heading')
+    .map((b) => renderBlock(b, t)).filter(Boolean).join('\n\n');
+  const inner = [
+    `#text(font: "${t.fontDisplay}", size: ${(0.85 * 12 * t.fontScale).toFixed(2)}pt, weight: "bold", fill: accent)[${heading}]`,
+    body,
+  ].filter(Boolean).join('\n\n');
+  return `block(fill: rgb("${t.sidebarBg}"), radius: 8pt, inset: 8pt, stroke: (left: 3pt + accent), width: 100%)[
+${inner}
+]`;
+}
+
+// Like renderSection, but the heading is centered (mirrors
+// .creative-experience .section-title { text-align: center }).
+function renderCreativeSection(section, t) {
+  const heading = renderRuns(childContent(section, 'heading'));
+  const body = blocksOf(section).filter((n) => n.type !== 'heading').map((b) => renderBlock(b, t)).filter(Boolean);
+  return [
+    `#align(center)[#text(font: "${t.fontDisplay}", weight: "bold", fill: accent)[${heading}]]`,
+    '#line(length: 100%, stroke: 0.5pt + accent)',
+    ...body,
+  ].join('\n\n');
+}
+
+// Creative layout: centered gradient header, centered italic summary (no
+// heading), a fixed N-column card grid of custom + tools sections (Typst has no
+// CSS auto-fit; N = min(3, cardCount)), then full-width experience (centered
+// title) + education. Mirrors renderResumeCreative + .creative-* CSS.
+function creativeLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+
+  // Centered italic summary — mirrors .creative-summary (no section heading).
+  let summaryBlock = '';
+  if (g.summary.length) {
+    const paras = (g.summary[0].content ?? [])
+      .filter((n) => n.type !== 'heading')
+      .map((b) => (b.type === 'paragraph' ? renderRuns(b.content ?? []) : renderBlock(b, t)))
+      .filter(Boolean).join(' ');
+    summaryBlock = `#align(center)[#emph[${paras}]]`;
+  }
+
+  // Card grid: every custom section + a tools card. Fixed N columns (no auto-fit).
+  const cardSections = [...g.customs, ...g.tools];
+  let gridBlock = '';
+  if (cardSections.length) {
+    const cards = cardSections.map((s) => renderCreativeCard(s, t));
+    const ncol = Math.min(3, cards.length);
+    const cols = Array(ncol).fill('1fr').join(', ');
+    gridBlock = `#grid(columns: (${cols}), column-gutter: 10pt, row-gutter: 10pt,
+${cards.join(',\n')}
+)`;
+  }
+
+  const exp = g.experience.map((s) => renderCreativeSection(s, t)).filter(Boolean).join('\n\n');
+  const edu = g.education.map((s) => renderSection(s, t)).filter(Boolean).join('\n\n');
+
+  return [preamble(model, t), renderGradientCenteredHeader(header, t), summaryBlock, gridBlock, exp, edu, '']
+    .filter(Boolean).join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout, executive: executiveLayout, 'classic-featured': classicFeaturedLayout, timeline: timelineLayout, creative: creativeLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;
