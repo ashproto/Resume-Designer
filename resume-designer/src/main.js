@@ -53,6 +53,7 @@ import { initSpacingService, applySpacingSettings, getSpacingSettings, saveSpaci
 import { initAccentService } from './accentService.js';
 import { initPhotoService } from './photoService.js';
 import { COLOR_PALETTES, generatePaletteFromColor } from './typst/palettes.js';
+import { paginate } from './pagination.js';
 
 // Built-in resume variants (for initial migration)
 const BUILT_IN_VARIANTS = [
@@ -963,6 +964,14 @@ function renderCurrentResume() {
   // Re-apply photo settings after render
   initPhotoService();
   
+  // Paginate the freshly-rendered DOM into page sheets (before the inline editor
+  // re-attaches, so contenteditable is restored over the paginated nodes).
+  paginate(container, {
+    pageSize: store.getPageSize(),
+    orientation: store.getOrientation(),
+    pageWidthIn: store.getPageWidthIn(),
+  }, currentLayout);
+
   // Refresh inline editor
   refreshInlineEditor();
   updateTextToolbarState();
