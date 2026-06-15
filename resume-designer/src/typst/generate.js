@@ -1,4 +1,5 @@
 import { escapeTypstString } from './escape.js';
+import { pageDimsIn } from '../pageSetup.js';
 
 const childOfType = (node, type) => (node?.content ?? []).find((n) => n.type === type);
 const childContent = (node, type) => childOfType(node, type)?.content ?? [];
@@ -18,19 +19,23 @@ function renderRuns(nodes = []) {
   return nodes.filter((n) => n.type === 'text').map(renderRun).join('');
 }
 
-const PAPER = { letter: 'us-letter', a4: 'a4', legal: 'us-legal' };
 // Full-bleed: no outer page margin, so colored headers/sidebars reach the paper
 // edge (matching the on-screen design). The configured margins are applied as
 // INTERNAL padding via pagePad/headerPad and the sidebar grid insets below.
-function pageRule(pageSize) {
-  return PAPER[pageSize]
-    ? `#set page(paper: "${PAPER[pageSize]}", margin: 0pt)`
-    : `#set page(width: 8.5in, height: auto, margin: 0pt)`;
+// Dimensions come from pageDimsIn() — the same source the on-screen sheets use.
+function pageRule(attrs = {}) {
+  const { widthIn, heightIn } = pageDimsIn({
+    pageSize: attrs.pageSize,
+    orientation: attrs.orientation,
+    pageWidthIn: attrs.pageWidthIn,
+  });
+  const height = heightIn == null ? 'auto' : `${heightIn}in`;
+  return `#set page(width: ${widthIn}in, height: ${height}, margin: 0pt)`;
 }
 
 function preamble(model, t) {
   return [
-    pageRule(model.attrs?.pageSize ?? 'auto'),
+    pageRule(model.attrs ?? {}),
     `#set text(font: "${t.fontBody}", size: ${t.baseSizePt}pt, fill: rgb("${t.textColor}"))`,
     `#set par(leading: ${(t.lineHeight - 1).toFixed(3)}em, justify: false)`,
     `#let accent = rgb("${t.accent}")`,

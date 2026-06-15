@@ -21,7 +21,7 @@ describe('typstExport.generateTyp', () => {
   beforeEach(async () => { ({ generateTyp } = await import('../src/typstExport.js')); });
   it('builds .typ from the model + settings, honoring pageSize and layout', () => {
     const typ = generateTyp();
-    expect(typ).toContain('#set page(paper: "a4"');
+    expect(typ).toContain('#set page(width: 8.27in, height: 11.69in');
     expect(typ).toContain('font: "Inter"');   // modern-clean body font
     expect(typ).toContain('#grid(');          // sidebar layout
   });

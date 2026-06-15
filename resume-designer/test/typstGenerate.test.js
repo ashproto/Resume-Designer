@@ -11,11 +11,23 @@ const model = (pageSize) => ({
 });
 
 describe('modelToTypst — preamble & header', () => {
-  it('maps pageSize to #set page', () => {
-    expect(modelToTypst(model('a4'), { theme })).toContain('#set page(paper: "a4"');
-    expect(modelToTypst(model('letter'), { theme })).toContain('#set page(paper: "us-letter"');
-    expect(modelToTypst(model('legal'), { theme })).toContain('#set page(paper: "us-legal"');
+  it('maps fixed sizes to explicit #set page dimensions', () => {
+    expect(modelToTypst(model('a4'), { theme })).toContain('#set page(width: 8.27in, height: 11.69in');
+    expect(modelToTypst(model('letter'), { theme })).toContain('#set page(width: 8.5in, height: 11in');
+    expect(modelToTypst(model('legal'), { theme })).toContain('#set page(width: 8.5in, height: 14in');
+    expect(modelToTypst(model('tabloid'), { theme })).toContain('#set page(width: 11in, height: 17in');
+  });
+  it('treats legacy "auto"/continuous as open height', () => {
     expect(modelToTypst(model('auto'), { theme })).toContain('height: auto');
+    expect(modelToTypst(model('continuous'), { theme })).toContain('#set page(width: 8.5in, height: auto');
+  });
+  it('honors landscape orientation (swapped dims) for fixed sizes', () => {
+    const m = { ...model('letter'), attrs: { schemaVersion: 1, docType: 'resume', toolsDisplay: '', pageSize: 'letter', orientation: 'landscape', pageWidthIn: 8.5 } };
+    expect(modelToTypst(m, { theme })).toContain('#set page(width: 11in, height: 8.5in');
+  });
+  it('honors a custom continuous width', () => {
+    const m = { ...model('continuous'), attrs: { schemaVersion: 1, docType: 'resume', toolsDisplay: '', pageSize: 'continuous', orientation: 'portrait', pageWidthIn: 7 } };
+    expect(modelToTypst(m, { theme })).toContain('#set page(width: 7in, height: auto');
   });
   it('sets body font and base size from the theme', () => {
     const typ = modelToTypst(model('auto'), { theme });
