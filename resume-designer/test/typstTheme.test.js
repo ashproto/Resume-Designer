@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildTheme } from '../src/typst/theme.js';
+import { getSelectedFontFamilies } from '../src/fontService.js';
 
 describe('buildTheme font overrides', () => {
   it('uses explicit fontDisplay/fontBody over the pairing', () => {
@@ -43,5 +44,29 @@ describe('buildTheme', () => {
   it('exposes fontScale for layout size scaling', () => {
     expect(buildTheme({}).fontScale).toBe(1);
     expect(buildTheme({ spacing: { fontScale: 1.5 } }).fontScale).toBe(1.5);
+  });
+});
+
+describe('getSelectedFontFamilies', () => {
+  it('returns {} for preset mode (buildTheme resolves the pairing)', () => {
+    expect(getSelectedFontFamilies({ mode: 'preset', pairingId: 'classic-elegant' })).toEqual({});
+  });
+  it('returns google-mode family names from the font objects', () => {
+    const r = getSelectedFontFamilies({
+      mode: 'google', displayFont: { family: 'Montserrat' }, bodyFont: { family: 'Bitter' },
+    });
+    expect(r).toEqual({ fontDisplay: 'Montserrat', fontBody: 'Bitter' });
+  });
+  it('resolves system-mode keys to BARE family names, not CSS stacks', () => {
+    const r = getSelectedFontFamilies({ mode: 'system', displayFont: 'times', bodyFont: 'georgia' });
+    expect(r).toEqual({ fontDisplay: 'Times New Roman', fontBody: 'Georgia' });
+    // a quoted multi-font CSS stack here would break the Typst `font: "..."` literal
+    expect(r.fontDisplay).not.toContain(',');
+    expect(r.fontDisplay).not.toContain('"');
+  });
+  it('leaves system-ui to the pairing default (undefined)', () => {
+    const r = getSelectedFontFamilies({ mode: 'system', displayFont: 'system-ui', bodyFont: 'georgia' });
+    expect(r.fontDisplay).toBeUndefined();
+    expect(r.fontBody).toBe('Georgia');
   });
 });

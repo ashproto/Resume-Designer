@@ -6,6 +6,7 @@
 
 import { COLOR_PALETTES } from './palettes.js';
 import { FONT_PAIRINGS } from '../fontService.js';
+import { escapeTypstString } from './escape.js';
 
 // 1rem = 16px at browser default; 16px × 0.75 = 12pt at 96dpi.
 // Confirmed: no :root or html font-size override in styles/ — browser default (16px) applies.
@@ -64,9 +65,11 @@ export function buildTheme({
     // Scale factor (exposed for layout size scaling)
     fontScale,
 
-    // Typography
-    fontDisplay:    fontDisplay ?? pairing.display.family,
-    fontBody:       fontBody    ?? pairing.body.family,
+    // Typography. Escaped so a font family containing `"`/`\` can never break
+    // the generated Typst `font: "..."` literal (defense-in-depth; the resolved
+    // families are bare names today).
+    fontDisplay:    escapeTypstString(fontDisplay ?? pairing.display.family),
+    fontBody:       escapeTypstString(fontBody    ?? pairing.body.family),
     baseSizePt:     pt(9),
     nameSizePt:     remPt(2.25),
     taglineSizePt:  remPt(0.95),

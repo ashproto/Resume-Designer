@@ -386,13 +386,21 @@ export function getCurrentFontSettings() {
  * stack) for consumers that match fonts by family name — e.g. the Typst export.
  * Returns {} for preset mode (buildTheme resolves the pairing from pairingId).
  */
-export function getSelectedFontFamilies() {
-  const s = getCurrentFontSettings();
+export function getSelectedFontFamilies(settings = getCurrentFontSettings()) {
+  const s = settings;
   if (s.mode === 'google') {
     return { fontDisplay: s.displayFont?.family, fontBody: s.bodyFont?.family };
   }
   if (s.mode === 'system') {
-    const resolve = (f) => (f && SYSTEM_FONT_STACKS[f]?.family) || f || undefined;
+    // Typst matches a single family name, not a CSS stack. Use the bare `.name`
+    // (e.g. 'Times New Roman'); `.family` is a quoted multi-font CSS fallback
+    // stack Typst can't parse. 'system-ui' has no portable PDF family, so leave
+    // it to the pairing default (undefined). The Rust compile's system-font
+    // search resolves these when the user has the font installed.
+    const resolve = (f) => {
+      if (!f || f === 'system-ui') return undefined;
+      return SYSTEM_FONT_STACKS[f]?.name ?? f;
+    };
     return { fontDisplay: resolve(s.displayFont), fontBody: resolve(s.bodyFont) };
   }
   return {};
