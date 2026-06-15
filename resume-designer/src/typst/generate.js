@@ -303,7 +303,44 @@ ${sidebarCell}
   return [preamble(model, ct), renderGradientHeader(header, ct), grid, ''].join('\n\n');
 }
 
-const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout };
+// Stacked-vertical layout: single column, every section is a boxed card.
+// Custom sections are split: highlight customs (type !== 'skills') rendered before
+// skills customs (type === 'skills'). Mirrors renderResumeStackedVertical in renderer.js +
+// .stacked-vertical-section in resume.css (background: var(--sidebar-bg), border-radius: 8px).
+// The accent underline rule is intentionally omitted (mirrors ::after { display:none } in CSS).
+function splitCustoms(customs) {
+  return {
+    highlights: customs.filter((s) => s.attrs?.type !== 'skills'),
+    skills:     customs.filter((s) => s.attrs?.type === 'skills'),
+  };
+}
+
+function renderBoxedSection(section, t) {
+  const heading = renderRuns(childContent(section, 'heading'));
+  const body = blocksOf(section)
+    .filter((n) => n.type !== 'heading')
+    .map((b) => renderBlock(b, t))
+    .filter(Boolean)
+    .join('\n\n');
+  const inner = [
+    `#text(font: "${t.fontDisplay}", weight: "bold", fill: accent)[${heading}]`,
+    body,
+  ].filter(Boolean).join('\n\n');
+  return `#block(fill: rgb("${t.sidebarBg}"), radius: 8pt, inset: 8pt, width: 100%)[
+${inner}
+]`;
+}
+
+function stackedVerticalLayout(model, t) {
+  const header = (model.content ?? []).find((n) => n.type === 'header');
+  const g = groupSections(model);
+  const { highlights, skills } = splitCustoms(g.customs);
+  const ordered = [...g.summary, ...highlights, ...skills, ...g.experience, ...g.education, ...g.tools];
+  const body = ordered.map((s) => renderBoxedSection(s, t)).filter(Boolean).join('\n\n');
+  return [preamble(model, t), renderHeader(header, t), body, ''].join('\n\n');
+}
+
+const LAYOUTS = { stacked: stackedLayout, sidebar: sidebarLayout, classic: classicLayout, 'right-sidebar': rightSidebarLayout, modern: modernLayout, compact: compactLayout, 'stacked-vertical': stackedVerticalLayout };
 
 export function modelToTypst(model, { theme, layout = 'stacked' } = {}) {
   const fn = LAYOUTS[layout] ?? LAYOUTS.stacked;

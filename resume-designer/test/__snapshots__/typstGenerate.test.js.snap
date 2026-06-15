@@ -293,3 +293,57 @@ exports[`modelToTypst — sidebar > matches the recorded sidebar snapshot 1`] = 
 
 "
 `;
+
+exports[`modelToTypst — stacked-vertical > matches the recorded stacked-vertical snapshot 1`] = `
+"#set page(width: 8.5in, height: auto, margin: (top: 0.5in, bottom: 0.5in, left: 0.5in, right: 0.5in))
+#set text(font: "DM Sans", size: 9pt, fill: rgb("#2d2a26"))
+#set par(leading: 0.450em, justify: false)
+#let accent = rgb("#c45c3e")
+
+#text(font: "Cormorant Garamond", size: 27pt, weight: "bold")[#"Ada"]
+
+#text(size: 11.399999999999999pt, fill: rgb("#6b6560"))[#"P"]
+
+#text(fill: rgb("#6b6560"))[#"a@x.com"]
+
+#block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
+
+[#"S."]
+]
+
+#block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Highlights"]
+
+[#"Did X"]
+]
+
+#block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Skills"]
+
+[#"Rust"]
+]
+
+#block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
+
+#text(font: "Cormorant Garamond", weight: "bold")[#"Eng"]
+#text(fill: rgb("#c45c3e"))[#"Acme"]
+#text(style: "italic", fill: rgb("#6b6560"))[#"2020"]
+#list(marker: [#"•"], [#"v2"])
+]
+
+#block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Education"]
+
+[#"BSc"]
+]
+
+#block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
+#text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Tools"]
+
+[#"Figma"]
+]
+
+"
+`;

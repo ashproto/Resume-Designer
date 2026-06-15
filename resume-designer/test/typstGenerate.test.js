@@ -215,3 +215,59 @@ describe('modelToTypst — modern', () => {
     expect(modelToTypst(m, { theme: t, layout: 'modern' })).toMatchSnapshot();
   });
 });
+
+describe('modelToTypst — stacked-vertical', () => {
+  const t = buildTheme({});
+  // Model with BOTH a type:'list' custom (a highlight) AND a type:'skills' custom
+  const m = flatToModel({
+    name: 'Ada', tagline: 'P', contact: { email: 'a@x.com' },
+    summary: 'S.',
+    sections: [
+      { id: 'h', title: 'Highlights', type: 'list', content: ['Did X'] },
+      { id: 's', title: 'Skills', type: 'skills', content: ['Rust'] },
+    ],
+    experience: [{ id: 'e', title: 'Eng', company: 'Acme', dates: '2020', bullets: ['v2'] }],
+    education: ['BSc'],
+    tools: 'Figma',
+  });
+
+  it('orders: Summary → Highlights → Skills → Experience → Education → Tools', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'stacked-vertical' });
+    const at = (s) => typ.indexOf(s);
+    expect(at('#"Summary"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Highlights"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Skills"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Experience"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Education"')).toBeGreaterThanOrEqual(0);
+    expect(at('#"Tools"')).toBeGreaterThanOrEqual(0);
+    // Summary is first (after preamble/header)
+    expect(at('#"Summary"')).toBeLessThan(at('#"Highlights"'));
+    // Highlights (non-skills custom) before Skills custom
+    expect(at('#"Highlights"')).toBeLessThan(at('#"Skills"'));
+    // Skills before Experience
+    expect(at('#"Skills"')).toBeLessThan(at('#"Experience"'));
+    // Experience before Education
+    expect(at('#"Experience"')).toBeLessThan(at('#"Education"'));
+    // Education before Tools
+    expect(at('#"Education"')).toBeLessThan(at('#"Tools"'));
+  });
+
+  it('renders each section as a boxed card (fill: rgb(")', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'stacked-vertical' });
+    expect(typ).toContain('fill: rgb("');
+  });
+
+  it('does NOT emit a #line accent rule inside section cards', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'stacked-vertical' });
+    expect(typ).not.toContain('#line(length: 100%');
+  });
+
+  it('is single-column (no #grid()', () => {
+    const typ = modelToTypst(m, { theme: t, layout: 'stacked-vertical' });
+    expect(typ).not.toContain('#grid(');
+  });
+
+  it('matches the recorded stacked-vertical snapshot', () => {
+    expect(modelToTypst(m, { theme: t, layout: 'stacked-vertical' })).toMatchSnapshot();
+  });
+});
