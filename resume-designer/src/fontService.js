@@ -23,7 +23,7 @@ export const FONT_PAIRINGS = {
   'creative': {
     name: 'Creative',
     display: { family: 'Playfair Display', weights: [400, 600, 700], category: 'serif' },
-    body: { family: 'Source Sans Pro', weights: [400, 600], category: 'sans-serif' },
+    body: { family: 'Source Sans 3', weights: [400, 600], category: 'sans-serif' },
     googleFonts: true
   },
   'technical': {
