@@ -36,7 +36,11 @@ pub fn run() {
             #[cfg(desktop)]
             commands::updater::check_update_on_channel,
             #[cfg(desktop)]
-            commands::updater::install_pending_update
+            commands::updater::install_pending_update,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            commands::typst_compile::typst_render_preview,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            commands::typst_compile::typst_export_pdf
         ]);
 
     builder
