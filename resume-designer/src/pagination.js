@@ -77,7 +77,14 @@ function rectOuterH(el, scale) {
 // never orphans; every other child is one whole-block unit. ---
 function splittableInfo(el) {
   if (!el.classList) return null;
-  if (el.classList.contains('experience-section')) return { itemSel: ':scope > .experience-item', itemWrap: null };
+  if (el.classList.contains('experience-section')) {
+    // Timeline nests items in .timeline-container as .timeline-item; the other
+    // layouts render .experience-item directly under the section.
+    if (el.querySelector(':scope > .timeline-container')) {
+      return { itemSel: ':scope > .timeline-item', itemWrap: '.timeline-container' };
+    }
+    return { itemSel: ':scope > .experience-item', itemWrap: null };
+  }
   if (el.classList.contains('education-section')) return { itemSel: ':scope > p', itemWrap: '.education-content' };
   return null;
 }
@@ -214,5 +221,60 @@ function paginateSingle(resumeEl, cfg, widthPx, heightPx, scale) {
   resumeEl.replaceChildren(pages);
 }
 
-// TEMPORARY stub — the real two-column implementation is a later task.
-function paginateTwo(resumeEl, _cfg, widthPx, _heightPx, _scale) { paginateContinuous(resumeEl, widthPx); }
+// Two-column: paginate the sidebar and main columns INDEPENDENTLY, then build
+// per-page grids. Cloning the grid + each column (shallow) preserves grid-template,
+// CSS `order`, and the sidebar background (which fills each sheet). The full-width
+// header and any lead band (executive summary) sit on sheet 1 only.
+function paginateTwo(resumeEl, cfg, widthPx, heightPx, scale) {
+  const header = resumeEl.querySelector(':scope > .resume-header');
+  const bodyWrap = cfg.bodyWrap ? resumeEl.querySelector(`:scope > ${cfg.bodyWrap}`) : null;
+  const gridHost = bodyWrap || resumeEl;
+  const grid = gridHost.querySelector(`:scope > ${cfg.grid}`);
+  if (!grid) { paginateContinuous(resumeEl, widthPx); return; }
+
+  const leadEls = cfg.lead && bodyWrap ? Array.from(bodyWrap.querySelectorAll(`:scope > ${cfg.lead}`)) : [];
+  const colEls = cfg.cols.map((sel) => grid.querySelector(`:scope > ${sel}`)).filter(Boolean);
+  if (colEls.length < 2) { paginateContinuous(resumeEl, widthPx); return; }
+
+  const headerH = header ? rectOuterH(header, scale) : 0;
+  const leadH = leadEls.reduce((s, el) => s + rectOuterH(el, scale), 0);
+
+  const cols = colEls.map((col) => {
+    const leaves = flowUnits(col);
+    const heights = measureLeaves(leaves, scale);
+    const pageContentPx = Math.max(1, heightPx - vPadding(col));
+    const firstPageContentPx = Math.max(1, pageContentPx - headerH - leadH);
+    const assign = assignBlocksToPages(heights, { firstPageContentPx, pageContentPx });
+    return { col, leaves, assign };
+  });
+  const numPages = Math.max(1, ...cols.map(({ assign }) => (assign[assign.length - 1] ?? 0) + 1));
+
+  const pages = makePagesContainer();
+  for (let p = 0; p < numPages; p++) {
+    const page = makeSheet(widthPx, heightPx);
+    if (p === 0 && header) page.appendChild(header);
+
+    // Rebuild the body-wrapper chain (compact/executive) so its CSS + lead apply.
+    let mount = page;
+    if (bodyWrap) {
+      const bw = bodyWrap.cloneNode(false);
+      bw.style.display = 'flex';
+      bw.style.flexDirection = 'column';
+      grow(bw);
+      if (p === 0) leadEls.forEach((el) => bw.appendChild(el));
+      page.appendChild(bw);
+      mount = bw;
+    }
+
+    const gridClone = grid.cloneNode(false); // keep grid-template + classes
+    grow(gridClone);
+    cols.forEach(({ col, leaves, assign }) => {
+      const colClone = col.cloneNode(false); // keep column classes (sidebar bg, order)
+      buildColumn(colClone, leaves.filter((_, i) => assign[i] === p));
+      gridClone.appendChild(colClone);
+    });
+    mount.appendChild(gridClone);
+    pages.appendChild(page);
+  }
+  resumeEl.replaceChildren(pages);
+}
