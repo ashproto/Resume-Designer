@@ -72,72 +72,97 @@ function rectOuterH(el, scale) {
   return el.getBoundingClientRect().height / scale + computedV(el, 'marginTop') + computedV(el, 'marginBottom');
 }
 
-// --- flow units: break long sections (experience/education) between their items
-// so pages fill tightly. The section heading rides with its first item so it
-// never orphans; every other child is one whole-block unit. ---
-function splittableInfo(el) {
+// --- recursive flow model: break long containers (experience/education/sidebar
+// sections, AND experience entries between their bullets) so pages fill tightly.
+// Each container's "head" (section title / entry header) rides with its first
+// child and is never repeated on continuation pages. ---
+
+// A splittable container → how to find its head + its items (the items live
+// directly under itemWrap, or under the element itself when itemWrap is null).
+// Items may themselves be splittable (an entry splits into its bullets).
+function splittableConfig(el) {
   if (!el.classList) return null;
   if (el.classList.contains('experience-section')) {
-    // Timeline nests items in .timeline-container as .timeline-item; the other
-    // layouts render .experience-item directly under the section.
-    if (el.querySelector(':scope > .timeline-container')) {
-      return { itemSel: ':scope > .timeline-item', itemWrap: '.timeline-container' };
-    }
-    return { itemSel: ':scope > .experience-item', itemWrap: null };
+    const tl = el.querySelector(':scope > .timeline-container');
+    return { head: [':scope > .section-title'], itemWrap: tl ? ':scope > .timeline-container' : null,
+             itemSel: tl ? ':scope > .timeline-item' : ':scope > .experience-item' };
   }
-  if (el.classList.contains('education-section')) return { itemSel: ':scope > p', itemWrap: '.education-content' };
+  if (el.classList.contains('experience-item')) {
+    return { head: [':scope > .experience-header', ':scope > .experience-dates'],
+             itemWrap: ':scope > .experience-bullets', itemSel: ':scope > li' };
+  }
+  if (el.classList.contains('education-section')) {
+    return { head: [':scope > .section-title'], itemWrap: ':scope > .education-content', itemSel: ':scope > p' };
+  }
+  if (el.classList.contains('sidebar-section')) {
+    return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content', itemSel: ':scope > p' };
+  }
   return null;
 }
-function flowUnits(containerEl) {
-  const leaves = [];
-  for (const child of Array.from(containerEl.children)) {
-    const info = splittableInfo(child);
-    if (!info) { leaves.push({ node: child, section: null }); continue; }
-    const itemsParent = info.itemWrap ? child.querySelector(`:scope > ${info.itemWrap}`) : child;
-    const items = itemsParent ? Array.from(itemsParent.querySelectorAll(info.itemSel)) : [];
-    if (!items.length) { leaves.push({ node: child, section: null }); continue; }
-    const heading = child.querySelector(':scope > .section-title');
-    items.forEach((item, i) => {
-      leaves.push({ node: item, section: child, info, heading: i === 0 ? heading : null, first: i === 0 });
-    });
-  }
-  return leaves;
+
+// Build a flow node: a GROUP (splittable: head + child nodes) or a LEAF (atomic).
+// Falls back to a leaf when the container has nothing to split (e.g. no bullets).
+function makeNode(el) {
+  const cfg = splittableConfig(el);
+  if (!cfg) return { group: false, el };
+  const wrapEl = cfg.itemWrap ? el.querySelector(cfg.itemWrap) : el;
+  const items = wrapEl ? Array.from(wrapEl.querySelectorAll(cfg.itemSel)) : [];
+  if (items.length < 1) return { group: false, el };
+  const head = cfg.head.map((s) => el.querySelector(s)).filter(Boolean);
+  return { group: true, el, head, wrapEl: wrapEl === el ? null : wrapEl, children: items.map(makeNode) };
 }
-// The first item of a section is measured from the SECTION top, so its slot
-// includes the heading + the section's top padding.
-function leafTopEl(l) { return (l.first && l.section) ? l.section : l.node; }
-function measureLeaves(leaves, scale) {
-  const tops = leaves.map((l) => leafTopEl(l).getBoundingClientRect().top);
+
+// Flatten the tree to leaf UNITS in document order, each carrying its chain of
+// ancestor groups; firstOf marks the groups a unit opens (so heads emit once).
+function flatten(node, chain, out) {
+  if (!node.group) { out.push({ leaf: node.el, chain }); return; }
+  const ch = chain.concat([node]);
+  for (const child of node.children) flatten(child, ch, out);
+}
+function flowColumn(containerEl, scale) {
+  const units = [];
+  for (const child of Array.from(containerEl.children)) flatten(makeNode(child), [], units);
+  const seen = new Set();
+  for (const u of units) {
+    u.firstOf = [];
+    for (const g of u.chain) if (!seen.has(g)) { seen.add(g); u.firstOf.push(g); }
+  }
+  return { units, heights: measureUnits(units, scale) };
+}
+
+// A unit's vertical slot starts at the top of the OUTERMOST group it opens (so
+// the slot includes that group's head + top padding), else at the leaf itself.
+function unitTopEl(u) { return u.firstOf.length ? u.firstOf[0].el : u.leaf; }
+function measureUnits(units, scale) {
+  const tops = units.map((u) => unitTopEl(u).getBoundingClientRect().top);
   const out = [];
-  for (let i = 0; i < leaves.length; i++) {
-    out.push(i < leaves.length - 1
+  for (let i = 0; i < units.length; i++) {
+    out.push(i < units.length - 1
       ? (tops[i + 1] - tops[i]) / scale
-      : (leaves[i].node.getBoundingClientRect().bottom - tops[i]) / scale);
+      : (units[i].leaf.getBoundingClientRect().bottom - tops[i]) / scale);
   }
   return out;
 }
-// Rebuild a column/body from the leaves assigned to one page. Consecutive items
-// of the same section are regrouped under a cloned section wrapper; the heading
-// appears only on the page where the section begins.
-function buildColumn(targetEl, leaves) {
-  let curSection = null;
-  let itemsParent = null;
-  for (const l of leaves) {
-    if (!l.section) { targetEl.appendChild(l.node); curSection = null; continue; }
-    if (l.section !== curSection) {
-      curSection = l.section;
-      const sectionClone = l.section.cloneNode(false);
-      if (l.heading) sectionClone.appendChild(l.heading);
-      if (l.info && l.info.itemWrap) {
-        const wrap = l.section.querySelector(`:scope > ${l.info.itemWrap}`).cloneNode(false);
-        sectionClone.appendChild(wrap);
-        itemsParent = wrap;
-      } else {
-        itemsParent = sectionClone;
-      }
-      targetEl.appendChild(sectionClone);
+
+// Rebuild a column from the units assigned to one page. Group wrappers are cloned
+// and reused while consecutive units share them; a group's head is emitted only
+// on the page where the group first appears (no repeated titles/entry headers).
+function buildColumnRecursive(targetEl, units) {
+  let open = []; // [{ group, content }] — currently-open cloned chain, outer→inner
+  for (const u of units) {
+    let common = 0;
+    while (common < open.length && common < u.chain.length && open[common].group === u.chain[common]) common++;
+    open = open.slice(0, common);
+    for (let d = common; d < u.chain.length; d++) {
+      const group = u.chain[d];
+      const clone = group.el.cloneNode(false);
+      if (u.firstOf.includes(group)) for (const h of group.head) clone.appendChild(h);
+      let content = clone;
+      if (group.wrapEl) { const w = group.wrapEl.cloneNode(false); clone.appendChild(w); content = w; }
+      (d === 0 ? targetEl : open[d - 1].content).appendChild(clone);
+      open.push({ group, content });
     }
-    itemsParent.appendChild(l.node);
+    (open.length ? open[open.length - 1].content : targetEl).appendChild(u.leaf);
   }
 }
 
@@ -207,9 +232,8 @@ function paginateSingle(resumeEl, cfg, widthPx, heightPx, scale) {
   const body = resumeEl.querySelector(`:scope > ${cfg.body}`);
   if (!body) { paginateContinuous(resumeEl, widthPx); return; }
 
-  const leaves = flowUnits(body);
-  if (!leaves.length) { paginateContinuous(resumeEl, widthPx); return; }
-  const heights = measureLeaves(leaves, scale);
+  const { units, heights } = flowColumn(body, scale);
+  if (!units.length) { paginateContinuous(resumeEl, widthPx); return; }
   const headerH = header ? rectOuterH(header, scale) : 0;
   const pad = vPadding(body);
   const pageContentPx = Math.max(1, heightPx - pad);
@@ -223,7 +247,7 @@ function paginateSingle(resumeEl, cfg, widthPx, heightPx, scale) {
     if (p === 0 && header) page.appendChild(header);
     const bodyClone = body.cloneNode(false); // shallow: keep classes, drop children
     grow(bodyClone);
-    buildColumn(bodyClone, leaves.filter((_, i) => assign[i] === p));
+    buildColumnRecursive(bodyClone, units.filter((_, i) => assign[i] === p));
     page.appendChild(bodyClone);
     pages.appendChild(page);
   }
@@ -249,12 +273,11 @@ function paginateTwo(resumeEl, cfg, widthPx, heightPx, scale) {
   const leadH = leadEls.reduce((s, el) => s + rectOuterH(el, scale), 0);
 
   const cols = colEls.map((col) => {
-    const leaves = flowUnits(col);
-    const heights = measureLeaves(leaves, scale);
+    const { units, heights } = flowColumn(col, scale);
     const pageContentPx = Math.max(1, heightPx - vPadding(col));
     const firstPageContentPx = Math.max(1, pageContentPx - headerH - leadH);
     const assign = assignBlocksToPages(heights, { firstPageContentPx, pageContentPx });
-    return { col, leaves, assign };
+    return { col, units, assign };
   });
   const numPages = Math.max(1, ...cols.map(({ assign }) => (assign[assign.length - 1] ?? 0) + 1));
 
@@ -277,9 +300,9 @@ function paginateTwo(resumeEl, cfg, widthPx, heightPx, scale) {
 
     const gridClone = grid.cloneNode(false); // keep grid-template + classes
     grow(gridClone);
-    cols.forEach(({ col, leaves, assign }) => {
+    cols.forEach(({ col, units, assign }) => {
       const colClone = col.cloneNode(false); // keep column classes (sidebar bg, order)
-      buildColumn(colClone, leaves.filter((_, i) => assign[i] === p));
+      buildColumnRecursive(colClone, units.filter((_, i) => assign[i] === p));
       gridClone.appendChild(colClone);
     });
     mount.appendChild(gridClone);
