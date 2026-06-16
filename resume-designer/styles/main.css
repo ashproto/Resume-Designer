@@ -1664,7 +1664,9 @@ html[data-theme="dark"] .header-variant-select {
   box-sizing: border-box;
   background: #fff;
   border-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 10px 40px rgba(0, 0, 0, 0.1);
+  /* Tight shadow only — a heavy halo would darken the translucent material
+     showing through the gap between sheets, so keep the bleed small. */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
   overflow: hidden;
   display: flex;
   flex-direction: column;
