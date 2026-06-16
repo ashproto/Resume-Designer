@@ -168,6 +168,7 @@ pub async fn capture_pdf_from_window(
     window_label: String,
     page_size: Option<PageSize>,
     capture_rect: Option<CaptureRect>,
+    capture_rects: Option<Vec<CaptureRect>>,
     pending: State<'_, PendingPdfPath>,
 ) -> Result<PdfResult, String> {
     // Take the path out of the slot — consuming it means a second capture
@@ -201,16 +202,22 @@ pub async fn capture_pdf_from_window(
     #[cfg(target_os = "macos")]
     {
         let _ = page_size;
-        Ok(pdf_macos::capture_pdf(target, save_path, capture_rect).await)
+        // Prefer the per-sheet rects (one PDF page each, merged + scaled). Fall
+        // back to the single whole-view rect for older callers / the empty case.
+        let rects = capture_rects
+            .filter(|v| !v.is_empty())
+            .or_else(|| capture_rect.clone().map(|r| vec![r]))
+            .unwrap_or_default();
+        Ok(pdf_macos::capture_pdf(target, save_path, rects).await)
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = capture_rect;
+        let _ = (capture_rect, capture_rects);
         Ok(pdf_windows::capture_pdf(target, save_path, page_size).await)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = (target, save_path);
+        let _ = (target, save_path, capture_rect, capture_rects);
         Ok(PdfResult::error(
             "PDF export is not supported on this platform",
         ))

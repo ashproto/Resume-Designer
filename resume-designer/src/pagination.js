@@ -156,6 +156,12 @@ function buildColumnRecursive(targetEl, units) {
     for (let d = common; d < u.chain.length; d++) {
       const group = u.chain[d];
       const clone = group.el.cloneNode(false);
+      // Don't let a rebuilt section grow to fill the sheet. The résumé uses
+      // `.experience-section { flex: 1 }` to bottom-anchor education on a single
+      // page; across paginated sheets that growth would shove trailing content
+      // (e.g. Education) to the bottom of the last page. Paginated content flows
+      // top-down — the leftover space belongs at the bottom of the sheet.
+      clone.style.flex = '0 0 auto';
       if (u.firstOf.includes(group)) for (const h of group.head) clone.appendChild(h);
       let content = clone;
       if (group.wrapEl) { const w = group.wrapEl.cloneNode(false); clone.appendChild(w); content = w; }
@@ -210,7 +216,9 @@ export function paginate(resumeEl, setup, layoutId) {
   resumeEl.classList.add('is-paginated');
   const container = resumeEl.closest('.resume-container');
   if (container) container.classList.add('is-paginated');
-  resumeEl.style.width = `${widthPx}px`;
+  // !important so the print/PDF mode's `.resume { width: 8.5in !important }`
+  // can't override the real sheet width while we measure the columns.
+  resumeEl.style.setProperty('width', `${widthPx}px`, 'important');
 
   if (heightPx == null) { paginateContinuous(resumeEl, widthPx); return; }
   if (cfg.family === 'single') paginateSingle(resumeEl, cfg, widthPx, heightPx, scale);

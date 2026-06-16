@@ -298,15 +298,23 @@ async function generatePdfNative(_resumeEl, filename) {
       height: bounds.height,
     };
 
+    // Per-sheet rects from the print window — one PDF page per on-screen
+    // .resume-page, merged + scaled in Rust. Falls back to the single
+    // whole-view rect if the print window didn't report sheets.
+    const captureRects = Array.isArray(bounds.pages) && bounds.pages.length
+      ? bounds.pages
+      : [captureRect];
+
     console.log(
       `PDF Export: print-window bounds ` +
       `${bounds.width.toFixed(0)}×${bounds.height.toFixed(0)} CSS px ` +
-      `(${pageSize.width.toFixed(2)}in × ${pageSize.height.toFixed(2)}in)`
+      `(${pageSize.width.toFixed(2)}in × ${pageSize.height.toFixed(2)}in), ` +
+      `${captureRects.length} sheet(s)`
     );
 
     // No `savePath` arg — Rust resolves the destination from the slot the
     // picker filled. `savePath` is still in scope for diagnostics only.
-    const result = await capturePdfFromWindow(PRINT_LABEL, pageSize, captureRect);
+    const result = await capturePdfFromWindow(PRINT_LABEL, pageSize, captureRect, captureRects);
 
     if (result.success) {
       console.log('PDF Export: PDF saved to:', result.filePath || savePath);

@@ -489,7 +489,7 @@ export async function pickPdfSavePath(defaultName = 'Resume.pdf') {
  *   anchors the resume at origin so x/y are always 0) is consumed by the
  *   macOS WKWebView createPDF path.
  */
-export async function capturePdfFromWindow(windowLabel, pageSize = null, captureRect = null) {
+export async function capturePdfFromWindow(windowLabel, pageSize = null, captureRect = null, captureRects = null) {
   if (!isTauri) {
     return { success: false, error: 'Native PDF generation not available in browser' };
   }
@@ -498,6 +498,7 @@ export async function capturePdfFromWindow(windowLabel, pageSize = null, capture
     windowLabel,
     pageSize,
     captureRect,
+    captureRects,
   });
 }
 

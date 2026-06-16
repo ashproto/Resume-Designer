@@ -858,6 +858,50 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
   // -------------------------------------------------------------------------
   return (
     <>
+      {/* ===== Page Setup ===== */}
+      <PanelSection title="Page Setup" {...sectionProps('page-setup')}>
+        <ControlGroup label="Page Size">
+          <Select value={pageSize} onValueChange={handleSetPageSize}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZE_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ControlGroup>
+
+        {pageSize === 'continuous' ? (
+          <ControlGroup label="Page Width (inches)">
+            <Input
+              type="number"
+              step="0.1"
+              min="3"
+              max="20"
+              className="h-8 px-2"
+              value={pageWidthIn}
+              onChange={(e) => handleSetPageWidth(e.target.value)}
+            />
+          </ControlGroup>
+        ) : (
+          <ControlGroup label="Orientation">
+            <Segmented
+              stretch
+              options={[
+                { value: 'portrait', label: 'Portrait' },
+                { value: 'landscape', label: 'Landscape' },
+              ]}
+              value={orientation}
+              onChange={handleSetOrientation}
+            />
+          </ControlGroup>
+        )}
+      </PanelSection>
+
       {/* ===== Color Theme ===== */}
       <PanelSection title="Color Theme" {...sectionProps('color-theme')}>
         {/* Palette swatches — mockup `.sw`: 34px, rounded-8, three-tone fill,
@@ -1260,50 +1304,6 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
             </button>
           ))}
         </div>
-      </PanelSection>
-
-      {/* ===== Page Setup ===== */}
-      <PanelSection title="Page Setup" {...sectionProps('page-setup')}>
-        <ControlGroup label="Page Size">
-          <Select value={pageSize} onValueChange={handleSetPageSize}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAGE_SIZE_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ControlGroup>
-
-        {pageSize === 'continuous' ? (
-          <ControlGroup label="Page Width (inches)">
-            <Input
-              type="number"
-              step="0.1"
-              min="3"
-              max="20"
-              className="h-8 px-2"
-              value={pageWidthIn}
-              onChange={(e) => handleSetPageWidth(e.target.value)}
-            />
-          </ControlGroup>
-        ) : (
-          <ControlGroup label="Orientation">
-            <Segmented
-              stretch
-              options={[
-                { value: 'portrait', label: 'Portrait' },
-                { value: 'landscape', label: 'Landscape' },
-              ]}
-              value={orientation}
-              onChange={handleSetOrientation}
-            />
-          </ControlGroup>
-        )}
       </PanelSection>
 
       {/* ===== Spacing & Sizing ===== */}

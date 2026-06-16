@@ -271,13 +271,12 @@ html.pdf-export-mode button {
    translucent preview area around it.
    ========================================================================== */
 @media print {
-  #resume.is-paginated { width: max-content; background: transparent; padding: 0; }
+  #resume.is-paginated { background: transparent; padding: 0; }
   .resume-pages { gap: 0; }
   .resume-page { box-shadow: none; border-radius: 0; }
 }
 
 html.pdf-export-mode #resume.is-paginated {
-  width: max-content !important;
   background: transparent !important;
   padding: 0 !important;
 }
