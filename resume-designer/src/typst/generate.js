@@ -124,12 +124,15 @@ function renderExperienceItem(it, t) {
 }
 
 function renderBlock(node, t) {
+  // NOTE: these are joined into Typst MARKUP by the section renderers, where a
+  // bare `[...]` is LITERAL bracket characters. Use `#[...]` so each is a content
+  // block evaluated in markup (renders the content, no visible brackets).
   switch (node.type) {
-    case 'paragraph':      return `[${renderRuns(node.content)}]`;
+    case 'paragraph':      return `#[${renderRuns(node.content)}]`;
     case 'bulletList':     return renderBullets(node, t);
-    case 'tagGroup':       return `[${renderTags(node)}]`;
+    case 'tagGroup':       return `#[${renderTags(node)}]`;
     case 'experienceItem': return renderExperienceItem(node, t);
-    case 'educationItem':  return `[${renderRuns(node.content)}]`;
+    case 'educationItem':  return `#[${renderRuns(node.content)}]`;
     default: return '';
   }
 }

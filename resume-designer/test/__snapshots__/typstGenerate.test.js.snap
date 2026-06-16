@@ -17,13 +17,13 @@ exports[`modelToTypst — blocks, sections, stacked > matches the recorded stack
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"Led "#emph[#"growth"]#"."]
+#[#"Led "#emph[#"growth"]#"."]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Skills"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"Rust" #h(0.6em) #"Go"]
+#[#"Rust" #h(0.6em) #"Go"]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
 
@@ -38,7 +38,7 @@ exports[`modelToTypst — blocks, sections, stacked > matches the recorded stack
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"Figma" #h(0.6em) #"git"]
+#[#"Figma" #h(0.6em) #"git"]
 ]
 
 "
@@ -63,7 +63,7 @@ exports[`modelToTypst — classic > matches the recorded classic snapshot 1`] = 
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"S."]
+#[#"S."]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Professional Experience"]
 
@@ -78,19 +78,19 @@ exports[`modelToTypst — classic > matches the recorded classic snapshot 1`] = 
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"BSc — MIT — 2018"]
+#[#"BSc — MIT — 2018"]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Skills"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"Rust"]
+#[#"Rust"]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Tools"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"Figma"]
+#[#"Figma"]
 ]
 
 "
@@ -115,12 +115,12 @@ exports[`modelToTypst — classic-featured > matches the recorded classic-featur
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"S."]
+#[#"S."]
 
 #block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Highlights"]
 
-[#"Did X"]
+#[#"Did X"]
 ]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Professional Experience"]
@@ -136,19 +136,19 @@ exports[`modelToTypst — classic-featured > matches the recorded classic-featur
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"BSc"]
+#[#"BSc"]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Skills"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"Rust"]
+#[#"Rust"]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Tools"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"Figma"]
+#[#"Figma"]
 ]
 
 "
@@ -177,7 +177,7 @@ exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = 
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"S."]
+#[#"S."]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
 
@@ -193,19 +193,19 @@ exports[`modelToTypst — compact > matches the recorded compact snapshot 1`] = 
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Rust"]
+#[#"Rust"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Figma"]
+#[#"Figma"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Education"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"BSc — MIT"]
+#[#"BSc — MIT"]
 ])
 ]
 
@@ -233,12 +233,12 @@ exports[`modelToTypst — creative > matches the recorded creative snapshot 1`] 
 block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, stroke: (left: 3pt + accent), width: 100%)[
 #text(font: "Cormorant Garamond", size: 10.20pt, weight: "bold", fill: accent)[#"Skills"]
 
-[#"Rust"]
+#[#"Rust"]
 ],
 block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, stroke: (left: 3pt + accent), width: 100%)[
 #text(font: "Cormorant Garamond", size: 10.20pt, weight: "bold", fill: accent)[#"Tools"]
 
-[#"Figma"]
+#[#"Figma"]
 ]
 )
 
@@ -255,7 +255,7 @@ block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, stroke: (left: 3pt + accent
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"BSc"]
+#[#"BSc"]
 ]"
 `;
 
@@ -294,19 +294,19 @@ exports[`modelToTypst — executive > matches the recorded executive snapshot 1`
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Rust"]
+#[#"Rust"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Figma"]
+#[#"Figma"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Education"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"BSc — MIT"]
+#[#"BSc — MIT"]
 ])
 ]"
 `;
@@ -332,26 +332,26 @@ exports[`modelToTypst — modern > matches the recorded modern snapshot 1`] = `
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Rust"]
+#[#"Rust"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Figma"]
+#[#"Figma"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Education"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"BSc — MIT"]
+#[#"BSc — MIT"]
 ],
   [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"S."]
+#[#"S."]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
 
@@ -390,7 +390,7 @@ exports[`modelToTypst — right-sidebar > matches the recorded right-sidebar sna
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"S."]
+#[#"S."]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
 
@@ -406,13 +406,13 @@ exports[`modelToTypst — right-sidebar > matches the recorded right-sidebar sna
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Rust"]
+#[#"Rust"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Figma"]
+#[#"Figma"]
 ])
 ]
 
@@ -442,20 +442,20 @@ exports[`modelToTypst — sidebar > matches the recorded sidebar snapshot 1`] = 
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Rust" #h(0.6em) #"Go"]
+#[#"Rust" #h(0.6em) #"Go"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Figma" #h(0.6em) #"git"]
+#[#"Figma" #h(0.6em) #"git"]
 ],
   [
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"S."]
+#[#"S."]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
 
@@ -487,19 +487,19 @@ exports[`modelToTypst — stacked-vertical > matches the recorded stacked-vertic
 #block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Summary"]
 
-[#"S."]
+#[#"S."]
 ]
 
 #block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Highlights"]
 
-[#"Did X"]
+#[#"Did X"]
 ]
 
 #block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Skills"]
 
-[#"Rust"]
+#[#"Rust"]
 ]
 
 #block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
@@ -514,13 +514,13 @@ exports[`modelToTypst — stacked-vertical > matches the recorded stacked-vertic
 #block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Education"]
 
-[#"BSc"]
+#[#"BSc"]
 ]
 
 #block(fill: rgb("#f4e8e4"), radius: 8pt, inset: 8pt, width: 100%)[
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Tools"]
 
-[#"Figma"]
+#[#"Figma"]
 ]
 ]
 
@@ -550,7 +550,7 @@ exports[`modelToTypst — timeline > matches the recorded timeline snapshot 1`] 
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"First programmer."]
+#[#"First programmer."]
 
 #text(font: "Cormorant Garamond", weight: "bold", fill: accent)[#"Experience"]
 
@@ -572,20 +572,20 @@ block(width: 100%)[
 
 #line(length: 100%, stroke: 0.5pt + accent)
 
-[#"BSc"]
+#[#"BSc"]
 ],
   [
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Skills"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Rust"]
+#[#"Rust"]
 
 #text(font: "Cormorant Garamond", size: 9.60pt, weight: "bold", fill: accent)[#upper[#"Tools"]]
 
 #line(length: 100%, stroke: 1pt + accent)
 
-[#"Figma"]
+#[#"Figma"]
 ])
 ]
 
