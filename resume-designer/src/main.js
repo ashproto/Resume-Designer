@@ -19,6 +19,8 @@ import {
   renderResumeCreative
 } from './renderer.js';
 import { initPdfExport } from './pdf.js';
+import { paginate, resetPaginatedState } from './pagination.js';
+import { normalizePageSize, DEFAULT_PAGE_WIDTH_IN } from './pageSetup.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
 import { initVariants } from './variantManager.js';
 import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
@@ -711,7 +713,22 @@ function handleDesignChange(change) {
       saveSettings({ layout: change.value });
       renderCurrentResume();
       break;
-      
+
+    case 'pageSize':
+      saveSettings({ pageSize: change.value });
+      renderCurrentResume();
+      break;
+
+    case 'orientation':
+      saveSettings({ orientation: change.value });
+      renderCurrentResume();
+      break;
+
+    case 'pageWidthIn':
+      saveSettings({ pageWidthIn: change.value });
+      renderCurrentResume();
+      break;
+
     case 'customColor':
       customColor = change.value;
       applyCustomPalette(change.value);
@@ -1208,6 +1225,18 @@ function initTextTools() {
   updateTextToolbarState();
 }
 
+// Read the active page-setup (size / orientation / width) from the global
+// settings, normalized. The print window loads the same settings object, so the
+// on-screen sheets and the exported PDF paginate identically.
+function getPageSetup() {
+  const s = getSettings();
+  return {
+    pageSize: normalizePageSize(s.pageSize),
+    orientation: s.orientation === 'landscape' ? 'landscape' : 'portrait',
+    pageWidthIn: Number(s.pageWidthIn) > 0 ? Number(s.pageWidthIn) : DEFAULT_PAGE_WIDTH_IN,
+  };
+}
+
 // Render the current resume
 function renderCurrentResume() {
   const container = document.getElementById('resume');
@@ -1215,6 +1244,7 @@ function renderCurrentResume() {
   
   const data = store.getData();
   if (!data) {
+    resetPaginatedState(container);
     container.innerHTML = `
       <div class="empty-state">
         <p>No resume loaded</p>
@@ -1283,6 +1313,11 @@ function renderCurrentResume() {
   // Re-apply photo settings after render
   initPhotoService();
   
+  // Paginate the just-rendered résumé into page "sheets". Screen and PDF share
+  // this path (continuous = one open-height sheet); the print window calls the
+  // same renderCurrentResume(), so the exported PDF matches what's on screen.
+  paginate(container, getPageSetup(), currentLayout);
+
   // Refresh inline editor
   refreshInlineEditor();
   updateTextToolbarState();

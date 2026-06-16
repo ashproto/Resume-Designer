@@ -19,6 +19,9 @@ const DEFAULT_STORAGE = {
   settings: {
     colorPalette: 'terracotta',
     layout: 'sidebar',
+    pageSize: 'continuous',
+    orientation: 'portrait',
+    pageWidthIn: 8.5,
     customColor: '#c45c3e',
     openrouterKey: '',
     autoFallback: false,
