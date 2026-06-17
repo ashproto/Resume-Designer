@@ -503,6 +503,38 @@ export async function capturePdfFromWindow(windowLabel, pageSize = null, capture
 }
 
 /**
+ * Read the just-generated preview PDF as base64 so the renderer can display it
+ * in an <iframe> before the user saves. Returns null in the browser (no native
+ * preview there).
+ */
+export async function readPdfPreview() {
+  if (!isTauri) return null;
+  const { core } = await tauri();
+  return await core.invoke('read_pdf_preview');
+}
+
+/**
+ * Copy the previewed temp PDF to the path the user just confirmed via
+ * pickPdfSavePath. Returns a PdfResult ({ success, filePath?, error?, canceled? }).
+ */
+export async function savePdfPreview() {
+  if (!isTauri) return { success: false, error: 'Native PDF save not available in browser' };
+  const { core } = await tauri();
+  return await core.invoke('save_pdf_preview');
+}
+
+/** Delete the preview temp PDF (user cancelled). Best-effort; never throws. */
+export async function discardPdfPreview() {
+  if (!isTauri) return;
+  try {
+    const { core } = await tauri();
+    await core.invoke('discard_pdf_preview');
+  } catch (e) {
+    console.warn('discardPdfPreview failed:', e);
+  }
+}
+
+/**
  * Check whether a legacy Electron LevelDB exists on disk with this
  * app's data in it. Returns a `ProbeResult` shape: `{ found, sourcePath,
  * keyCount, variantCount, jobDescriptionCount, userProfilePresent }`.

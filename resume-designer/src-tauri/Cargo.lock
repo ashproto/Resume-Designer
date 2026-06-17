@@ -3082,6 +3082,7 @@ dependencies = [
 name = "resume-designer"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "block2",
  "dirs 5.0.1",
  "lopdf",

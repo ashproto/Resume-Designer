@@ -5,34 +5,49 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { renderPdfPreview } from '@/pdfPreview';
 
-// PDF "Download" filename dialog — the React port of the vanilla modal that
-// pdf.js used to build via insertAdjacentHTML. pdf.js keeps ALL the capture
-// logic (hidden print window, Rust commands, html2pdf fallback, busy state); it
-// just dispatches `rd:open-pdf-dialog` with { defaultFilename, onDownload } and
-// this dialog collects the filename and calls onDownload(filename) — the same
-// bridge shape as diffView.js → <DiffDialog />. Composed from genuine shadcn
-// primitives (Dialog / Input / Button / Label); matches the approved mockup's
-// PDF dialog (340px, filename + ".pdf" suffix, Cancel / Download).
+// PDF export dialog. pdf.js dispatches `rd:open-pdf-dialog` with
+// { defaultFilename, previewBase64?, onConfirm, onCancel }:
+//  - Desktop (Tauri): `previewBase64` is the REAL generated PDF (base64). It is
+//    rasterized with pdf.js into stacked <canvas> sheets — NOT an <iframe>: the
+//    app's CSP forbids blob/asset frames and WKWebView won't render PDF frames
+//    reliably anyway (see pdfPreview.js). The user reviews it, names it, then
+//    Saves (→ native location dialog → copy temp to chosen path) or Cancels
+//    (→ discard temp).
+//  - Browser: no `previewBase64` → a compact filename-only dialog → html2pdf.
+//
+// Confirm calls onConfirm(filename); every other dismissal (Cancel, X, Esc,
+// backdrop) calls onCancel — so the temp file is always cleaned up.
 export default function PdfDialog() {
   const [open, setOpen] = useState(false);
   const [filename, setFilename] = useState('Resume');
-  const onDownloadRef = useRef(null);
+  const [previewBase64, setPreviewBase64] = useState(null);
+  const [status, setStatus] = useState('idle'); // 'idle' | 'loading' | 'done' | 'error'
+  const [errMsg, setErrMsg] = useState('');
+  const cbRef = useRef({ onConfirm: null, onCancel: null });
+  const confirmedRef = useRef(false);
   const inputRef = useRef(null);
+  const [hostNode, setHostNode] = useState(null);
 
   useEffect(() => {
     const onOpen = (e) => {
-      const { defaultFilename, onDownload } = e.detail || {};
-      onDownloadRef.current = typeof onDownload === 'function' ? onDownload : null;
+      const { defaultFilename, previewBase64: b64, onConfirm, onCancel } = e.detail || {};
+      cbRef.current = {
+        onConfirm: typeof onConfirm === 'function' ? onConfirm : null,
+        onCancel: typeof onCancel === 'function' ? onCancel : null,
+      };
+      confirmedRef.current = false;
       setFilename(defaultFilename || 'Resume');
+      setPreviewBase64(b64 || null);
+      setStatus(b64 ? 'loading' : 'idle');
       setOpen(true);
     };
     window.addEventListener('rd:open-pdf-dialog', onOpen);
     return () => window.removeEventListener('rd:open-pdf-dialog', onOpen);
   }, []);
 
-  // Focus + select the filename when the dialog opens (matches the old setTimeout
-  // focus/select so the default name is ready to overwrite).
+  // Focus + select the filename when the dialog opens.
   useEffect(() => {
     if (!open) return undefined;
     const t = setTimeout(() => {
@@ -42,18 +57,77 @@ export default function PdfDialog() {
     return () => clearTimeout(t);
   }, [open]);
 
-  const download = () => {
+  // Rasterize the PDF into the canvas host whenever a preview opens. `hostNode`
+  // is set by a callback ref, so this runs only once the (portaled) host <div>
+  // is actually attached — a plain useRef reads null here because Radix mounts
+  // the dialog content after this component's effects run. Cleanup cancels an
+  // in-flight render, destroys the doc, and clears the host.
+  useEffect(() => {
+    if (!open || !previewBase64 || !hostNode) return undefined;
+    let cancelled = false;
+    let pdfDoc = null;
+    setStatus('loading');
+    setErrMsg('');
+    renderPdfPreview(previewBase64, hostNode, () => cancelled)
+      .then((pdf) => { pdfDoc = pdf; if (!cancelled) setStatus('done'); })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('PDF preview render failed:', err);
+          setErrMsg(String((err && err.message) || err));
+          setStatus('error');
+        }
+      });
+    return () => {
+      cancelled = true;
+      if (pdfDoc) { try { pdfDoc.destroy(); } catch (_) { /* ignore */ } }
+      hostNode.replaceChildren();
+    };
+  }, [open, previewBase64, hostNode]);
+
+  const confirm = () => {
+    confirmedRef.current = true;
     setOpen(false);
-    onDownloadRef.current?.(filename);
+    cbRef.current.onConfirm?.(filename);
   };
 
+  // Fires for every close. Skip onCancel exactly once after a confirm so a
+  // confirm never also reports a cancel (which would discard the just-saved temp).
+  const handleOpenChange = (next) => {
+    setOpen(next);
+    if (!next) {
+      if (confirmedRef.current) { confirmedRef.current = false; return; }
+      cbRef.current.onCancel?.();
+    }
+  };
+
+  const hasPreview = !!previewBase64;
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-sm glass-card">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className={hasPreview ? 'max-w-2xl glass-card' : 'max-w-sm glass-card'}>
         <DialogHeader>
-          <DialogTitle>Download PDF</DialogTitle>
-          <DialogDescription className="sr-only">Choose a filename for the exported PDF</DialogDescription>
+          <DialogTitle>{hasPreview ? 'Export PDF' : 'Download PDF'}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {hasPreview ? 'Preview the PDF, then save it' : 'Choose a filename for the exported PDF'}
+          </DialogDescription>
         </DialogHeader>
+
+        {hasPreview && (
+          <div className="relative h-[60vh] w-full overflow-auto rounded-md border bg-muted/30 p-3">
+            <div ref={setHostNode} className="flex flex-col items-center gap-3" />
+            {status === 'loading' && (
+              <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-muted-foreground">
+                Rendering preview…
+              </div>
+            )}
+            {status === 'error' && (
+              <div className="absolute inset-0 grid place-items-center px-6 text-center text-sm text-destructive">
+                Couldn’t render the preview{errMsg ? `: ${errMsg}` : ''}. The PDF generated fine — you can still save it.
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="space-y-2">
           <Label htmlFor="pdf-filename">Filename</Label>
           <div className="flex items-center gap-2">
@@ -62,16 +136,17 @@ export default function PdfDialog() {
               ref={inputRef}
               value={filename}
               onChange={(e) => setFilename(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); download(); } }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirm(); } }}
               placeholder="Resume"
             />
             <span className="shrink-0 text-sm text-muted-foreground">.pdf</span>
           </div>
         </div>
+
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={download}>
-            <Download className="size-4" /> Download
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
+          <Button onClick={confirm}>
+            <Download className="size-4" /> {hasPreview ? 'Save PDF' : 'Download'}
           </Button>
         </DialogFooter>
       </DialogContent>

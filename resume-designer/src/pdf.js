@@ -9,7 +9,7 @@
  * Browser fallback: html2pdf.js produces image-based PDFs (not ATS-friendly).
  */
 
-import { isElectron, pickPdfSavePath, capturePdfFromWindow } from './native.js';
+import { isElectron, pickPdfSavePath, capturePdfFromWindow, readPdfPreview, savePdfPreview, discardPdfPreview } from './native.js';
 import { getCurrentId, getVariantList } from './variantManager.js';
 import { store } from './store.js';
 import { appStorage } from './appStorage.js';
@@ -37,23 +37,25 @@ async function loadHtml2Pdf() {
 export function initPdfExport() {
   const downloadBtn = document.getElementById('download-pdf');
 
-  downloadBtn.addEventListener('click', showPdfDialog);
+  downloadBtn.addEventListener('click', startPdfExport);
 }
 
-// Open the filename dialog. The dialog itself is a React component
-// (src/components/PdfDialog.jsx); this dispatches the bridge event with the
-// default filename and the export runner, mirroring diffView.js → <DiffDialog/>.
-// The React dialog collects the filename and calls onDownload(filename).
-function showPdfDialog() {
-  // Default filename from the active variant — slugified active-variant name
-  // only (no hard-coded prefix). The header is a React component now, so read
-  // the name from the variant store rather than a #variant-dropdown element.
+// PDF button handler. Desktop (Tauri): generate the real PDF to a temp file,
+// then open the preview dialog where the user reviews it and saves or cancels.
+// Browser: keep the filename dialog → html2pdf download (no native PDF to
+// preview there).
+function startPdfExport() {
   const current = getVariantList().find((v) => v.id === getCurrentId());
-  const selectedLabel = current?.name || 'Resume';
-  const defaultFilename = selectedLabel.trim().replace(/\s+/g, '-');
+  const defaultFilename = (current?.name || 'Resume').trim().replace(/\s+/g, '-');
 
+  if (isElectron) {
+    runNativeExportWithPreview(defaultFilename);
+    return;
+  }
+
+  // Browser fallback — filename-only dialog (no previewUrl), then html2pdf.
   window.dispatchEvent(new CustomEvent('rd:open-pdf-dialog', {
-    detail: { defaultFilename, onDownload: handleDownloadPdf },
+    detail: { defaultFilename, onConfirm: handleDownloadPdf, onCancel: () => {} },
   }));
 }
 
@@ -89,15 +91,10 @@ async function handleDownloadPdf(customFilename) {
   }
   
   try {
-    if (isElectron) {
-      // Use Electron's native printToPDF - preserves actual text (ATS-compatible)
-      console.log('PDF Export: Using native Electron printToPDF...');
-      await generatePdfNative(resumeEl, filename);
-    } else {
-      // Browser fallback: html2pdf.js (produces image-based PDFs)
-      console.log('PDF Export: Using html2pdf.js (browser fallback)...');
-      await generatePdfWithHtml2Pdf(resumeEl, filename);
-    }
+    // Browser fallback only — html2pdf (image-based). Tauri uses the native
+    // preview flow (runNativeExportWithPreview), not this path.
+    console.log('PDF Export: Using html2pdf.js (browser fallback)...');
+    await generatePdfWithHtml2Pdf(resumeEl, filename);
     
   } catch (error) {
     console.error('PDF generation failed:', error);
@@ -167,15 +164,8 @@ async function generatePdfNative(_resumeEl, filename) {
     );
   }
 
-  // 1. Save path (main window's dialog, fully visible / no chrome change).
-  //    The Rust side stashes the chosen path in a server-side slot that
-  //    `capture_pdf_from_window` consumes — the renderer never feeds the
-  //    path back into the capture call.
-  const savePath = await pickPdfSavePath(filename);
-  if (!savePath) {
-    console.log('PDF Export: Save canceled by user');
-    return;
-  }
+  // Generation writes to a server-side TEMP file (no save path yet) — the user
+  // picks the destination later, from the preview dialog.
 
   const { listen } = await import('@tauri-apps/api/event');
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -312,17 +302,13 @@ async function generatePdfNative(_resumeEl, filename) {
       `${captureRects.length} sheet(s)`
     );
 
-    // No `savePath` arg — Rust resolves the destination from the slot the
-    // picker filled. `savePath` is still in scope for diagnostics only.
+    // Capture to the server-side temp file; the preview dialog reads it back.
     const result = await capturePdfFromWindow(PRINT_LABEL, pageSize, captureRect, captureRects);
 
-    if (result.success) {
-      console.log('PDF Export: PDF saved to:', result.filePath || savePath);
-    } else if (result.canceled) {
-      console.log('PDF Export: Save canceled');
-    } else {
-      throw new Error(result.error || 'Failed to save PDF file');
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to generate PDF');
     }
+    console.log('PDF Export: preview PDF generated');
   } finally {
     // 6. Cleanup: unsubscribe listeners and close the hidden window.
     try { if (unlistenReady) unlistenReady(); } catch (_) { /* ignore */ }
@@ -336,6 +322,81 @@ async function generatePdfNative(_resumeEl, filename) {
       }
     }
   }
+}
+
+// ===== Native (Tauri) export with preview =====
+
+// Mirror the busy state to the visible React header button (rd:pdf-busy) and
+// disable the hidden proxy. No spinner markup here — the React button renders
+// its own spinner from rd:pdf-busy.
+function setExportBusy(busy) {
+  setPdfBusy(busy);
+  const btn = document.getElementById('download-pdf');
+  if (btn) btn.disabled = busy;
+}
+
+// Desktop export: generate the real PDF to a temp file, then open the preview
+// dialog showing it. The dialog rasterizes the PDF with pdf.js → <canvas>
+// (see pdfPreview.js for why not an <iframe>). The user saves (→ native
+// location dialog → copy temp to path) or cancels (→ discard the temp).
+async function runNativeExportWithPreview(defaultFilename) {
+  const resumeEl = document.getElementById('resume');
+  if (!resumeEl) {
+    alert('Failed to generate PDF: Resume content not found.');
+    return;
+  }
+  setExportBusy(true);
+  let previewBase64 = null;
+  try {
+    await generatePdfNative(resumeEl, defaultFilename); // captures to the temp slot
+    previewBase64 = await readPdfPreview();
+    if (!previewBase64) throw new Error('Could not read the generated PDF for preview.');
+  } catch (error) {
+    console.error('PDF generation failed:', error);
+    alert(`Failed to generate PDF: ${error.message || 'Unknown error'}.`);
+    await discardPdfPreview();
+    setExportBusy(false);
+    return;
+  }
+  setExportBusy(false);
+
+  window.dispatchEvent(new CustomEvent('rd:open-pdf-dialog', {
+    detail: {
+      defaultFilename,
+      previewBase64,
+      onConfirm: (filename) => savePreviewedPdf(filename),
+      onCancel: () => cancelPreviewedPdf(),
+    },
+  }));
+}
+
+// Save the previewed temp PDF: pick the destination (native dialog), copy temp →
+// path. Backing out of the native dialog discards the temp.
+async function savePreviewedPdf(customFilename) {
+  const filename = customFilename
+    ? (customFilename.endsWith('.pdf') ? customFilename : `${customFilename}.pdf`)
+    : 'Resume.pdf';
+  const path = await pickPdfSavePath(filename);
+  if (!path) {
+    await discardPdfPreview();
+    return;
+  }
+  setExportBusy(true);
+  try {
+    const result = await savePdfPreview();
+    if (!result.success) throw new Error(result.error || 'Failed to save PDF.');
+    console.log('PDF Export: saved to', result.filePath || path);
+  } catch (error) {
+    console.error('PDF save failed:', error);
+    alert(`Failed to save PDF: ${error.message || 'Unknown error'}.`);
+  } finally {
+    setExportBusy(false);
+  }
+}
+
+// Cancel the preview: drop the temp file.
+async function cancelPreviewedPdf() {
+  await discardPdfPreview();
 }
 
 /**

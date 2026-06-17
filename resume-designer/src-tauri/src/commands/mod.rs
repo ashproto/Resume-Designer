@@ -6,6 +6,8 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 /// Server-side single-slot binding between `pick_pdf_save_path` and
 /// `capture_pdf_from_window`. The picker stores the user-chosen path here;
 /// the capture command takes it back out and writes the PDF to that path.
@@ -15,6 +17,13 @@ use tokio::sync::oneshot;
 /// just confirmed via the native save dialog.
 #[derive(Default)]
 pub struct PendingPdfPath(pub Mutex<Option<PathBuf>>);
+
+/// Server-side slot for the just-generated PREVIEW PDF — a temp file the user
+/// has not saved yet. `capture_pdf_from_window` writes here; `read_pdf_preview`
+/// streams it to the renderer for display; `save_pdf_preview` copies it to the
+/// user-confirmed `PendingPdfPath`; `discard_pdf_preview` deletes it on cancel.
+#[derive(Default)]
+pub struct PreviewPdfPath(pub Mutex<Option<PathBuf>>);
 
 #[cfg(target_os = "macos")]
 mod pdf_macos;
@@ -151,16 +160,15 @@ pub async fn pick_pdf_save_path(
     }
 }
 
-/// Capture a PDF from a target window's web view (identified by label) and
-/// write it to whatever path was previously stored by `pick_pdf_save_path`.
-/// The target is typically a hidden Tauri window the renderer just spawned
-/// at `/?print=1`, which renders only the resume and signals readiness via
-/// a `print-ready` event before this is invoked.
+/// Capture a PDF from a target window's web view (identified by label) into a
+/// TEMP file, and stash that path in `PreviewPdfPath`. The target is typically a
+/// hidden Tauri window the renderer just spawned at `/print.html`, which renders
+/// only the resume and signals readiness via a `print-ready` event before this
+/// is invoked.
 ///
-/// The renderer cannot pass an arbitrary save path here — the path is taken
-/// from the `PendingPdfPath` slot the picker filled. If the picker hasn't run
-/// (or its result was already consumed), this fails fast rather than writing
-/// anywhere.
+/// The renderer never chooses where the file lands: this writes to a temp path,
+/// the renderer reads it back via `read_pdf_preview` to show a preview, and
+/// `save_pdf_preview` copies it to the path the native picker confirmed.
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn capture_pdf_from_window(
@@ -169,25 +177,20 @@ pub async fn capture_pdf_from_window(
     page_size: Option<PageSize>,
     capture_rect: Option<CaptureRect>,
     capture_rects: Option<Vec<CaptureRect>>,
-    pending: State<'_, PendingPdfPath>,
+    preview: State<'_, PreviewPdfPath>,
 ) -> Result<PdfResult, String> {
-    // Take the path out of the slot — consuming it means a second capture
-    // call (e.g. from an injected script reusing the user's last pick) fails
-    // with a clear error instead of silently overwriting the prior file.
-    let save_path = {
-        let mut slot = pending
-            .0
-            .lock()
-            .map_err(|_| "PDF save-path slot lock poisoned".to_string())?;
-        match slot.take() {
-            Some(p) => p.to_string_lossy().into_owned(),
-            None => {
-                return Ok(PdfResult::error(
-                    "No pending PDF save path. Call pick_pdf_save_path first.",
-                ))
-            }
-        }
-    };
+    // Generate to a temp file the user previews before choosing where to save.
+    // Unique per export (pid + nanos) so overlapping exports never collide.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_path = std::env::temp_dir().join(format!(
+        "resume-designer-preview-{}-{}.pdf",
+        std::process::id(),
+        nanos
+    ));
+    let save_path = temp_path.to_string_lossy().into_owned();
 
     let target = match app.get_webview_window(&window_label) {
         Some(w) => w,
@@ -200,7 +203,7 @@ pub async fn capture_pdf_from_window(
     };
 
     #[cfg(target_os = "macos")]
-    {
+    let result = {
         let _ = page_size;
         // Prefer the per-sheet rects (one PDF page each, merged + scaled). Fall
         // back to the single whole-view rect for older callers / the empty case.
@@ -208,20 +211,105 @@ pub async fn capture_pdf_from_window(
             .filter(|v| !v.is_empty())
             .or_else(|| capture_rect.clone().map(|r| vec![r]))
             .unwrap_or_default();
-        Ok(pdf_macos::capture_pdf(target, save_path, rects).await)
-    }
+        pdf_macos::capture_pdf(target, save_path, rects).await
+    };
     #[cfg(target_os = "windows")]
-    {
+    let result = {
         let _ = (capture_rect, capture_rects);
-        Ok(pdf_windows::capture_pdf(target, save_path, page_size).await)
-    }
+        pdf_windows::capture_pdf(target, save_path, page_size).await
+    };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
+    let result = {
         let _ = (target, save_path, capture_rect, capture_rects);
-        Ok(PdfResult::error(
-            "PDF export is not supported on this platform",
-        ))
+        PdfResult::error("PDF export is not supported on this platform")
+    };
+
+    // Stash the temp path so read/save/discard can find it; clean up on failure.
+    if result.success {
+        if let Ok(mut slot) = preview.0.lock() {
+            *slot = Some(temp_path);
+        }
+    } else {
+        let _ = std::fs::remove_file(&temp_path);
     }
+    Ok(result)
+}
+
+/// Read the just-generated preview PDF as base64 so the renderer can show it in
+/// an `<iframe>` before the user saves. Read-only — never writes.
+#[tauri::command]
+pub async fn read_pdf_preview(preview: State<'_, PreviewPdfPath>) -> Result<String, String> {
+    let path = {
+        let slot = preview
+            .0
+            .lock()
+            .map_err(|_| "preview slot lock poisoned".to_string())?;
+        slot.clone()
+    };
+    let path = path.ok_or_else(|| "No preview PDF available".to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read preview PDF: {}", e))?;
+    Ok(STANDARD.encode(bytes))
+}
+
+/// Copy the preview temp PDF to the user-confirmed path (from `pick_pdf_save_path`),
+/// then delete the temp. The renderer supplies neither the bytes nor the path.
+#[tauri::command]
+pub async fn save_pdf_preview(
+    pending: State<'_, PendingPdfPath>,
+    preview: State<'_, PreviewPdfPath>,
+) -> Result<PdfResult, String> {
+    let dest = {
+        let mut slot = pending
+            .0
+            .lock()
+            .map_err(|_| "PDF save-path slot lock poisoned".to_string())?;
+        slot.take()
+    };
+    let dest = match dest {
+        Some(p) => p,
+        None => {
+            return Ok(PdfResult::error(
+                "No pending PDF save path. Call pick_pdf_save_path first.",
+            ))
+        }
+    };
+    let src = {
+        let slot = preview
+            .0
+            .lock()
+            .map_err(|_| "preview slot lock poisoned".to_string())?;
+        slot.clone()
+    };
+    let src = match src {
+        Some(p) => p,
+        None => return Ok(PdfResult::error("No preview PDF to save.")),
+    };
+    match std::fs::copy(&src, &dest) {
+        Ok(_) => {
+            if let Ok(mut slot) = preview.0.lock() {
+                *slot = None;
+            }
+            let _ = std::fs::remove_file(&src);
+            Ok(PdfResult::success(dest.to_string_lossy().into_owned()))
+        }
+        Err(e) => Ok(PdfResult::error(format!("Failed to save PDF file: {}", e))),
+    }
+}
+
+/// Delete the preview temp PDF when the user cancels. Best-effort.
+#[tauri::command]
+pub async fn discard_pdf_preview(preview: State<'_, PreviewPdfPath>) -> Result<(), String> {
+    let path = {
+        let mut slot = preview
+            .0
+            .lock()
+            .map_err(|_| "preview slot lock poisoned".to_string())?;
+        slot.take()
+    };
+    if let Some(p) = path {
+        let _ = std::fs::remove_file(p);
+    }
+    Ok(())
 }
 
 /// Indicates whether a save_path was returned. Returns `None` on cancellation.

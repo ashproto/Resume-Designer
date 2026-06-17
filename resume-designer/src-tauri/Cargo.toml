@@ -28,6 +28,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt"] }
 thiserror = "1"
+# base64 streams the preview PDF's bytes to the renderer (read_pdf_preview).
+base64 = "0.22"
 # Used by the one-time legacy-Electron migrator (commands/migration.rs).
 # Pure-Rust LevelDB reader so we don't drag in a C++ build toolchain across
 # all three target platforms. The `fs` feature is REQUIRED, not optional:
