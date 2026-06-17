@@ -69,7 +69,6 @@ export async function renderPdfPreview(base64, container, shouldCancel) {
 
   for (let n = 1; n <= pdf.numPages; n += 1) {
     if (shouldCancel?.()) break;
-    // eslint-disable-next-line no-await-in-loop
     const page = await pdf.getPage(n);
     const base = page.getViewport({ scale: 1 });
     const cssScale = targetWidth / base.width;
@@ -84,7 +83,6 @@ export async function renderPdfPreview(base64, container, shouldCancel) {
     canvas.style.boxShadow = '0 1px 6px rgba(0, 0, 0, 0.18)';
     canvas.style.borderRadius = '2px';
 
-    // eslint-disable-next-line no-await-in-loop
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
     if (shouldCancel?.()) break;
     container.appendChild(canvas);

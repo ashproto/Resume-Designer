@@ -11,6 +11,11 @@ use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 
 use super::{CaptureRect, PdfResult};
 
+/// Shared oneshot slot the WKWebView createPDF completion handler fills exactly
+/// once (the sender is taken on first delivery so a duplicate callback can't
+/// double-send).
+type PdfResultSlot = Arc<Mutex<Option<oneshot::Sender<Result<Vec<u8>, String>>>>>;
+
 // CSS pixels are 1/96 in; PDF points are 1/72 in. WKWebView's createPDF maps
 // 1 CSS px -> 1 pt, so an 816px / 8.5in sheet would otherwise be an 11.33in
 // page. Scale every captured page by 72/96 to restore its true physical size.
@@ -135,7 +140,7 @@ async fn capture_one(target_window: &WebviewWindow, rect: &CaptureRect) -> Resul
 
 // Deliver a capture result through the oneshot slot exactly once.
 fn send_result(
-    slot: &Arc<Mutex<Option<oneshot::Sender<Result<Vec<u8>, String>>>>>,
+    slot: &PdfResultSlot,
     result: Result<Vec<u8>, String>,
 ) {
     if let Ok(mut guard) = slot.lock() {

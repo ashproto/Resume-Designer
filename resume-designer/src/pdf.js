@@ -136,7 +136,7 @@ async function handleDownloadPdf(customFilename) {
  * `resumeEl` is still passed in but is no longer measured — the print window
  * measures its own copy. Kept in the signature for symmetry with html2pdf.
  */
-async function generatePdfNative(_resumeEl, filename) {
+async function generatePdfNative(_resumeEl, _filename) {
   // 0. Flush any pending in-memory edits to storage BEFORE the print
   //    window opens. The store's auto-save is debounced (~SAVE_DEBOUNCE_MS),
   //    so a user who types and immediately clicks "Download PDF" can have
