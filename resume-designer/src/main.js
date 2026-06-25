@@ -725,7 +725,11 @@ function handleDesignChange(change) {
       break;
     
     case 'spacing':
-      // Spacing settings are handled by structurePanel and saved automatically
+      // Spacing (font scale, line height, section spacing, margins) changes the
+      // rendered height. With a fixed page size the already-split .resume-page
+      // sheets go stale — content clips under their overflow:hidden — so
+      // re-render to re-paginate. Continuous has no sheets to re-split.
+      if (getPageSetup().pageSize !== 'continuous') renderCurrentResume();
       break;
     
     case 'accent':

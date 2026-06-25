@@ -352,6 +352,15 @@ function dispatchDesignChange(detail) {
   window.dispatchEvent(new CustomEvent('rd:design-change', { detail }));
 }
 
+// Spacing controls apply CSS live but don't re-split paginated sheets. Debounce a
+// re-paginate (main.js no-ops it in continuous mode) so dragging a slider stays
+// smooth and the page breaks settle once the user pauses.
+let spacingRepaginateTimer = null;
+function scheduleSpacingRepaginate() {
+  clearTimeout(spacingRepaginateTimer);
+  spacingRepaginateTimer = setTimeout(() => dispatchDesignChange({ type: 'spacing' }), 200);
+}
+
 // Detect if current spacing matches a preset (ported verbatim)
 function detectSpacingPreset(spacing) {
   for (const [id, preset] of Object.entries(SPACING_PRESETS)) {
@@ -718,6 +727,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
+    scheduleSpacingRepaginate();
   }
 
   function handleMarginChange(side, value) {
@@ -725,10 +735,12 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
+    scheduleSpacingRepaginate();
   }
 
   function handleResetSpacing() {
     setSpacing(resetSpacingSettings());
+    scheduleSpacingRepaginate();
   }
 
   function handleApplySpacingPreset(presetId) {
@@ -744,6 +756,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
+    scheduleSpacingRepaginate();
   }
 
   // ===== Accent handlers ===================================================
