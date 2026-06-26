@@ -56,7 +56,7 @@
     "macOS": {
       "entitlements": "Entitlements.plist",
       "hardenedRuntime": true,
-      "minimumSystemVersion": "12.3",
+      "minimumSystemVersion": "14.4",
       "providerShortName": null
     },
     "windows": {
