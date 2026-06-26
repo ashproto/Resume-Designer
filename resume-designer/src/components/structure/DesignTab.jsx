@@ -783,10 +783,12 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyPhotoSettings(next);
     savePhotoSettings(next);
     setPhoto(next);
+    scheduleRepaginate();
   }
 
   function handleRemovePhoto() {
     setPhoto(removePhoto());
+    scheduleRepaginate();
   }
 
   function handlePhotoFile(file) {
@@ -797,6 +799,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
       applyPhotoSettings(next);
       savePhotoSettings(next);
       setPhoto(next);
+      scheduleRepaginate();
     };
     reader.readAsDataURL(file);
   }
