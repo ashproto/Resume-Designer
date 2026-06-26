@@ -529,7 +529,13 @@ export async function init() {
   // re-render. Re-paginate once the real fonts are ready so the on-screen sheets
   // match the exported PDF (the print window already does this).
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => renderCurrentResume());
+    document.fonts.ready.then(() => {
+      // Don't blow away an in-progress inline edit: if the user started editing
+      // before the webfonts resolved, re-rendering would replace their active
+      // contentEditable node with stored data and lose the unsaved text. The brief
+      // mis-pagination is cosmetic and heals on the next render.
+      if (!getActiveInlineEditable()) renderCurrentResume();
+    });
   }
 
   // Defense in depth: boot is fully done — re-broadcast the chat config state

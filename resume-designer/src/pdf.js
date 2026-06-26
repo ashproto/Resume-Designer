@@ -428,16 +428,26 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
   const exportRoot = document.documentElement;
   exportRoot.classList.add('pdf-export-mode');
 
-  // Get the resume's actual rendered dimensions
+  // Get the resume's actual rendered dimensions (after the chrome/gap collapse above).
   const resumeWidth = resumeEl.offsetWidth;
-  const resumeHeight = resumeEl.offsetHeight; // Use offsetHeight for more accurate measurement
-  
-  // Convert pixels to inches (96 DPI)
-  const pageWidthInches = resumeWidth / 96;
-  // Add a tiny buffer (0.01") to prevent content from spilling to next page
-  const pageHeightInches = (resumeHeight / 96) + 0.01;
-  
-  console.log(`PDF Export: Resume dimensions - ${resumeWidth}px x ${resumeHeight}px (${pageWidthInches.toFixed(2)}" x ${pageHeightInches.toFixed(2)}")`);
+  const resumeHeight = resumeEl.offsetHeight;
+
+  // With a fixed page size the resume is split into fixed-height .resume-page sheets;
+  // emit ONE PDF page per sheet (page = one sheet) so the export honors the selected
+  // page size instead of producing a single very tall page. Continuous mode has one
+  // open-height sheet (.is-continuous), so keep the single full-element page.
+  const sheets = resumeEl.querySelectorAll('.resume-page');
+  const firstSheet = sheets[0];
+  const paginated = !!firstSheet && !firstSheet.classList.contains('is-continuous');
+
+  // Convert pixels to inches (96 DPI). Fixed: exact sheet size so the per-sheet
+  // breaks align. Continuous: full height + a tiny buffer so the one page doesn't spill.
+  const pageWidthInches = (paginated ? firstSheet.offsetWidth : resumeWidth) / 96;
+  const pageHeightInches = paginated
+    ? firstSheet.offsetHeight / 96
+    : (resumeHeight / 96) + 0.01;
+
+  console.log(`PDF Export: ${paginated ? sheets.length + ' fixed sheet(s)' : 'continuous'} - ${pageWidthInches.toFixed(2)}" x ${pageHeightInches.toFixed(2)}"`);
   
   // html2canvas options for high quality output
   const options = {
@@ -460,13 +470,18 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
         return tag === 'script' || tag === 'noscript' || tag === 'iframe';
       }
     },
-    jsPDF: { 
-      unit: 'in', 
+    jsPDF: {
+      unit: 'in',
       format: [pageWidthInches, pageHeightInches],
       orientation: 'portrait'
     }
   };
-  
+
+  // Fixed page size -> one PDF page per .resume-page sheet (break before each).
+  if (paginated) {
+    options.pagebreak = { mode: ['css', 'legacy'], before: '.resume-page' };
+  }
+
   console.log('PDF Export: Starting PDF generation (image-based)...');
   
   try {
