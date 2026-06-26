@@ -388,7 +388,9 @@ async function savePreviewedPdf(customFilename) {
     console.log('PDF Export: saved to', result.filePath || path);
   } catch (error) {
     console.error('PDF save failed:', error);
-    alert(`Failed to save PDF: ${error.message || 'Unknown error'}.`);
+    // Propagate so the preview dialog can stay open and offer a retry — the temp
+    // PDF is still on disk, so re-picking a path and saving again works.
+    throw error;
   } finally {
     setExportBusy(false);
   }

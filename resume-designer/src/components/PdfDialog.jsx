@@ -29,6 +29,8 @@ export default function PdfDialog() {
   const confirmedRef = useRef(false);
   const inputRef = useRef(null);
   const [hostNode, setHostNode] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
 
   useEffect(() => {
     const onOpen = (e) => {
@@ -38,6 +40,8 @@ export default function PdfDialog() {
         onCancel: typeof onCancel === 'function' ? onCancel : null,
       };
       confirmedRef.current = false;
+      setSaving(false);
+      setSaveErr('');
       setFilename(defaultFilename || 'Resume');
       setPreviewBase64(b64 || null);
       setStatus(b64 ? 'loading' : 'idle');
@@ -84,15 +88,36 @@ export default function PdfDialog() {
     };
   }, [open, previewBase64, hostNode]);
 
-  const confirm = () => {
-    confirmedRef.current = true;
-    setOpen(false);
-    cbRef.current.onConfirm?.(filename);
+  const confirm = async () => {
+    // Browser (no preview): close immediately and run the download in the
+    // background — unchanged behavior.
+    if (!previewBase64) {
+      confirmedRef.current = true;
+      setOpen(false);
+      cbRef.current.onConfirm?.(filename);
+      return;
+    }
+    // Desktop preview: keep the dialog open until the save actually succeeds, so
+    // a failed save (disk full / permission denied) can be retried from the
+    // retained temp PDF instead of forcing a full re-export. onConfirm rejects
+    // only on a real save failure; backing out of the native picker resolves.
+    setSaveErr('');
+    setSaving(true);
+    try {
+      await cbRef.current.onConfirm?.(filename);
+      confirmedRef.current = true; // set before close so onCancel is skipped
+      setOpen(false);
+    } catch (err) {
+      setSaveErr(String((err && err.message) || err) || 'Failed to save the PDF.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Fires for every close. Skip onCancel exactly once after a confirm so a
   // confirm never also reports a cancel (which would discard the just-saved temp).
   const handleOpenChange = (next) => {
+    if (!next && saving) return; // don't allow dismissing mid-save
     setOpen(next);
     if (!next) {
       if (confirmedRef.current) { confirmedRef.current = false; return; }
@@ -138,15 +163,22 @@ export default function PdfDialog() {
               onChange={(e) => setFilename(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirm(); } }}
               placeholder="Resume"
+              disabled={saving}
             />
             <span className="shrink-0 text-sm text-muted-foreground">.pdf</span>
           </div>
         </div>
 
+        {saveErr && (
+          <p className="text-sm text-destructive">
+            Couldn’t save the PDF: {saveErr} Your preview is still here — try Save again.
+          </p>
+        )}
+
         <DialogFooter>
-          <Button variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
-          <Button onClick={confirm}>
-            <Download className="size-4" /> {hasPreview ? 'Save PDF' : 'Download'}
+          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={saving}>Cancel</Button>
+          <Button onClick={confirm} disabled={saving}>
+            <Download className="size-4" /> {saving ? 'Saving…' : hasPreview ? 'Save PDF' : 'Download'}
           </Button>
         </DialogFooter>
       </DialogContent>
