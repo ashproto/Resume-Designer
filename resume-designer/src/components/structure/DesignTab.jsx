@@ -352,13 +352,14 @@ function dispatchDesignChange(detail) {
   window.dispatchEvent(new CustomEvent('rd:design-change', { detail }));
 }
 
-// Spacing controls apply CSS live but don't re-split paginated sheets. Debounce a
-// re-paginate (main.js no-ops it in continuous mode) so dragging a slider stays
-// smooth and the page breaks settle once the user pauses.
-let spacingRepaginateTimer = null;
-function scheduleSpacingRepaginate() {
-  clearTimeout(spacingRepaginateTimer);
-  spacingRepaginateTimer = setTimeout(() => dispatchDesignChange({ type: 'spacing' }), 200);
+// Spacing and font changes alter the rendered height but only apply CSS / load a
+// font — they don't re-split paginated sheets. Debounce a re-paginate (main.js
+// no-ops it in continuous mode) so a slider drag stays smooth and the breaks
+// settle once the change lands.
+let repaginateTimer = null;
+function scheduleRepaginate() {
+  clearTimeout(repaginateTimer);
+  repaginateTimer = setTimeout(() => dispatchDesignChange({ type: 'spacing' }), 200);
 }
 
 // Detect if current spacing matches a preset (ported verbatim)
@@ -623,6 +624,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyFontSettings(next);
     saveFontSettings(next);
     setFontSettings(next);
+    scheduleRepaginate();
   }
 
   async function handleSelectGoogleFont(family, category, fontType) {
@@ -644,6 +646,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyFontSettings(next);
     saveFontSettings(next);
     setFontSettings(next);
+    scheduleRepaginate();
   }
 
   function handleSelectSystemFont(fontId, fontType) {
@@ -663,6 +666,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyFontSettings(next);
     saveFontSettings(next);
     setFontSettings(next);
+    scheduleRepaginate();
   }
 
   // ===== Header Style handlers =============================================
@@ -727,7 +731,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
-    scheduleSpacingRepaginate();
+    scheduleRepaginate();
   }
 
   function handleMarginChange(side, value) {
@@ -735,12 +739,12 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
-    scheduleSpacingRepaginate();
+    scheduleRepaginate();
   }
 
   function handleResetSpacing() {
     setSpacing(resetSpacingSettings());
-    scheduleSpacingRepaginate();
+    scheduleRepaginate();
   }
 
   function handleApplySpacingPreset(presetId) {
@@ -756,7 +760,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
-    scheduleSpacingRepaginate();
+    scheduleRepaginate();
   }
 
   // ===== Accent handlers ===================================================
