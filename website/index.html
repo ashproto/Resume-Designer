@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en" data-theme-default>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resume Designer — one master profile, infinite tailored resumes</title>
+  <meta name="description" content="Resume Designer is a free, open-source, AI-assisted resume builder for macOS, Windows, and the browser. Keep one master profile, spin off job-tailored resumes, and export to PDF — privately, on your own machine. Bring your own OpenRouter key.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Resume Designer — one master profile, infinite tailored resumes">
+  <meta property="og:description" content="Free, open-source, AI-assisted resume builder. One master profile, infinite job-tailored resumes, export to PDF — privately, on your own machine.">
+  <meta property="og:url" content="https://ashproto.github.io/Resume-Designer/">
+  <meta property="og:image" content="https://ashproto.github.io/Resume-Designer/hero.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Resume Designer — one master profile, infinite tailored resumes">
+  <meta name="twitter:description" content="Free, open-source, AI-assisted resume builder. One master profile, infinite job-tailored resumes, export to PDF — privately, on your own machine.">
+  <meta name="twitter:image" content="https://ashproto.github.io/Resume-Designer/hero.jpg">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600&display=swap');
+
+/* ===== THEME TOKENS ===== */
+/* :root = LIGHT defaults */
+:root{
+  --ink:#0c0a08;
+  --paper:#f4efe6;
+  --paper-2:#ece4d6;
+  --surface:#ffffff;
+  --acid:#e8503a;
+  --acid-2:#ff6a4d;
+  --acid-on:#ffffff;
+  --cobalt:#2b2bff;
+  --cobalt-on:#ffffff;
+  --cobalt-soft:#e3e0ff;
+  --acid-soft:#fbe3dc;
+  --line:rgba(12,10,8,.16);
+  --line-strong:#0c0a08;
+  --muted:#4a443b;
+  --muted-2:#5a534a;
+  --muted-3:#62594e;
+  --muted-4:#6b6358;
+  --card:#ffffff;
+  --card-ink:#0c0a08;
+  --card-muted:#5a534a;
+  --on-ink:#f4efe6;
+  --on-ink-muted:rgba(244,239,230,.78);
+  /* band = a deliberately dark inverted surface; stays dark + light-text in BOTH modes */
+  --band:#0c0a08;
+  --band-2:#1c1813;
+  --on-band:#f4efe6;
+  --on-band-muted:rgba(244,239,230,.78);
+  --on-band-faint:rgba(244,239,230,.6);
+  --band-line:rgba(244,239,230,.28);
+  --band-fill:rgba(244,239,230,.07);
+  /* saturated brand panels — always carry white text in BOTH modes */
+  --panel-acid:#e8503a;
+  --panel-acid-btn-ink:#993c1d;
+  --panel-cobalt:#2b2bff;
+  --panel-cobalt-btn-ink:#26215c;
+  /* diff colors — legible on light */
+  --diff-del-bg:#fdecea;
+  --diff-del-fg:#7a201a;
+  --diff-del-line:rgba(180,35,24,.5);
+  --diff-add-bg:#e7f6ef;
+  --diff-add-fg:#0c5c3e;
+  --diff-ctx:#3b3b3e;
+  --ok:#0f7a52;
+  --ok-on:#ffffff;
+  --bg-radial-1:var(--acid-soft);
+  --bg-radial-2:var(--cobalt-soft);
+}
+
+/* System dark when the user hasn't chosen a theme */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme]){
+    --ink:#f3eee4;
+    --paper:#0e0d10;
+    --paper-2:#16151a;
+    --surface:#1b1a20;
+    --acid:#ff6a4d;
+    --acid-2:#ff8568;
+    --acid-on:#1a0c08;
+    --cobalt:#8d8bff;
+    --cobalt-on:#15123a;
+    --cobalt-soft:#23224a;
+    --acid-soft:#2a1813;
+    --line:rgba(243,238,228,.20);
+    --line-strong:#f3eee4;
+    --muted:#c5bfb4;
+    --muted-2:#b4ada1;
+    --muted-3:#a59e92;
+    --muted-4:#928b80;
+    --card:#1b1a20;
+    --card-ink:#f3eee4;
+    --card-muted:#b4ada1;
+    --on-ink:#f3eee4;
+    --on-ink-muted:rgba(243,238,228,.74);
+    --band:#000000;
+    --band-2:#121116;
+    --on-band:#f3eee4;
+    --on-band-muted:rgba(243,238,228,.74);
+    --on-band-faint:rgba(243,238,228,.55);
+    --band-line:rgba(243,238,228,.22);
+    --band-fill:rgba(243,238,228,.08);
+    --panel-acid:#cf3f28;
+    --panel-acid-btn-ink:#7a2c12;
+    --panel-cobalt:#3f3bd6;
+    --panel-cobalt-btn-ink:#1d1873;
+    --diff-del-bg:#3a1714;
+    --diff-del-fg:#ffb4a4;
+    --diff-del-line:rgba(255,138,118,.55);
+    --diff-add-bg:#0f2e22;
+    --diff-add-fg:#7ce0b4;
+    --diff-ctx:#b4ada1;
+    --ok:#1fae74;
+    --ok-on:#06241a;
+    --bg-radial-1:#2a1813;
+    --bg-radial-2:#1a1937;
+  }
+}
+
+/* Manual override: dark */
+:root[data-theme="dark"]{
+  --ink:#f3eee4;
+  --paper:#0e0d10;
+  --paper-2:#16151a;
+  --surface:#1b1a20;
+  --acid:#ff6a4d;
+  --acid-2:#ff8568;
+  --acid-on:#1a0c08;
+  --cobalt:#8d8bff;
+  --cobalt-on:#15123a;
+  --cobalt-soft:#23224a;
+  --acid-soft:#2a1813;
+  --line:rgba(243,238,228,.20);
+  --line-strong:#f3eee4;
+  --muted:#c5bfb4;
+  --muted-2:#b4ada1;
+  --muted-3:#a59e92;
+  --muted-4:#928b80;
+  --card:#1b1a20;
+  --card-ink:#f3eee4;
+  --card-muted:#b4ada1;
+  --on-ink:#f3eee4;
+  --on-ink-muted:rgba(243,238,228,.74);
+  --band:#000000;
+  --band-2:#121116;
+  --on-band:#f3eee4;
+  --on-band-muted:rgba(243,238,228,.74);
+  --on-band-faint:rgba(243,238,228,.55);
+  --band-line:rgba(243,238,228,.22);
+  --band-fill:rgba(243,238,228,.08);
+  --panel-acid:#cf3f28;
+  --panel-acid-btn-ink:#7a2c12;
+  --panel-cobalt:#3f3bd6;
+  --panel-cobalt-btn-ink:#1d1873;
+  --diff-del-bg:#3a1714;
+  --diff-del-fg:#ffb4a4;
+  --diff-del-line:rgba(255,138,118,.55);
+  --diff-add-bg:#0f2e22;
+  --diff-add-fg:#7ce0b4;
+  --diff-ctx:#b4ada1;
+  --ok:#1fae74;
+  --ok-on:#06241a;
+  --bg-radial-1:#2a1813;
+  --bg-radial-2:#1a1937;
+}
+
+/* Manual override: light (explicit, overrides system dark) */
+:root[data-theme="light"]{
+  --ink:#0c0a08;
+  --paper:#f4efe6;
+  --paper-2:#ece4d6;
+  --surface:#ffffff;
+  --acid:#e8503a;
+  --acid-2:#ff6a4d;
+  --acid-on:#ffffff;
+  --cobalt:#2b2bff;
+  --cobalt-on:#ffffff;
+  --cobalt-soft:#e3e0ff;
+  --acid-soft:#fbe3dc;
+  --line:rgba(12,10,8,.16);
+  --line-strong:#0c0a08;
+  --muted:#4a443b;
+  --muted-2:#5a534a;
+  --muted-3:#62594e;
+  --muted-4:#6b6358;
+  --card:#ffffff;
+  --card-ink:#0c0a08;
+  --card-muted:#5a534a;
+  --on-ink:#f4efe6;
+  --on-ink-muted:rgba(244,239,230,.78);
+  --band:#0c0a08;
+  --band-2:#1c1813;
+  --on-band:#f4efe6;
+  --on-band-muted:rgba(244,239,230,.78);
+  --on-band-faint:rgba(244,239,230,.6);
+  --band-line:rgba(244,239,230,.28);
+  --band-fill:rgba(244,239,230,.07);
+  --panel-acid:#e8503a;
+  --panel-acid-btn-ink:#993c1d;
+  --panel-cobalt:#2b2bff;
+  --panel-cobalt-btn-ink:#26215c;
+  --diff-del-bg:#fdecea;
+  --diff-del-fg:#7a201a;
+  --diff-del-line:rgba(180,35,24,.5);
+  --diff-add-bg:#e7f6ef;
+  --diff-add-fg:#0c5c3e;
+  --diff-ctx:#3b3b3e;
+  --ok:#0f7a52;
+  --ok-on:#ffffff;
+  --bg-radial-1:var(--acid-soft);
+  --bg-radial-2:var(--cobalt-soft);
+}
+
+/* ===== BASE ===== */
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  color:var(--ink);
+  background:var(--paper);
+  background-image:radial-gradient(circle at 88% 4%, var(--bg-radial-1) 0%, transparent 40%),
+                   radial-gradient(circle at 2% 64%, var(--bg-radial-2) 0%, transparent 38%);
+  background-attachment:fixed;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+  transition:background-color .2s ease, color .2s ease;
+}
+.wrap{max-width:1040px;margin:0 auto;padding:0 28px;}
+h1,h2,h3,.display{font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:-0.02em;line-height:0.96;margin:0;}
+p{margin:0;}
+a{color:inherit;text-decoration:none;}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+
+/* ===== NAV ===== */
+.nav{display:flex;align-items:center;justify-content:space-between;padding:22px 28px;max-width:1040px;margin:0 auto;}
+.brand{display:flex;align-items:center;gap:11px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:19px;letter-spacing:-0.01em;}
+.mark{width:34px;height:34px;border-radius:9px;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.nav-links{display:flex;align-items:center;gap:24px;font-size:14px;font-weight:500;}
+.nav-links a.lnk{color:var(--ink);opacity:.72;transition:opacity .15s;}
+.nav-links a.lnk:hover{opacity:1;}
+.theme-toggle{
+  width:38px;height:38px;border-radius:999px;border:1.5px solid var(--line-strong);
+  background:transparent;color:var(--ink);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:background .15s, color .15s, transform .12s;
+}
+.theme-toggle:hover{background:var(--ink);color:var(--paper);}
+.theme-toggle:active{transform:scale(.94);}
+.theme-toggle .ico-sun{display:none;}
+.theme-toggle .ico-moon{display:block;}
+.nav-cta{
+  display:inline-flex;align-items:center;gap:8px;
+  background:var(--acid);color:var(--acid-on);
+  padding:10px 18px;border-radius:999px;font-size:14px;font-weight:600;
+  border:1.5px solid var(--acid);
+  transition:background .15s, border-color .15s, transform .12s;
+}
+.nav-cta:hover{background:var(--acid-2);border-color:var(--acid-2);}
+.nav-cta:active{transform:scale(.97);}
+
+/* ===== HERO ===== */
+.hero{padding:46px 0 18px;position:relative;}
+.kicker{display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--acid);margin-bottom:26px;}
+.kicker .dot{width:7px;height:7px;border-radius:50%;background:var(--acid);}
+.hero h1{font-size:88px;}
+.hero h1 .em{color:var(--acid);font-style:italic;}
+.hero h1 .blue{color:var(--cobalt);}
+.hero-grid{display:grid;grid-template-columns:1fr 300px;gap:40px;align-items:end;margin-top:30px;}
+.hero-sub{font-size:18px;line-height:1.55;color:var(--muted);max-width:430px;}
+.hero-actions{display:flex;flex-wrap:wrap;gap:13px;margin-top:30px;}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:15px 26px;border-radius:999px;font-size:15px;font-weight:600;transition:transform .12s, background .15s, color .15s, border-color .15s;cursor:pointer;}
+.btn:active{transform:scale(.97);}
+.btn-primary{background:var(--acid);color:var(--acid-on);border:1.5px solid var(--acid);}
+.btn-primary:hover{background:var(--acid-2);border-color:var(--acid-2);}
+.btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line-strong);}
+.btn-ghost:hover{background:var(--ink);color:var(--paper);}
+.hero-side{display:flex;flex-direction:column;gap:14px;padding-bottom:6px;}
+.stat{border-left:3px solid var(--cobalt);padding-left:14px;}
+.stat .n{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:34px;line-height:1;letter-spacing:-0.02em;}
+.stat .l{font-size:13px;color:var(--muted-4);margin-top:5px;font-weight:500;}
+
+/* ===== SHOT ===== */
+.shot{margin-top:44px;position:relative;}
+.shot-frame{border-radius:16px;border:1.5px solid var(--line-strong);background:var(--surface);padding:10px;box-shadow:18px 18px 0 var(--cobalt);}
+.shot-frame img{display:block;border-radius:8px;}
+.shot-tag{position:absolute;top:-16px;left:24px;background:var(--acid);color:var(--acid-on);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:7px 15px;border-radius:999px;transform:rotate(-2deg);}
+
+/* ===== SECTION HEADS ===== */
+.sec{padding:78px 0 0;}
+.sec-num{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14px;color:var(--acid);letter-spacing:.04em;margin-bottom:14px;}
+.sec-h{font-size:46px;max-width:760px;}
+.sec-h .blue{color:var(--cobalt);}
+.sec-lead{font-size:17px;color:var(--muted-2);max-width:540px;margin-top:18px;line-height:1.55;}
+
+/* ===== FEATURES ===== */
+.feat-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;margin-top:42px;}
+.fcard{border:1.5px solid var(--line-strong);border-radius:16px;padding:28px;background:var(--card);color:var(--card-ink);position:relative;overflow:hidden;}
+.fcard.big{grid-row:span 2;background:var(--band);color:var(--on-band);border-color:var(--band);}
+.fcard.acid{background:var(--panel-acid);color:#fff;border-color:var(--panel-acid);}
+.ficon{width:46px;height:46px;border-radius:12px;border:1.5px solid currentColor;display:flex;align-items:center;justify-content:center;margin-bottom:18px;opacity:.95;}
+.fcard h3{font-size:25px;margin-bottom:9px;}
+.fcard.big h3{font-size:33px;}
+.fcard p{font-size:15px;line-height:1.55;color:var(--card-muted);}
+.fcard.big p{color:var(--on-band-muted);}
+.fcard.acid p{color:rgba(255,255,255,.9);}
+/* fan-out illustration inside the big band card */
+.fanout{margin-top:30px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;}
+.fanout .master{display:flex;flex-direction:column;gap:8px;border:1.5px solid var(--band-line);background:var(--band-fill);border-radius:14px;padding:16px 18px;min-width:140px;}
+.fanout .master .mlabel{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--on-band-faint);}
+.fanout .master .mname{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:18px;color:var(--on-band);line-height:1.05;}
+.fanout .master .mrows{display:flex;flex-direction:column;gap:5px;margin-top:6px;}
+.fanout .master .mrows i{height:6px;border-radius:3px;background:var(--band-line);display:block;}
+.fanout .master .mrows i:nth-child(1){width:88%;}
+.fanout .master .mrows i:nth-child(2){width:70%;}
+.fanout .master .mrows i:nth-child(3){width:80%;}
+.fanout .lines{align-self:stretch;min-width:46px;}
+.fanout .lines svg{display:block;width:100%;height:100%;}
+.fanout .variants{display:flex;flex-direction:column;gap:10px;}
+.fanout .vchip{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1.5px solid var(--band-line);border-radius:999px;padding:9px 9px 9px 15px;background:var(--band-fill);}
+.fanout .vchip .vname{font-size:13.5px;font-weight:600;color:var(--on-band);white-space:nowrap;}
+.fanout .vchip .vtag{display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;flex-shrink:0;color:#fff;}
+.fanout .vchip:nth-child(1) .vtag{background:var(--panel-acid);}
+.fanout .vchip:nth-child(2) .vtag{background:var(--panel-cobalt);}
+.fanout .vchip:nth-child(3) .vtag{background:var(--panel-acid);}
+@media (max-width:520px){
+  .fanout{grid-template-columns:1fr;gap:14px;}
+  .fanout .lines{display:none;}
+  .fanout .master{min-width:0;}
+  .fanout .vchip{justify-content:flex-start;}
+}
+.feat-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:18px;}
+.feat-row .fcard h3{font-size:21px;}
+
+/* ===== DIFF FEATURE (adapted from Direction A) ===== */
+.diff-sec{padding:78px 0 0;}
+.diff-wrap{display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;margin-top:40px;}
+.diff-text .sec-num{margin-bottom:14px;}
+.diff-text h2{font-size:44px;}
+.diff-text h2 .blue{color:var(--cobalt);}
+.diff-text .lead{font-size:17px;color:var(--muted-2);margin-top:18px;line-height:1.55;max-width:460px;}
+.diff-feats{list-style:none;padding:0;margin:26px 0 0;}
+.diff-feats li{display:flex;gap:13px;padding:13px 0;border-top:1px solid var(--line);font-size:15px;color:var(--muted);line-height:1.5;}
+.diff-feats li:first-child{border-top:none;}
+.diff-feats .ck{flex:none;width:24px;height:24px;border-radius:7px;background:var(--cobalt);color:var(--cobalt-on);display:flex;align-items:center;justify-content:center;margin-top:1px;}
+
+.diff-card{border:1.5px solid var(--line-strong);border-radius:16px;background:var(--surface);overflow:hidden;box-shadow:14px 14px 0 var(--acid);}
+.diff-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1.5px solid var(--line);font-size:13px;color:var(--muted-2);font-weight:600;}
+.diff-head .star{color:var(--acid);flex:none;}
+.diff-head .tag{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:var(--cobalt);color:var(--cobalt-on);padding:4px 11px;border-radius:999px;font-weight:700;}
+.diff-body{padding:18px;font-size:14px;line-height:1.65;font-family:'Space Grotesk','Inter',sans-serif;}
+.diff-body .line{padding:5px 12px;border-radius:8px;margin:3px 0;display:flex;gap:10px;align-items:flex-start;}
+.diff-body .line .gut{font-weight:700;flex:none;width:12px;text-align:center;opacity:.85;}
+.diff-body .ctx{color:var(--diff-ctx);}
+.diff-body .ctx .gut{color:var(--muted-4);}
+.diff-body .del{background:var(--diff-del-bg);color:var(--diff-del-fg);text-decoration:line-through;text-decoration-color:var(--diff-del-line);}
+.diff-body .add{background:var(--diff-add-bg);color:var(--diff-add-fg);}
+.diff-actions{display:flex;gap:10px;padding:14px 18px;border-top:1.5px solid var(--line);background:var(--paper-2);}
+.diff-actions .a{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;padding:9px 16px;border-radius:999px;cursor:pointer;border:1.5px solid transparent;transition:transform .12s, filter .15s;}
+.diff-actions .a:active{transform:scale(.96);}
+.diff-actions .ya{background:var(--ok);color:var(--ok-on);}
+.diff-actions .ya:hover{filter:brightness(1.06);}
+.diff-actions .na{background:transparent;border-color:var(--line-strong);color:var(--ink);}
+.diff-actions .na:hover{background:var(--ink);color:var(--paper);}
+
+/* ===== DOWNLOAD ===== */
+.dl-band{margin-top:78px;background:var(--band);color:var(--on-band);border-radius:20px;padding:54px 44px;position:relative;overflow:hidden;}
+.dl-band .sec-num{color:var(--acid-2);}
+.dl-band .sec-h{color:var(--on-band);}
+.dl-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:36px;}
+.dl-os{border:1.5px solid var(--band-line);border-radius:14px;padding:24px;}
+.dl-os .os-head{display:flex;align-items:center;gap:11px;margin-bottom:16px;}
+.dl-os .os-head .nm{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px;color:var(--on-band);}
+.dl-link{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-radius:10px;background:var(--band-fill);color:var(--on-band);margin-bottom:9px;transition:background .15s, border-color .15s;border:1px solid transparent;}
+.dl-link:hover{background:var(--acid);border-color:var(--acid);color:#fff;}
+.dl-link .t{font-size:14.5px;font-weight:600;}
+.dl-link .s{font-size:12px;color:var(--on-band-faint);margin-top:2px;}
+.dl-link:hover .s{color:rgba(255,255,255,.85);}
+.dl-link .arr{flex-shrink:0;opacity:.6;}
+.dl-warn{font-size:12.5px;color:#ff9d8a;margin-top:8px;display:flex;align-items:flex-start;gap:7px;line-height:1.45;}
+.dl-note{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:28px;font-size:14px;color:var(--on-band-muted);}
+.dl-note .pill{background:rgba(141,139,255,.26);color:#d7d5ff;border:1px solid rgba(141,139,255,.55);padding:5px 13px;border-radius:999px;font-size:12.5px;font-weight:600;}
+.dl-note a{color:var(--acid-2);font-weight:600;text-decoration:underline;text-underline-offset:3px;}
+
+/* ===== GUIDES ===== */
+.guides{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:42px;}
+.guide{border:1.5px solid var(--line-strong);border-radius:16px;background:var(--card);color:var(--card-ink);padding:30px;}
+.guide.key{background:var(--cobalt-soft);border-color:var(--cobalt);}
+.guide h3{font-size:24px;margin-bottom:6px;}
+.guide .gsub{font-size:14px;color:var(--card-muted);margin-bottom:22px;}
+.guide.key .gsub{color:var(--cobalt);}
+.steps{display:flex;flex-direction:column;gap:0;}
+.step{display:flex;gap:16px;padding:14px 0;border-top:1px solid var(--line);}
+.step:first-child{border-top:none;padding-top:0;}
+.step .si{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;width:32px;height:32px;border-radius:50%;background:var(--band);color:var(--on-band);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.guide.key .step .si{background:var(--cobalt);color:var(--cobalt-on);}
+.step .st{font-size:14.5px;font-weight:600;line-height:1.4;}
+.step .sd{font-size:13.5px;color:var(--muted-3);margin-top:3px;line-height:1.5;}
+.guide.key .step .sd{color:var(--card-muted);}
+.key-note{margin-top:20px;font-size:13px;color:var(--cobalt);background:rgba(43,43,255,.1);border:1px solid rgba(43,43,255,.28);border-radius:10px;padding:12px 14px;display:flex;gap:9px;align-items:flex-start;line-height:1.5;}
+:root[data-theme="dark"] .key-note,
+:root:not([data-theme]) .key-note{background:rgba(141,139,255,.12);border-color:rgba(141,139,255,.35);}
+
+/* ===== FAQ ===== */
+.faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 40px;margin-top:42px;}
+.faq{border-top:2px solid var(--line-strong);padding-top:18px;}
+.faq .q{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:19px;margin-bottom:9px;letter-spacing:-0.01em;}
+.faq .a{font-size:14.5px;color:var(--muted-2);line-height:1.6;}
+
+/* ===== OSS + COMMUNITY ===== */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:78px;}
+.oss{background:var(--panel-acid);color:#fff;border-radius:20px;padding:44px;display:flex;flex-direction:column;justify-content:space-between;}
+.oss .badge{display:inline-flex;align-items:center;gap:8px;background:rgba(0,0,0,.26);color:#fff;padding:7px 14px;border-radius:999px;font-size:12.5px;font-weight:600;letter-spacing:.04em;width:fit-content;}
+.oss h2{font-size:38px;margin:22px 0 12px;color:#fff;}
+.oss p{font-size:15px;line-height:1.55;color:rgba(255,255,255,.92);max-width:380px;}
+.oss .obtn{margin-top:26px;display:inline-flex;align-items:center;gap:9px;background:#fff;color:var(--panel-acid-btn-ink);font-weight:700;font-size:14.5px;padding:13px 22px;border-radius:999px;width:fit-content;transition:transform .12s;}
+.oss .obtn:active{transform:scale(.97);}
+.comm{background:var(--panel-cobalt);color:#fff;border-radius:20px;padding:44px;display:flex;flex-direction:column;justify-content:space-between;}
+.comm .badge{display:inline-flex;align-items:center;gap:8px;background:rgba(0,0,0,.26);color:#fff;padding:7px 14px;border-radius:999px;font-size:12.5px;font-weight:600;letter-spacing:.04em;width:fit-content;}
+.comm h2{font-size:38px;margin:22px 0 12px;color:#fff;}
+.comm p{font-size:15px;line-height:1.55;color:rgba(255,255,255,.9);max-width:360px;}
+.comm .obtn{margin-top:26px;display:inline-flex;align-items:center;gap:9px;background:#fff;color:var(--panel-cobalt-btn-ink);font-weight:700;font-size:14.5px;padding:13px 22px;border-radius:999px;width:fit-content;transition:transform .12s;}
+.comm .obtn:active{transform:scale(.97);}
+
+/* ===== FOOTER ===== */
+.foot{margin-top:70px;border-top:2px solid var(--line-strong);padding:40px 0 50px;}
+.foot-top{display:flex;align-items:flex-start;justify-content:space-between;gap:30px;flex-wrap:wrap;}
+.foot .display{font-size:52px;letter-spacing:-0.03em;}
+.foot .display .em{color:var(--acid);font-style:italic;}
+.foot-tagline{margin-top:18px;font-size:14px;color:var(--muted-3);max-width:320px;line-height:1.55;}
+.foot-links{display:flex;flex-direction:column;gap:11px;font-size:14.5px;font-weight:500;}
+.foot-links a{display:inline-flex;align-items:center;gap:8px;opacity:.78;transition:opacity .15s, color .15s;}
+.foot-links a:hover{opacity:1;color:var(--acid);}
+.foot-base{margin-top:32px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--muted-4);}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width:880px){
+  .hero h1{font-size:54px;}
+  .hero-grid,.feat-grid,.feat-row,.dl-grid,.guides,.faq-grid,.split,.foot-top,.diff-wrap{grid-template-columns:1fr;}
+  .diff-wrap{gap:34px;}
+  .fcard.big{grid-row:auto;}
+  .sec-h,.foot .display,.diff-text h2{font-size:32px;}
+  .nav-links a.lnk{display:none;}
+  .nav-links{gap:14px;}
+  .dl-band,.oss,.comm{padding:34px 26px;}
+  .shot-frame{box-shadow:10px 10px 0 var(--cobalt);}
+  .diff-card{box-shadow:10px 10px 0 var(--acid);}
+}
+</style>
+</head>
+<body>
+  <h1 class="sr-only">Resume Designer — a local-first, AI-assisted resume builder for macOS, Windows, and the browser.</h1>
+
+  <nav class="nav">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 3h8l4 4v14H6z" stroke="var(--paper)" stroke-width="2" stroke-linejoin="round"/><path d="M13 3v5h5" stroke="var(--acid)" stroke-width="2" stroke-linejoin="round"/><path d="M9 13h6M9 17h4" stroke="var(--paper)" stroke-width="2" stroke-linecap="round"/></svg>
+      </span>
+      Resume Designer
+    </div>
+    <div class="nav-links">
+      <a class="lnk" href="#features">Features</a>
+      <a class="lnk" href="#download">Download</a>
+      <a class="lnk" href="#guides">Guides</a>
+      <a class="lnk" href="https://github.com/ashproto/Resume-Designer">GitHub</a>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch between light and dark theme">
+        <svg class="ico-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg class="ico-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 14.5A8 8 0 119.5 4a6.5 6.5 0 0010.5 10.5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      </button>
+      <a class="nav-cta" href="https://github.com/ashproto/Resume-Designer/releases/latest">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download
+      </a>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <header class="hero">
+      <span class="kicker"><span class="dot"></span>Local-first · AI-assisted · open source</span>
+      <h1>One master profile.<br><span class="em">Infinite</span> resumes,<br><span class="blue">tailored</span> per job.</h1>
+      <div class="hero-grid">
+        <div>
+          <p class="hero-sub">Keep your full history in one place, then spin off polished, job-tailored variants — privately, on your own machine. No account, no backend, no telemetry.</p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/ashproto/Resume-Designer/releases/latest">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Download for free
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/ashproto/Resume-Designer">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.54 2.87 8.39 6.84 9.74.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.37-2.22-.26-4.55-1.14-4.55-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0112 6.84c.85 0 1.71.12 2.51.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9v2.82c0 .27.18.6.69.49A10.02 10.02 0 0022 12.25C22 6.58 17.52 2 12 2z"/></svg>
+              View on GitHub
+            </a>
+          </div>
+        </div>
+        <div class="hero-side">
+          <div class="stat"><div class="n">11</div><div class="l">distinct resume layouts</div></div>
+          <div class="stat"><div class="n">0</div><div class="l">accounts, servers, trackers</div></div>
+          <div class="stat"><div class="n">∞</div><div class="l">tailored variants per profile</div></div>
+        </div>
+      </div>
+
+      <div class="shot">
+        <span class="shot-tag">macOS · Windows · browser</span>
+        <div class="shot-frame">
+          <img src="hero.jpg" alt="Resume Designer app" style="width:100%;height:auto;border-radius:8px">
+        </div>
+      </div>
+    </header>
+
+    <!-- FEATURES -->
+    <section class="sec" id="features">
+      <div class="sec-num">01 / What it does</div>
+      <h2 class="sec-h">A profile that works <span class="blue">harder</span> than you do.</h2>
+      <p class="sec-lead">Write your history once. Tailor it forever. Every piece built for speed, privacy, and a finished look you'd actually send.</p>
+
+      <div class="feat-grid">
+        <div class="fcard big">
+          <div class="ficon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M5 20c0-3.3 3.1-5 7-5s7 1.7 7 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M18 4l1.2 2.2L21.5 7l-1.8 1.4.5 2.4L18 9.6l-2.2 1.2.5-2.4L14.5 7l2.3-.8z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>One master profile, many tailored variants</h3>
+          <p>Keep your complete work history, skills, education, and projects in a single source of truth — then spin off a fresh, job-specific variant for every role you chase. Edit the master, and every variant stays in step.</p>
+          <div class="fanout" aria-hidden="true">
+            <div class="master">
+              <span class="mlabel">Master profile</span>
+              <span class="mname">Your full<br>history</span>
+              <span class="mrows"><i></i><i></i><i></i></span>
+            </div>
+            <div class="lines">
+              <svg viewBox="0 0 46 120" preserveAspectRatio="none" fill="none">
+                <path d="M0 60 C 24 60, 24 22, 46 22" stroke="var(--band-line)" stroke-width="2"/>
+                <path d="M0 60 C 24 60, 24 60, 46 60" stroke="var(--band-line)" stroke-width="2"/>
+                <path d="M0 60 C 24 60, 24 98, 46 98" stroke="var(--band-line)" stroke-width="2"/>
+              </svg>
+            </div>
+            <div class="variants">
+              <div class="vchip">
+                <span class="vname">Product designer</span>
+                <span class="vtag"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h13m0 0l-5-5m5 5l-5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              </div>
+              <div class="vchip">
+                <span class="vname">UX researcher</span>
+                <span class="vtag"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h13m0 0l-5-5m5 5l-5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              </div>
+              <div class="vchip">
+                <span class="vname">Design lead</span>
+                <span class="vtag"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h13m0 0l-5-5m5 5l-5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fcard acid">
+          <div class="ficon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l1.8 4.4L18.5 9l-4.7 1.6L12 15l-1.8-4.4L5.5 9l4.7-1.6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>Bring-your-own AI, reviewed as diffs</h3>
+          <p>Paste a job posting and the optional assistant drafts, rewrites, and tailors with your own OpenRouter key — many models, one key, every change yours to approve.</p>
+        </div>
+
+        <div class="fcard">
+          <div class="ficon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="4" width="7" height="16" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="4" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="14" width="7" height="6" rx="1.5" stroke="currentColor" stroke-width="1.8"/></svg>
+          </div>
+          <h3>11 layouts, one click</h3>
+          <p>Sidebar, Executive, Timeline, Creative, and more — swap the whole look without retyping a word.</p>
+        </div>
+      </div>
+
+      <div class="feat-row">
+        <div class="fcard">
+          <div class="ficon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke="var(--acid)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>Import &amp; export</h3>
+          <p>Pull a profile straight from a PDF or DOCX, then export clean, multi-page PDFs to send.</p>
+        </div>
+        <div class="fcard">
+          <div class="ficon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7a4 4 0 018 0v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="15.5" r="1.4" fill="var(--acid)"/></svg>
+          </div>
+          <h3>Local-first &amp; private</h3>
+          <p>Your profile, resumes, and settings live as plain files on your device. Nothing leaves unless you ask it to.</p>
+        </div>
+        <div class="fcard">
+          <div class="ficon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 21h8M12 17v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7 9.5l2 2 4-4" stroke="var(--cobalt)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>Desktop &amp; browser</h3>
+          <p>A native macOS and Windows app with a translucent liquid-glass UI — or run it right in your browser.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- DIFF FEATURE (adapted from Direction A) -->
+    <section class="diff-sec">
+      <div class="diff-wrap">
+        <div class="diff-text">
+          <div class="sec-num">02 / You stay in control</div>
+          <h2>The AI proposes.<br>You <span class="blue">decide</span>.</h2>
+          <p class="lead">Paste a job posting and the assistant rewrites your resume against your master profile — applied as inline diffs you review, never a silent overwrite.</p>
+          <ul class="diff-feats">
+            <li>
+              <span class="ck" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5 9-11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span>Streams the model's reasoning live, with a stop control and web-search citations.</span>
+            </li>
+            <li>
+              <span class="ck" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5 9-11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span>Pick any model on OpenRouter, with per-model reasoning-effort control.</span>
+            </li>
+            <li>
+              <span class="ck" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5 9-11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span>Per-run token and cost stats, so you always know what a draft costs.</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="diff-card">
+          <div class="diff-head">
+            <svg class="star" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l1.8 4.4L18.5 9l-4.7 1.6L12 15l-1.8-4.4L5.5 9l4.7-1.6z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+            Summary · tailored to job posting
+            <span class="tag">Review</span>
+          </div>
+          <div class="diff-body">
+            <div class="line ctx"><span class="gut">&nbsp;</span><span>Senior product designer with 8 years of experience</span></div>
+            <div class="line del"><span class="gut">−</span><span>building consumer web apps and design systems.</span></div>
+            <div class="line add"><span class="gut">+</span><span>leading 0-to-1 product design and scaling design systems for fintech teams.</span></div>
+            <div class="line ctx"><span class="gut">&nbsp;</span><span>Comfortable owning end-to-end work from research</span></div>
+            <div class="line add"><span class="gut">+</span><span>to shipped, measurable outcomes across iOS and web.</span></div>
+          </div>
+          <div class="diff-actions">
+            <span class="a ya">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12l5 5 9-11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Accept change
+            </span>
+            <span class="a na">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+              Reject
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DOWNLOAD -->
+    <section class="sec" id="download" style="padding-top:0;">
+      <div class="dl-band">
+        <div class="sec-num">03 / Get the app</div>
+        <h2 class="sec-h">Download. Open. Build.</h2>
+        <div class="dl-grid">
+          <div class="dl-os">
+            <div class="os-head">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="#f4efe6" aria-hidden="true"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2-.05 1.6-.75 3-.75s1.8.75 3 .72c1.2-.02 2-1.1 2.8-2.2.9-1.3 1.2-2.5 1.3-2.6-.03-.01-2.5-1-2.5-3.8zM14.2 5.8c.6-.8 1.1-1.9 1-3-.95.04-2.1.63-2.8 1.4-.6.7-1.1 1.8-1 2.9 1.05.08 2.1-.5 2.8-1.3z"/></svg>
+              <span class="nm">macOS</span>
+            </div>
+            <a class="dl-link" href="https://github.com/ashproto/Resume-Designer/releases/latest">
+              <div><div class="t">Apple Silicon (.dmg)</div><div class="s">M1, M2, M3 and newer Macs</div></div>
+              <svg class="arr" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v12m0 0l-4-4m4 4l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <a class="dl-link" href="https://github.com/ashproto/Resume-Designer/releases/latest">
+              <div><div class="t">Intel (.dmg)</div><div class="s">Pre-2020 Intel Macs</div></div>
+              <svg class="arr" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v12m0 0l-4-4m4 4l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+          </div>
+          <div class="dl-os">
+            <div class="os-head">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="#f4efe6" aria-hidden="true"><path d="M3 5.5l8-1.1v7.2H3zM12 4.3l9-1.3v8.6h-9zM3 12.4h8v7.2l-8-1.1zM12 12.4h9v8.6l-9-1.3z"/></svg>
+              <span class="nm">Windows</span>
+            </div>
+            <a class="dl-link" href="https://github.com/ashproto/Resume-Designer/releases/latest">
+              <div><div class="t">Installer (.exe)</div><div class="s">Windows 10 and 11, 64-bit</div></div>
+              <svg class="arr" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v12m0 0l-4-4m4 4l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <div class="dl-warn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;margin-top:1px;" aria-hidden="true"><path d="M12 3l9 16H3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 9v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              Unsigned — SmartScreen may warn. Choose "More info → Run anyway."
+            </div>
+          </div>
+        </div>
+        <div class="dl-note">
+          <span class="pill">Update alerts</span>
+          On launch, the desktop app checks GitHub Releases and lets you know when a new version is available — you choose when to install it.
+          <a href="https://github.com/ashproto/Resume-Designer/releases">Browse all releases on GitHub →</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- GUIDES -->
+    <section class="sec" id="guides">
+      <div class="sec-num">04 / Set up in minutes</div>
+      <h2 class="sec-h">Two short setups. Then you're <span class="blue">writing</span>.</h2>
+
+      <div class="guides">
+        <div class="guide key">
+          <h3>Set up your OpenRouter key</h3>
+          <p class="gsub">Optional — only needed for the AI features.</p>
+          <div class="steps">
+            <div class="step"><span class="si">1</span><div><div class="st">Create a free OpenRouter account</div><div class="sd">Sign up at openrouter.ai — no card required to start.</div></div></div>
+            <div class="step"><span class="si">2</span><div><div class="st">Generate an API key</div><div class="sd">From your OpenRouter dashboard, create a new key.</div></div></div>
+            <div class="step"><span class="si">3</span><div><div class="st">Paste it into Settings</div><div class="sd">Drop the key into Resume Designer's settings panel.</div></div></div>
+            <div class="step"><span class="si">4</span><div><div class="st">Pick a model</div><div class="sd">Claude, GPT, Gemini, and more — switch any time.</div></div></div>
+          </div>
+          <div class="key-note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;margin-top:1px;" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7a4 4 0 018 0v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            Your key stays on-device and is sent only to OpenRouter, only for the AI calls you trigger.
+          </div>
+        </div>
+
+        <div class="guide">
+          <h3>How to use it</h3>
+          <p class="gsub">From blank profile to polished PDF.</p>
+          <div class="steps">
+            <div class="step"><span class="si">1</span><div><div class="st">Build your master profile</div><div class="sd">Enter your history by hand, or import an existing PDF or DOCX.</div></div></div>
+            <div class="step"><span class="si">2</span><div><div class="st">Generate or tailor a variant</div><div class="sd">Paste a job posting and tailor your profile to that role.</div></div></div>
+            <div class="step"><span class="si">3</span><div><div class="st">Review the AI's inline diffs</div><div class="sd">Approve or reject every change before it lands.</div></div></div>
+            <div class="step"><span class="si">4</span><div><div class="st">Export to PDF</div><div class="sd">Pick one of 11 layouts and send a clean, multi-page PDF.</div></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="sec">
+      <div class="sec-num">05 / Questions</div>
+      <h2 class="sec-h">The short answers.</h2>
+      <div class="faq-grid">
+        <div class="faq">
+          <div class="q">Is it free?</div>
+          <div class="a">Yes. The app is free and open source under AGPL-3.0. If you use the optional AI, you only pay OpenRouter for what you use — nothing goes to us.</div>
+        </div>
+        <div class="faq">
+          <div class="q">Is my data private?</div>
+          <div class="a">Yes. Resume Designer is local-first: your profile, resumes, and settings stay on your device. There's no account, no backend, and no telemetry.</div>
+        </div>
+        <div class="faq">
+          <div class="q">Do I need the AI?</div>
+          <div class="a">No. The AI assistant is entirely optional. Every other feature — layouts, import, export, variants — works fully without a key.</div>
+        </div>
+        <div class="faq">
+          <div class="q">Which platforms?</div>
+          <div class="a">A native desktop app for macOS and Windows, plus a browser build you can run anywhere without installing.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- OSS + COMMUNITY -->
+    <section class="split">
+      <div class="oss">
+        <div>
+          <span class="badge">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.54 2.87 8.39 6.84 9.74.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.37-2.22-.26-4.55-1.14-4.55-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0112 6.84c.85 0 1.71.12 2.51.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9v2.82c0 .27.18.6.69.49A10.02 10.02 0 0022 12.25C22 6.58 17.52 2 12 2z"/></svg>
+            Open source · AGPL-3.0
+          </span>
+          <h2>Free to use, study, and reshape.</h2>
+          <p>Resume Designer is licensed under the GNU Affero General Public License v3.0. Read the code, fork it, send a pull request — it's all out in the open.</p>
+        </div>
+        <a class="obtn" href="https://github.com/ashproto/Resume-Designer">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.54 2.87 8.39 6.84 9.74.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.37-2.22-.26-4.55-1.14-4.55-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0112 6.84c.85 0 1.71.12 2.51.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9v2.82c0 .27.18.6.69.49A10.02 10.02 0 0022 12.25C22 6.58 17.52 2 12 2z"/></svg>
+          View the repository
+        </a>
+      </div>
+
+      <div class="comm">
+        <div>
+          <span class="badge">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h16v10H9l-4 4V5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            Community
+          </span>
+          <h2>Questions? Join the discussion.</h2>
+          <p>Ideas, bug reports, layout requests, or just saying hi — bring them to GitHub Discussions and chat with the project.</p>
+        </div>
+        <a class="obtn" href="https://github.com/ashproto/Resume-Designer/discussions">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h16v10H9l-4 4V5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+          Open GitHub Discussions
+        </a>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="foot">
+      <div class="foot-top">
+        <div>
+          <div class="display">Resume<br><span class="em">Designer</span></div>
+          <p class="foot-tagline">Turn one master profile into polished, job-tailored resumes — privately, on your own machine.</p>
+        </div>
+        <div class="foot-links">
+          <a href="https://github.com/ashproto/Resume-Designer">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.54 2.87 8.39 6.84 9.74.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.37-2.22-.26-4.55-1.14-4.55-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0112 6.84c.85 0 1.71.12 2.51.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9v2.82c0 .27.18.6.69.49A10.02 10.02 0 0022 12.25C22 6.58 17.52 2 12 2z"/></svg>
+            GitHub repository
+          </a>
+          <a href="https://github.com/ashproto/Resume-Designer/discussions">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h16v10H9l-4 4V5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+            GitHub Discussions
+          </a>
+          <a href="https://github.com/ashproto/Resume-Designer/releases/latest">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v12m0 0l-4-4m4 4l4-4M5 19h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Download (Releases)
+          </a>
+          <a href="https://github.com/ashproto/Resume-Designer/blob/main/LICENSE">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4l7 3v5c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+            AGPL-3.0 license
+          </a>
+        </div>
+      </div>
+      <div class="foot-base">
+        <span>© 2026 Resume Designer · Licensed under AGPL-3.0</span>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var toggle = document.getElementById('themeToggle');
+
+      function systemPrefersDark() {
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      }
+
+      function effectiveTheme() {
+        var saved = root.getAttribute('data-theme');
+        if (saved === 'light' || saved === 'dark') return saved;
+        return systemPrefersDark() ? 'dark' : 'light';
+      }
+
+      function syncIcons() {
+        var isDark = effectiveTheme() === 'dark';
+        var sun = toggle.querySelector('.ico-sun');
+        var moon = toggle.querySelector('.ico-moon');
+        sun.style.display = isDark ? 'block' : 'none';
+        moon.style.display = isDark ? 'none' : 'block';
+        toggle.setAttribute('aria-label', isDark ? 'Switch to light theme' : 'Switch to dark theme');
+        toggle.setAttribute('aria-pressed', String(isDark));
+      }
+
+      try {
+        var stored = localStorage.getItem('rd-theme');
+        if (stored === 'light' || stored === 'dark') {
+          root.setAttribute('data-theme', stored);
+        }
+      } catch (e) {}
+
+      syncIcons();
+
+      toggle.addEventListener('click', function () {
+        var next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', next);
+        try { localStorage.setItem('rd-theme', next); } catch (e) {}
+        syncIcons();
+      });
+
+      if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+          if (!root.getAttribute('data-theme')) syncIcons();
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

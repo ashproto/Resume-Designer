@@ -6,7 +6,7 @@
 ._*
 
 # Custom folder icons
-Icon
+Icon
 
 # Volume root files
 .DocumentRevisions-V100
@@ -30,3 +30,6 @@ Icon
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+# Local brainstorm / visual-companion scratch dir
+.superpowers/
