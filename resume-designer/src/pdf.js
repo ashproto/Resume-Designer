@@ -416,6 +416,16 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
     throw new Error(`Failed to load PDF library: ${loadError.message}`);
   }
   
+  // The on-screen sheets carry screen-only chrome (inter-sheet gaps, per-sheet
+  // drop-shadow and rounded corners) that html2canvas would otherwise bake into
+  // the image. The native desktop export strips it via html.pdf-export-mode in
+  // its hidden print window; the browser fallback has no such window, so apply
+  // the same class here for the duration of the capture. It must be added BEFORE
+  // measuring so the gap-collapsed height sizes the PDF page (html2canvas honors
+  // class rules, not @media print). Removed in the finally below.
+  const exportRoot = document.documentElement;
+  exportRoot.classList.add('pdf-export-mode');
+
   // Get the resume's actual rendered dimensions
   const resumeWidth = resumeEl.offsetWidth;
   const resumeHeight = resumeEl.offsetHeight; // Use offsetHeight for more accurate measurement
@@ -464,5 +474,7 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
   } catch (renderError) {
     console.error('PDF Export: Render failed', renderError);
     throw new Error(`PDF rendering failed: ${renderError.message}`);
+  } finally {
+    exportRoot.classList.remove('pdf-export-mode');
   }
 }
