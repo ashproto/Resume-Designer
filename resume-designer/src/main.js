@@ -19,6 +19,8 @@ import {
   renderResumeCreative
 } from './renderer.js';
 import { initPdfExport } from './pdf.js';
+import { paginate, resetPaginatedState } from './pagination.js';
+import { normalizePageSize, DEFAULT_PAGE_WIDTH_IN } from './pageSetup.js';
 import { initInlineEditor, refreshInlineEditor, getActiveInlineEditable } from './inlineEditor.js';
 import { initVariants } from './variantManager.js';
 import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
@@ -521,6 +523,15 @@ export async function init() {
   // Render initial resume
   renderCurrentResume();
 
+  // Pagination measures block heights; on a cold start the first render can run
+  // before the résumé's webfonts finish loading, so it splits pages against
+  // fallback metrics and the live view stays mis-paginated until the next
+  // re-render. Re-paginate once the real fonts are ready so the on-screen sheets
+  // match the exported PDF (the print window already does this).
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => renderCurrentResume());
+  }
+
   // Defense in depth: boot is fully done — re-broadcast the chat config state
   // once so any chat UI that somehow captured pre-init storage state (in an
   // unforeseen mount order) re-reads and heals. Harmless no-op otherwise.
@@ -621,6 +632,13 @@ export async function initPrintMode() {
     }
     await step('fonts-ready');
 
+    // Re-render now that the real fonts are loaded. Pagination measures block
+    // heights to assign content to sheets; the first pass ran with fallback
+    // font metrics (this is a fresh webview), which mis-assigns and clips
+    // content. The second pass paginates against the true metrics.
+    renderCurrentResume();
+    await step('repaginated');
+
     const resumeEl = document.getElementById('resume');
     if (!resumeEl) {
       throw new Error('Print window: #resume not found after renderCurrentResume');
@@ -638,7 +656,18 @@ export async function initPrintMode() {
     await step('layout-settled');
 
     const bounds = resumeEl.getBoundingClientRect();
-    await step('measured', { width: bounds.width, height: bounds.height });
+    // Per-sheet rects (doc-relative to #resume, CSS px) so the macOS capture can
+    // emit ONE PDF page per on-screen .resume-page. Continuous = a single sheet.
+    const pages = Array.from(resumeEl.querySelectorAll('.resume-page')).map((p) => {
+      const r = p.getBoundingClientRect();
+      return {
+        x: r.left - bounds.left,
+        y: r.top - bounds.top,
+        width: r.width,
+        height: r.height,
+      };
+    });
+    await step('measured', { width: bounds.width, height: bounds.height, sheets: pages.length });
 
     // Emit print-ready globally. Main window's pdf.js is the listener; it
     // filters on `label` so overlapping exports don't cross-resolve.
@@ -646,6 +675,7 @@ export async function initPrintMode() {
       label: printLabel,
       width: bounds.width,
       height: bounds.height,
+      pages,
     });
   } catch (err) {
     console.error('[PrintMode] init failed:', err);
@@ -695,7 +725,12 @@ function handleDesignChange(change) {
       break;
     
     case 'spacing':
-      // Spacing settings are handled by structurePanel and saved automatically
+      // Spacing (font scale, line height, section spacing, margins) and font
+      // changes alter the rendered height. With a fixed page size the already-
+      // split .resume-page sheets go stale — content clips under their
+      // overflow:hidden — so re-render to re-paginate. Continuous has no sheets
+      // to re-split.
+      if (getPageSetup().pageSize !== 'continuous') renderCurrentResume();
       break;
     
     case 'accent':
@@ -711,7 +746,22 @@ function handleDesignChange(change) {
       saveSettings({ layout: change.value });
       renderCurrentResume();
       break;
-      
+
+    case 'pageSize':
+      saveSettings({ pageSize: change.value });
+      renderCurrentResume();
+      break;
+
+    case 'orientation':
+      saveSettings({ orientation: change.value });
+      renderCurrentResume();
+      break;
+
+    case 'pageWidthIn':
+      saveSettings({ pageWidthIn: change.value });
+      renderCurrentResume();
+      break;
+
     case 'customColor':
       customColor = change.value;
       applyCustomPalette(change.value);
@@ -1208,6 +1258,18 @@ function initTextTools() {
   updateTextToolbarState();
 }
 
+// Read the active page-setup (size / orientation / width) from the global
+// settings, normalized. The print window loads the same settings object, so the
+// on-screen sheets and the exported PDF paginate identically.
+function getPageSetup() {
+  const s = getSettings();
+  return {
+    pageSize: normalizePageSize(s.pageSize),
+    orientation: s.orientation === 'landscape' ? 'landscape' : 'portrait',
+    pageWidthIn: Number(s.pageWidthIn) > 0 ? Number(s.pageWidthIn) : DEFAULT_PAGE_WIDTH_IN,
+  };
+}
+
 // Render the current resume
 function renderCurrentResume() {
   const container = document.getElementById('resume');
@@ -1215,6 +1277,7 @@ function renderCurrentResume() {
   
   const data = store.getData();
   if (!data) {
+    resetPaginatedState(container);
     container.innerHTML = `
       <div class="empty-state">
         <p>No resume loaded</p>
@@ -1283,6 +1346,11 @@ function renderCurrentResume() {
   // Re-apply photo settings after render
   initPhotoService();
   
+  // Paginate the just-rendered résumé into page "sheets". Screen and PDF share
+  // this path (continuous = one open-height sheet); the print window calls the
+  // same renderCurrentResume(), so the exported PDF matches what's on screen.
+  paginate(container, getPageSetup(), currentLayout);
+
   // Refresh inline editor
   refreshInlineEditor();
   updateTextToolbarState();

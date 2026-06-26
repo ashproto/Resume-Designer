@@ -34,7 +34,7 @@ import {
 } from '../tokenTrackingService.js';
 import { triggerManualUpdateCheck } from '../updateFlow.js';
 import { useUpdateBusy } from '../hooks/useUpdateBusy.js';
-import { exportFullBackupWithFeedback, importBackupFromFile } from '../backupFlow.js';
+import { exportFullBackupWithFeedback, importBackupFromFile, importLegacyElectronWithFeedback } from '../backupFlow.js';
 
 // Settings panel — composed from genuine shadcn primitives following shadcn's own
 // settings/forms patterns: a left nav rail (ghost items, terracotta-tinted active
@@ -449,6 +449,22 @@ export default function SettingsDialog() {
                     </label>
                   </Button>
                 </div>
+                {isTauri && (
+                  <div className="mt-6">
+                    <SectionHeader
+                      title="Import from a previous installation"
+                      description="If you used the older desktop (Electron) version on this computer, bring its resumes, settings, job descriptions, and history into this app."
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={() => importLegacyElectronWithFeedback('merge')}>
+                        Merge previous data
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => importLegacyElectronWithFeedback('replace')}>
+                        Replace with previous data
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </section>
             )}
 

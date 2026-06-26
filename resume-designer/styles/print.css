@@ -262,3 +262,31 @@ html.pdf-export-mode .btn,
 html.pdf-export-mode button {
   display: none !important;
 }
+
+/* ==========================================================================
+   Paginated sheets in print / PDF.
+   On screen, each .resume-page is a floating "sheet" (rounded, drop-shadow,
+   gap between pages). None of that should print. Strip the chrome and let
+   #resume shrink to the sheet so the capture rect == the page, not the
+   translucent preview area around it.
+   ========================================================================== */
+@media print {
+  #resume.is-paginated { background: transparent; padding: 0; }
+  .resume-pages { gap: 0; }
+  .resume-page { box-shadow: none; border-radius: 0; break-inside: avoid; }
+  /* One print page per sheet so WebView2's PrintToPdf (Windows) breaks on the
+     sheet seams, not wherever the page height happens to land. :not(:last-child)
+     avoids a trailing blank page. macOS createPDF ignores @media print, so this
+     only affects the Windows export and browser Cmd+P. */
+  .resume-page:not(:last-child) { break-after: page; }
+}
+
+html.pdf-export-mode #resume.is-paginated {
+  background: transparent !important;
+  padding: 0 !important;
+}
+html.pdf-export-mode .resume-pages { gap: 0 !important; }
+html.pdf-export-mode .resume-page {
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}

@@ -28,6 +28,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt"] }
 thiserror = "1"
+# base64 streams the preview PDF's bytes to the renderer (read_pdf_preview).
+base64 = "0.22"
 # Used by the one-time legacy-Electron migrator (commands/migration.rs).
 # Pure-Rust LevelDB reader so we don't drag in a C++ build toolchain across
 # all three target platforms. The `fs` feature is REQUIRED, not optional:
@@ -58,6 +60,9 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSData", "NSError", "NSString", "NSGeometry"] }
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKPDFConfiguration", "block2", "objc2-app-kit"] }
 block2 = "0.6"
+# Pure-Rust PDF writer: merge the per-sheet WKWebView captures into one
+# multi-page PDF and scale each page to its true physical size (Phase B export).
+lopdf = "0.36"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # windows 0.61 matches the transitive version webview2-com 0.38 pulls in;
