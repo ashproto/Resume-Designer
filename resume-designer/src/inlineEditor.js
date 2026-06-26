@@ -770,8 +770,6 @@ function startEditing(element) {
   
   activeElement = element;
 
-  element.dataset.originalEditValue = element.textContent || '';
-
   const path = element.dataset.editable;
   // Tool chips — inline (.tool-token/.skill-tag) OR bulleted (.highlight-bullet) —
   // all share data-editable="tools" because `tools` is a single `•`-joined string.
@@ -792,6 +790,13 @@ function startEditing(element) {
       element.textContent = String(sourceValue);
     }
   }
+
+  // Capture the value now shown in the editor for cancel/Escape. MUST run AFTER the
+  // raw-value swap above: for plain string fields the swap puts the RAW stored value
+  // (with **/_/++ markers) into textContent, while the summary renders via
+  // formatInlineMarkdown — so capturing earlier would record marker-stripped text and
+  // Escape would silently delete the formatting.
+  element.dataset.originalEditValue = element.textContent || '';
 
   // Make editable
   element.contentEditable = 'true';

@@ -1199,6 +1199,11 @@ function adjustGlobalFontScale(delta) {
   spacing.fontScale = Math.round(next * 100) / 100;
   saveSpacingSettings(spacing);
   applySpacingSettings(spacing);
+  // The toolbar +/- changes font scale exactly like the Design-tab control, so it
+  // must re-paginate too: with a fixed page size the already-split .resume-page
+  // sheets go stale and clip the resized content under overflow:hidden. Mirrors the
+  // rd:design-change 'spacing' handler; continuous mode has no sheets to re-split.
+  if (getPageSetup().pageSize !== 'continuous') renderCurrentResume();
   updateTextToolbarState();
 }
 
