@@ -13,7 +13,7 @@ import { appStorage } from './appStorage.js';
 // OpenRouter — a single OpenAI-compatible endpoint fronting every provider.
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 // Optional attribution headers (OpenRouter app leaderboard); harmless if unused.
-const OPENROUTER_REFERER = 'https://github.com/SiriusA7/Resume-Designer';
+const OPENROUTER_REFERER = 'https://github.com/ashproto/Resume-Designer';
 const OPENROUTER_TITLE = 'Resume Designer';
 
 // Curated model catalog, keyed by OpenRouter slug. The slug is the SINGLE
