@@ -190,7 +190,7 @@ export function renderResume(data) {
         ${data.summary ? `
           <div class="section summary-section">
             <h2 class="section-title">Summary</h2>
-            <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+            <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
           </div>
         ` : ''}
         
@@ -233,7 +233,7 @@ export function renderResumeStacked(data) {
       ${data.summary ? `
         <div class="section summary-section">
           <h2 class="section-title">Summary</h2>
-          <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+          <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
         </div>
       ` : ''}
       
@@ -277,7 +277,7 @@ export function renderResumeStackedVertical(data) {
       ${data.summary ? `
         <div class="section summary-section">
           <h2 class="section-title">Summary</h2>
-          <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+          <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
         </div>
       ` : ''}
       
@@ -586,7 +586,7 @@ export function renderResumeRightSidebar(data) {
         ${data.summary ? `
           <div class="section summary-section">
             <h2 class="section-title">Summary</h2>
-            <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+            <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
           </div>
         ` : ''}
         
@@ -635,7 +635,7 @@ export function renderResumeCompact(data) {
           ${data.summary ? `
             <div class="section summary-section">
               <h2 class="section-title">Summary</h2>
-              <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+              <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
             </div>
           ` : ''}
           
@@ -696,7 +696,7 @@ export function renderResumeExecutive(data) {
     <div class="resume-body executive-body">
       ${data.summary ? `
         <div class="section summary-section executive-summary">
-          <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+          <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
         </div>
       ` : ''}
       
@@ -746,7 +746,7 @@ export function renderResumeClassic(data) {
       ${data.summary ? `
         <div class="section summary-section">
           <h2 class="section-title">Professional Summary</h2>
-          <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+          <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
         </div>
       ` : ''}
       
@@ -809,7 +809,7 @@ export function renderResumeClassicFeatured(data) {
       ${data.summary ? `
         <div class="section summary-section">
           <h2 class="section-title">Professional Summary</h2>
-          <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+          <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
         </div>
       ` : ''}
       
@@ -920,7 +920,7 @@ export function renderResumeModern(data) {
         ${data.summary ? `
           <div class="section summary-section">
             <h2 class="section-title">Summary</h2>
-            <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+            <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
           </div>
         ` : ''}
         
@@ -966,7 +966,7 @@ export function renderResumeTimeline(data) {
         ${data.summary ? `
           <div class="section summary-section">
             <h2 class="section-title">Summary</h2>
-            <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+            <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
           </div>
         ` : ''}
         
@@ -1042,7 +1042,7 @@ export function renderResumeCreative(data) {
     <div class="resume-body creative-body">
       ${data.summary ? `
         <div class="section summary-section creative-summary">
-          <p class="summary-text" data-editable="summary" data-multiline="true">${escapeHtml(data.summary)}</p>
+          <p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>
         </div>
       ` : ''}
       
