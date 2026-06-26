@@ -8,10 +8,11 @@
  * inline comments for why every step is ordered the way it is.
  */
 
-import { exportFullBackup, importFullBackupFromEnvelope } from './persistence.js';
+import { exportFullBackup, importFullBackupFromEnvelope, importFullBackupMerge } from './persistence.js';
 import { store } from './store.js';
 import { appStorage } from './appStorage.js';
 import { flushPendingProfileSave } from './userProfilePanel.js';
+import { probeLegacyElectronData, importLegacyElectronData } from './native.js';
 
 /**
  * Bridge the visual gap between "user clicked OK on the post-import alert" and
@@ -245,5 +246,61 @@ export async function importBackupFromFile(file) {
   } catch (err) {
     console.error('[backup] Import failed:', err);
     alert(`Import failed: ${err.message ?? String(err)}`);
+  }
+}
+
+/**
+ * Import résumés / settings / history from a previous (Electron) installation's
+ * LevelDB into this build. `mode` is 'replace' (overwrite current data — mirrors
+ * the one-time auto-migration in main.js) or 'merge' (union; current data wins
+ * on conflicts). Tauri-only — the probe/import calls no-op or throw in the
+ * browser. Same race-safe flush -> synchronous import -> reload chain as
+ * importBackupFromFile, so a queued debounced save can't clobber the import.
+ */
+export async function importLegacyElectronWithFeedback(mode = 'replace') {
+  const merging = mode === 'merge';
+  try {
+    const probe = await probeLegacyElectronData();
+    if (!probe?.found) {
+      alert('No data from a previous (Electron) installation was found on this computer.');
+      return;
+    }
+
+    const envelope = await importLegacyElectronData();
+    const incoming = envelope?.keys ? Object.keys(envelope.keys).length : 0;
+    const ok = confirm(
+      `Import data from your previous desktop app?\n\n` +
+        `Found ${incoming} keys from the legacy (Electron) installation.\n\n` +
+        (merging
+          ? `They will be MERGED into your current data (your current résumés win on any conflict).`
+          : `Your current résumés, job descriptions, history, and settings will be REPLACED.`) +
+        `\n\nThe app will reload after import.`
+    );
+    if (!ok) return;
+
+    try {
+      store.saveNow();
+      flushPendingProfileSave();
+    } catch (err) {
+      console.warn('[backup] pre-import flush failed:', err);
+    }
+
+    const result = merging
+      ? importFullBackupMerge(envelope)
+      : importFullBackupFromEnvelope(envelope);
+
+    const skipped = result.historySkipped > 0
+      ? `\n\nNote: ${result.historySkipped} oversize undo/redo `
+        + `${result.historySkipped === 1 ? 'entry was' : 'entries were'} skipped; `
+        + `your résumés are intact.`
+      : '';
+    const summary = merging
+      ? `Merged your previous app's résumés and settings into this one.`
+      : `Imported ${result.keysImported} keys from your previous app `
+        + `(removed ${result.removedExistingKeys} existing keys).`;
+    showImportSuccessAndReload(summary + skipped);
+  } catch (err) {
+    console.error('[backup] Legacy import failed:', err);
+    alert(`Couldn't import data from the previous app: ${err.message ?? String(err)}`);
   }
 }
