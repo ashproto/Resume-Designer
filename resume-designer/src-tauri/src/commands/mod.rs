@@ -215,8 +215,23 @@ pub async fn capture_pdf_from_window(
     };
     #[cfg(target_os = "windows")]
     let result = {
-        let _ = (capture_rect, capture_rects);
-        pdf_windows::capture_pdf(target, save_path, page_size).await
+        let _ = capture_rect;
+        // Print against ONE sheet's size so WebView2 paginates the stacked,
+        // fixed-height `.resume-page` sheets into one PDF page each. Passing the
+        // full `#resume` bounds (the whole multi-sheet column) instead yields a
+        // single very long page. Margins are 0 and scale is 1.0, and the sheets
+        // are a uniform fixed height with no gap (print.css), so Chromium's page
+        // breaks land on the sheet seams. One rect (single page / continuous)
+        // keeps the whole-view page_size.
+        let sheet_size = capture_rects
+            .as_ref()
+            .filter(|rects| rects.len() > 1)
+            .map(|rects| PageSize {
+                width: rects[0].width / 96.0,
+                height: rects[0].height / 96.0,
+            })
+            .or(page_size);
+        pdf_windows::capture_pdf(target, save_path, sheet_size).await
     };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let result = {

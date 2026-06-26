@@ -273,7 +273,12 @@ html.pdf-export-mode button {
 @media print {
   #resume.is-paginated { background: transparent; padding: 0; }
   .resume-pages { gap: 0; }
-  .resume-page { box-shadow: none; border-radius: 0; }
+  .resume-page { box-shadow: none; border-radius: 0; break-inside: avoid; }
+  /* One print page per sheet so WebView2's PrintToPdf (Windows) breaks on the
+     sheet seams, not wherever the page height happens to land. :not(:last-child)
+     avoids a trailing blank page. macOS createPDF ignores @media print, so this
+     only affects the Windows export and browser Cmd+P. */
+  .resume-page:not(:last-child) { break-after: page; }
 }
 
 html.pdf-export-mode #resume.is-paginated {
