@@ -201,11 +201,16 @@ fn merge_scaled(pages: Vec<(Vec<u8>, f64, f64)>, scale: f64) -> Result<Vec<u8>, 
         // Scale-wrap: `q s 0 0 s 0 0 cm ... Q`. PDF user space is bottom-left
         // origin, and createPDF anchors content at the origin, so scaling from
         // the origin shrinks the page content to exactly fill the new MediaBox.
+        // Trailing/leading newlines delimit these wrapper streams from the page's
+        // own Contents when concatenated in the array below: PDF readers join
+        // content-array streams at the token level, so without a delimiter the `cm`
+        // and `Q` operators can merge with adjacent tokens (e.g. `cmq`), rendering a
+        // malformed/blank page in stricter readers.
         let pre = output.add_object(Stream::new(
             Dictionary::new(),
-            format!("q {} 0 0 {} 0 0 cm", scale, scale).into_bytes(),
+            format!("q {} 0 0 {} 0 0 cm\n", scale, scale).into_bytes(),
         ));
-        let post = output.add_object(Stream::new(Dictionary::new(), b"Q".to_vec()));
+        let post = output.add_object(Stream::new(Dictionary::new(), b"\nQ".to_vec()));
 
         let new_w = (w_px * scale) as f32;
         let new_h = (h_px * scale) as f32;
