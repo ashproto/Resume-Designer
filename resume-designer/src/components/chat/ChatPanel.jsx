@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 
 import { getSettings, saveSettings } from '../../persistence.js';
 import { openSettings } from '../../settingsModal.js';
+import { useVariants } from '../../hooks/useVariants.js';
 import { useChat } from './useChat.js';
 import { MessageList } from './MessageList.jsx';
 import { ChatComposer } from './ChatComposer.jsx';
@@ -27,6 +28,7 @@ const MAX_WIDTH = 500;
  */
 export default function ChatPanel() {
   const chat = useChat();
+  const variants = useVariants();
   const [host] = useState(() => document.getElementById('chat-panel'));
   const [open, setOpen] = useState(false);
 
@@ -160,9 +162,12 @@ export default function ChatPanel() {
             <ThreadSelector
               threads={chat.threads}
               currentThreadId={chat.currentThreadId}
+              currentVariantId={chat.currentVariantId}
+              variants={variants.list}
               onSwitch={chat.switchThread}
               onNew={chat.newThread}
               onDelete={chat.deleteThread}
+              onMoveToCurrent={chat.moveThreadToCurrentVariant}
             />
           </div>
         )}
