@@ -151,6 +151,10 @@
 .sidebar-content {
   font-size: calc(0.78rem * var(--font-scale, 1));
   line-height: 1.5;
+  /* Safety net for the narrow sidebar: a single very long token (e.g. a skill or
+     URL with no spaces) breaks rather than spilling into the main column. The
+     common multi-token wrap is handled at the separators (see SKILL_SEPARATOR). */
+  overflow-wrap: break-word;
 }
 
 .sidebar-content p {
