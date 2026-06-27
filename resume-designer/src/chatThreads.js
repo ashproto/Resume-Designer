@@ -26,7 +26,7 @@ function randomSuffix() {
   }
 }
 
-export function makeThread(name = 'New Chat', initialMessages = []) {
+export function makeThread(name = 'New Chat', initialMessages = [], homeVariantId = null) {
   const now = new Date().toISOString();
   return {
     id: `thread-${Date.now()}-${randomSuffix()}`,
@@ -34,7 +34,15 @@ export function makeThread(name = 'New Chat', initialMessages = []) {
     messages: Array.isArray(initialMessages) ? initialMessages : [],
     createdAt: now,
     updatedAt: now,
+    homeVariantId,
   };
+}
+
+// Ensure every thread carries homeVariantId (legacy threads predate the field).
+// Missing/undefined → null (the "General" group). Pure; callers persist.
+export function migrateThreads(threads) {
+  if (!Array.isArray(threads)) return [];
+  return threads.map((t) => (t && t.homeVariantId === undefined ? { ...t, homeVariantId: null } : t));
 }
 
 /**
