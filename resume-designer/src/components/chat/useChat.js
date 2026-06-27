@@ -12,7 +12,9 @@ import { showDiffView } from '../../diffView.js';
 import { showInlineChanges } from '../../inlineChanges.js';
 import {
   loadThreads, persistThreads, makeThread, trimMessages, clearLegacyHistory,
+  migrateThreads, pickCurrentThreadId,
 } from '../../chatThreads.js';
+import { getCurrentId } from '../../variantManager.js';
 
 // AI model catalog, derived from aiService's curated MODELS (single source of
 // truth). Shape: [{ group, options: [{ value: slug, label }] }]. Custom slugs
@@ -628,7 +630,7 @@ Let's begin!`);
     }
   };
   const newThread = () => {
-    const t = makeThread('New Chat');
+    const t = makeThread('New Chat', [], getCurrentId());
     const next = [t, ...threadsRef.current];
     setThreads(next);
     persistThreads(next);
@@ -711,10 +713,29 @@ Let's begin!`);
 
   // ── effects ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const { threads: loaded, currentThreadId: cid } = loadThreads();
-    setThreads(loaded);
+    const { threads: loaded, currentThreadId: persistedCid } = loadThreads();
+    const migrated = migrateThreads(loaded);
+    const activeId = getCurrentId();
+    let cid = pickCurrentThreadId(migrated, activeId);
+    let threadsToSet = migrated;
+    // Open the active variant's most-recent thread. If it has none, create a
+    // fresh homed thread — but only when we actually have an active variant id.
+    // On a falsy active id (shouldn't happen post-init), fall back to the
+    // persisted current thread and let the dataLoaded follow-effect settle it,
+    // rather than creating a stray General (homeVariantId:null) thread.
+    if (!cid) {
+      if (activeId) {
+        const t = makeThread('New Chat', [], activeId);
+        threadsToSet = [t, ...migrated];
+        cid = t.id;
+      } else {
+        cid = persistedCid;
+      }
+    }
+    setThreads(threadsToSet);
+    persistThreads(threadsToSet);
     setCurrentThreadId(cid);
-    setMessages(loaded.find((t) => t.id === cid)?.messages || []);
+    setMessages(threadsToSet.find((t) => t.id === cid)?.messages || []);
     fetchModelCatalog()
       .then(() => setReasoningSupported(modelSupportsReasoning(modelRef.current)))
       .catch(() => {});
