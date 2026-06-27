@@ -774,13 +774,21 @@ Let's begin!`);
     const unsub = store.subscribe((event) => {
       if (event !== 'dataLoaded') return;
       const activeId = getCurrentId();
-      if (currentThreadIdRef.current) persistCurrentThread(messagesRef.current);
-      const migrated = migrateThreads(loadThreads().threads);
-      let cid = pickCurrentThreadId(migrated, activeId);
-      let next = migrated;
+      // Re-read from storage FIRST so an external mutation in this same tick (e.g. a
+      // variant delete that reassigned/removed threads in Header) is not clobbered by
+      // a stale in-memory write.
+      let next = migrateThreads(loadThreads().threads);
+      // Save the OUTGOING thread's latest messages onto the fresh array — but only if
+      // it still exists (a deleted thread must not be resurrected).
+      const prevId = currentThreadIdRef.current;
+      if (prevId && next.some((t) => t.id === prevId)) {
+        next = next.map((t) =>
+          t.id === prevId ? { ...t, messages: messagesRef.current, updatedAt: new Date().toISOString() } : t);
+      }
+      let cid = pickCurrentThreadId(next, activeId);
       if (!cid && activeId) {
         const t = makeThread('New Chat', [], activeId);
-        next = [t, ...migrated];
+        next = [t, ...next];
         cid = t.id;
       }
       if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
