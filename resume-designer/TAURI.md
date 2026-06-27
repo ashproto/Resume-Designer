@@ -198,7 +198,7 @@ Currently **not** signed. Users will see a Microsoft Defender SmartScreen warnin
 
 ## System requirements
 
-- **macOS 12.3 (Monterey) or later.** `bundle.macOS.minimumSystemVersion` is set to `12.3` in `tauri.conf.json`, so older versions cannot install the app. (PDF export uses `WKWebView.createPDF(configuration:completionHandler:)`, which Apple shipped in macOS 11; the bundle floor is set higher.)
+- **macOS 14.4 (Sonoma) or later.** `bundle.macOS.minimumSystemVersion` is set to `14.4` in `tauri.conf.json`, so older versions cannot install the app. The floor is driven by pdf.js: the in-app PDF preview and PDF/DOCX import use pdf.js 5, whose modern build relies on `Promise.withResolvers` — shipped in the WebKit bundled with macOS 14.4 (Safari 17.4); older WKWebViews would fail those features at runtime. (PDF export itself uses `WKWebView.createPDF(configuration:completionHandler:)`, available since macOS 11.)
 - **Windows 10 1809 or later** (WebView2 runtime required; Windows 11 ships it preinstalled).
 
 ## Data storage

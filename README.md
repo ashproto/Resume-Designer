@@ -59,7 +59,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/ashpro
 
 The app updates itself: when a new release is published, it prompts you to download and restart.
 
-**System requirements:** macOS 12.3 (Monterey) or later · Windows 10 (1809) or later.
+**System requirements:** macOS 14.4 (Sonoma) or later · Windows 10 (1809) or later.
 
 > **Windows note:** the installer is not yet code-signed, so Windows SmartScreen may warn on first launch. Choose **More info → Run anyway** to proceed.
 
