@@ -539,17 +539,18 @@ Let's begin!`);
   };
 
   const handleCommand = async (command) => {
-    markContextIfSwitched();
     const parts = command.split(' ');
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
 
     switch (cmd) {
       case '/feedback':
+        markContextIfSwitched();
         addMessage('user', 'Please review my resume and provide feedback.');
         await getAIFeedback();
         break;
       case '/improve':
+        markContextIfSwitched();
         if (args.toLowerCase().includes('summary')) {
           addMessage('user', 'Please improve my resume summary.');
           await getAIImproveSummary();
@@ -559,6 +560,7 @@ Let's begin!`);
         }
         break;
       case '/generate':
+        markContextIfSwitched();
         addMessage('user', `Generate content: ${args}`);
         await getAIGenerateBullets(args);
         break;
@@ -569,10 +571,11 @@ Let's begin!`);
         showHelp();
         break;
       case '/profile':
+        markContextIfSwitched();
         await startInterview();
         break;
       case '/done':
-        if (interviewModeRef.current) await finishInterview();
+        if (interviewModeRef.current) { markContextIfSwitched(); await finishInterview(); }
         else addMessage('assistant', 'No active interview to finish. Use `/profile` to start a profile interview.');
         break;
       case '/debug':
@@ -779,9 +782,11 @@ Let's begin!`);
         const t = makeThread('New Chat', [], activeId);
         next = [t, ...migrated];
         cid = t.id;
-        persistThreads(next);
       }
       if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
+      // Persist unconditionally so the migration write-back is guaranteed,
+      // matching the init effect (whether or not a fresh thread was created).
+      persistThreads(next);
       setThreads(next);
       setCurrentThreadId(cid);
       setMessages(next.find((t) => t.id === cid)?.messages || []);
