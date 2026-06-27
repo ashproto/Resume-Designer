@@ -15,6 +15,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init())
         .manage(commands::PendingPdfPath::default())
+        .manage(commands::PreviewPdfPath::default())
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -27,6 +28,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::pick_pdf_save_path,
             commands::capture_pdf_from_window,
+            commands::read_pdf_preview,
+            commands::save_pdf_preview,
+            commands::discard_pdf_preview,
             commands::migration::probe_legacy_electron_data,
             commands::migration::import_legacy_electron_data,
             commands::storage::storage_load_all,

@@ -9,7 +9,7 @@
  * Browser fallback: html2pdf.js produces image-based PDFs (not ATS-friendly).
  */
 
-import { isElectron, pickPdfSavePath, capturePdfFromWindow } from './native.js';
+import { isElectron, pickPdfSavePath, capturePdfFromWindow, readPdfPreview, savePdfPreview, discardPdfPreview } from './native.js';
 import { getCurrentId, getVariantList } from './variantManager.js';
 import { store } from './store.js';
 import { appStorage } from './appStorage.js';
@@ -37,23 +37,25 @@ async function loadHtml2Pdf() {
 export function initPdfExport() {
   const downloadBtn = document.getElementById('download-pdf');
 
-  downloadBtn.addEventListener('click', showPdfDialog);
+  downloadBtn.addEventListener('click', startPdfExport);
 }
 
-// Open the filename dialog. The dialog itself is a React component
-// (src/components/PdfDialog.jsx); this dispatches the bridge event with the
-// default filename and the export runner, mirroring diffView.js → <DiffDialog/>.
-// The React dialog collects the filename and calls onDownload(filename).
-function showPdfDialog() {
-  // Default filename from the active variant — slugified active-variant name
-  // only (no hard-coded prefix). The header is a React component now, so read
-  // the name from the variant store rather than a #variant-dropdown element.
+// PDF button handler. Desktop (Tauri): generate the real PDF to a temp file,
+// then open the preview dialog where the user reviews it and saves or cancels.
+// Browser: keep the filename dialog → html2pdf download (no native PDF to
+// preview there).
+function startPdfExport() {
   const current = getVariantList().find((v) => v.id === getCurrentId());
-  const selectedLabel = current?.name || 'Resume';
-  const defaultFilename = selectedLabel.trim().replace(/\s+/g, '-');
+  const defaultFilename = (current?.name || 'Resume').trim().replace(/\s+/g, '-');
 
+  if (isElectron) {
+    runNativeExportWithPreview(defaultFilename);
+    return;
+  }
+
+  // Browser fallback — filename-only dialog (no previewUrl), then html2pdf.
   window.dispatchEvent(new CustomEvent('rd:open-pdf-dialog', {
-    detail: { defaultFilename, onDownload: handleDownloadPdf },
+    detail: { defaultFilename, onConfirm: handleDownloadPdf, onCancel: () => {} },
   }));
 }
 
@@ -89,15 +91,10 @@ async function handleDownloadPdf(customFilename) {
   }
   
   try {
-    if (isElectron) {
-      // Use Electron's native printToPDF - preserves actual text (ATS-compatible)
-      console.log('PDF Export: Using native Electron printToPDF...');
-      await generatePdfNative(resumeEl, filename);
-    } else {
-      // Browser fallback: html2pdf.js (produces image-based PDFs)
-      console.log('PDF Export: Using html2pdf.js (browser fallback)...');
-      await generatePdfWithHtml2Pdf(resumeEl, filename);
-    }
+    // Browser fallback only — html2pdf (image-based). Tauri uses the native
+    // preview flow (runNativeExportWithPreview), not this path.
+    console.log('PDF Export: Using html2pdf.js (browser fallback)...');
+    await generatePdfWithHtml2Pdf(resumeEl, filename);
     
   } catch (error) {
     console.error('PDF generation failed:', error);
@@ -139,7 +136,7 @@ async function handleDownloadPdf(customFilename) {
  * `resumeEl` is still passed in but is no longer measured — the print window
  * measures its own copy. Kept in the signature for symmetry with html2pdf.
  */
-async function generatePdfNative(_resumeEl, filename) {
+async function generatePdfNative(_resumeEl, _filename) {
   // 0. Flush any pending in-memory edits to storage BEFORE the print
   //    window opens. The store's auto-save is debounced (~SAVE_DEBOUNCE_MS),
   //    so a user who types and immediately clicks "Download PDF" can have
@@ -167,15 +164,8 @@ async function generatePdfNative(_resumeEl, filename) {
     );
   }
 
-  // 1. Save path (main window's dialog, fully visible / no chrome change).
-  //    The Rust side stashes the chosen path in a server-side slot that
-  //    `capture_pdf_from_window` consumes — the renderer never feeds the
-  //    path back into the capture call.
-  const savePath = await pickPdfSavePath(filename);
-  if (!savePath) {
-    console.log('PDF Export: Save canceled by user');
-    return;
-  }
+  // Generation writes to a server-side TEMP file (no save path yet) — the user
+  // picks the destination later, from the preview dialog.
 
   const { listen } = await import('@tauri-apps/api/event');
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -298,23 +288,27 @@ async function generatePdfNative(_resumeEl, filename) {
       height: bounds.height,
     };
 
+    // Per-sheet rects from the print window — one PDF page per on-screen
+    // .resume-page, merged + scaled in Rust. Falls back to the single
+    // whole-view rect if the print window didn't report sheets.
+    const captureRects = Array.isArray(bounds.pages) && bounds.pages.length
+      ? bounds.pages
+      : [captureRect];
+
     console.log(
       `PDF Export: print-window bounds ` +
       `${bounds.width.toFixed(0)}×${bounds.height.toFixed(0)} CSS px ` +
-      `(${pageSize.width.toFixed(2)}in × ${pageSize.height.toFixed(2)}in)`
+      `(${pageSize.width.toFixed(2)}in × ${pageSize.height.toFixed(2)}in), ` +
+      `${captureRects.length} sheet(s)`
     );
 
-    // No `savePath` arg — Rust resolves the destination from the slot the
-    // picker filled. `savePath` is still in scope for diagnostics only.
-    const result = await capturePdfFromWindow(PRINT_LABEL, pageSize, captureRect);
+    // Capture to the server-side temp file; the preview dialog reads it back.
+    const result = await capturePdfFromWindow(PRINT_LABEL, pageSize, captureRect, captureRects);
 
-    if (result.success) {
-      console.log('PDF Export: PDF saved to:', result.filePath || savePath);
-    } else if (result.canceled) {
-      console.log('PDF Export: Save canceled');
-    } else {
-      throw new Error(result.error || 'Failed to save PDF file');
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to generate PDF');
     }
+    console.log('PDF Export: preview PDF generated');
   } finally {
     // 6. Cleanup: unsubscribe listeners and close the hidden window.
     try { if (unlistenReady) unlistenReady(); } catch (_) { /* ignore */ }
@@ -328,6 +322,83 @@ async function generatePdfNative(_resumeEl, filename) {
       }
     }
   }
+}
+
+// ===== Native (Tauri) export with preview =====
+
+// Mirror the busy state to the visible React header button (rd:pdf-busy) and
+// disable the hidden proxy. No spinner markup here — the React button renders
+// its own spinner from rd:pdf-busy.
+function setExportBusy(busy) {
+  setPdfBusy(busy);
+  const btn = document.getElementById('download-pdf');
+  if (btn) btn.disabled = busy;
+}
+
+// Desktop export: generate the real PDF to a temp file, then open the preview
+// dialog showing it. The dialog rasterizes the PDF with pdf.js → <canvas>
+// (see pdfPreview.js for why not an <iframe>). The user saves (→ native
+// location dialog → copy temp to path) or cancels (→ discard the temp).
+async function runNativeExportWithPreview(defaultFilename) {
+  const resumeEl = document.getElementById('resume');
+  if (!resumeEl) {
+    alert('Failed to generate PDF: Resume content not found.');
+    return;
+  }
+  setExportBusy(true);
+  let previewBase64 = null;
+  try {
+    await generatePdfNative(resumeEl, defaultFilename); // captures to the temp slot
+    previewBase64 = await readPdfPreview();
+    if (!previewBase64) throw new Error('Could not read the generated PDF for preview.');
+  } catch (error) {
+    console.error('PDF generation failed:', error);
+    alert(`Failed to generate PDF: ${error.message || 'Unknown error'}.`);
+    await discardPdfPreview();
+    setExportBusy(false);
+    return;
+  }
+  setExportBusy(false);
+
+  window.dispatchEvent(new CustomEvent('rd:open-pdf-dialog', {
+    detail: {
+      defaultFilename,
+      previewBase64,
+      onConfirm: (filename) => savePreviewedPdf(filename),
+      onCancel: () => cancelPreviewedPdf(),
+    },
+  }));
+}
+
+// Save the previewed temp PDF: pick the destination (native dialog), copy temp →
+// path. Backing out of the native dialog discards the temp.
+async function savePreviewedPdf(customFilename) {
+  const filename = customFilename
+    ? (customFilename.endsWith('.pdf') ? customFilename : `${customFilename}.pdf`)
+    : 'Resume.pdf';
+  const path = await pickPdfSavePath(filename);
+  if (!path) {
+    await discardPdfPreview();
+    return;
+  }
+  setExportBusy(true);
+  try {
+    const result = await savePdfPreview();
+    if (!result.success) throw new Error(result.error || 'Failed to save PDF.');
+    console.log('PDF Export: saved to', result.filePath || path);
+  } catch (error) {
+    console.error('PDF save failed:', error);
+    // Propagate so the preview dialog can stay open and offer a retry — the temp
+    // PDF is still on disk, so re-picking a path and saving again works.
+    throw error;
+  } finally {
+    setExportBusy(false);
+  }
+}
+
+// Cancel the preview: drop the temp file.
+async function cancelPreviewedPdf() {
+  await discardPdfPreview();
 }
 
 /**
@@ -347,16 +418,36 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
     throw new Error(`Failed to load PDF library: ${loadError.message}`);
   }
   
-  // Get the resume's actual rendered dimensions
+  // The on-screen sheets carry screen-only chrome (inter-sheet gaps, per-sheet
+  // drop-shadow and rounded corners) that html2canvas would otherwise bake into
+  // the image. The native desktop export strips it via html.pdf-export-mode in
+  // its hidden print window; the browser fallback has no such window, so apply
+  // the same class here for the duration of the capture. It must be added BEFORE
+  // measuring so the gap-collapsed height sizes the PDF page (html2canvas honors
+  // class rules, not @media print). Removed in the finally below.
+  const exportRoot = document.documentElement;
+  exportRoot.classList.add('pdf-export-mode');
+
+  // Get the resume's actual rendered dimensions (after the chrome/gap collapse above).
   const resumeWidth = resumeEl.offsetWidth;
-  const resumeHeight = resumeEl.offsetHeight; // Use offsetHeight for more accurate measurement
-  
-  // Convert pixels to inches (96 DPI)
-  const pageWidthInches = resumeWidth / 96;
-  // Add a tiny buffer (0.01") to prevent content from spilling to next page
-  const pageHeightInches = (resumeHeight / 96) + 0.01;
-  
-  console.log(`PDF Export: Resume dimensions - ${resumeWidth}px x ${resumeHeight}px (${pageWidthInches.toFixed(2)}" x ${pageHeightInches.toFixed(2)}")`);
+  const resumeHeight = resumeEl.offsetHeight;
+
+  // With a fixed page size the resume is split into fixed-height .resume-page sheets;
+  // emit ONE PDF page per sheet (page = one sheet) so the export honors the selected
+  // page size instead of producing a single very tall page. Continuous mode has one
+  // open-height sheet (.is-continuous), so keep the single full-element page.
+  const sheets = resumeEl.querySelectorAll('.resume-page');
+  const firstSheet = sheets[0];
+  const paginated = !!firstSheet && !firstSheet.classList.contains('is-continuous');
+
+  // Convert pixels to inches (96 DPI). Fixed: exact sheet size so the per-sheet
+  // breaks align. Continuous: full height + a tiny buffer so the one page doesn't spill.
+  const pageWidthInches = (paginated ? firstSheet.offsetWidth : resumeWidth) / 96;
+  const pageHeightInches = paginated
+    ? firstSheet.offsetHeight / 96
+    : (resumeHeight / 96) + 0.01;
+
+  console.log(`PDF Export: ${paginated ? sheets.length + ' fixed sheet(s)' : 'continuous'} - ${pageWidthInches.toFixed(2)}" x ${pageHeightInches.toFixed(2)}"`);
   
   // html2canvas options for high quality output
   const options = {
@@ -379,13 +470,21 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
         return tag === 'script' || tag === 'noscript' || tag === 'iframe';
       }
     },
-    jsPDF: { 
-      unit: 'in', 
+    jsPDF: {
+      unit: 'in',
       format: [pageWidthInches, pageHeightInches],
-      orientation: 'portrait'
+      // Match orientation to the page dims: jsPDF normalizes a custom [w,h] to
+      // satisfy 'portrait' (swapping when w > h), so a landscape page would
+      // otherwise export rotated/cropped instead of matching the sheet.
+      orientation: pageWidthInches > pageHeightInches ? 'landscape' : 'portrait'
     }
   };
-  
+
+  // Fixed page size -> one PDF page per .resume-page sheet (break before each).
+  if (paginated) {
+    options.pagebreak = { mode: ['css', 'legacy'], before: '.resume-page' };
+  }
+
   console.log('PDF Export: Starting PDF generation (image-based)...');
   
   try {
@@ -395,5 +494,7 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
   } catch (renderError) {
     console.error('PDF Export: Render failed', renderError);
     throw new Error(`PDF rendering failed: ${renderError.message}`);
+  } finally {
+    exportRoot.classList.remove('pdf-export-mode');
   }
 }

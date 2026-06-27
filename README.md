@@ -5,7 +5,7 @@
 **An AI-assisted résumé builder that turns one master profile into polished, job-tailored résumés — privately, on your own machine.**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/SiriusA7/Resume-Designer?label=download)](https://github.com/SiriusA7/Resume-Designer/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/ashproto/Resume-Designer?label=download)](https://github.com/ashproto/Resume-Designer/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Browser-lightgrey.svg)](#download)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)](https://v2.tauri.app/)
 
@@ -49,7 +49,7 @@ Your résumé data never leaves your machine except for the AI calls you explici
 
 ## Download
 
-Grab the latest installer from the [**Releases page**](https://github.com/SiriusA7/Resume-Designer/releases/latest):
+Grab the latest installer from the [**Releases page**](https://github.com/ashproto/Resume-Designer/releases/latest):
 
 | Platform | File | Notes |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/Sirius
 
 The app updates itself: when a new release is published, it prompts you to download and restart.
 
-**System requirements:** macOS 12.3 (Monterey) or later · Windows 10 (1809) or later.
+**System requirements:** macOS 14.4 (Sonoma) or later · Windows 10 (1809) or later.
 
 > **Windows note:** the installer is not yet code-signed, so Windows SmartScreen may warn on first launch. Choose **More info → Run anyway** to proceed.
 
@@ -86,7 +86,7 @@ Your key is stored locally on your device and is sent only to OpenRouter to make
 The app is a [React](https://react.dev/) + [Vite](https://vitejs.dev/) front end wrapped in a [Tauri 2](https://v2.tauri.app/) desktop shell. All commands run from the `resume-designer/` directory.
 
 ```bash
-git clone https://github.com/SiriusA7/Resume-Designer.git
+git clone https://github.com/ashproto/Resume-Designer.git
 cd Resume-Designer/resume-designer
 npm install
 

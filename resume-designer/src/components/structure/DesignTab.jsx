@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Segmented as SegmentedTrack, SegmentedItem } from '@/components/ui/segmented';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
@@ -270,6 +271,15 @@ const LAYOUT_OPTIONS = [
   },
 ];
 
+// Page-size options for the Page Setup section (value → human label with dims).
+const PAGE_SIZE_OPTIONS = [
+  { value: 'continuous', label: 'Continuous' },
+  { value: 'letter', label: 'Letter (8.5 × 11 in)' },
+  { value: 'a4', label: 'A4 (210 × 297 mm)' },
+  { value: 'legal', label: 'Legal (8.5 × 14 in)' },
+  { value: 'tabloid', label: 'Tabloid (11 × 17 in)' },
+];
+
 // Image-focus position titles (ported verbatim from the position grid).
 const PHOTO_FOCUS_POSITIONS = [
   'left top',
@@ -340,6 +350,16 @@ function adjustColorBrightness(hex, factor) {
 // customColor go through here; main.js is a no-op for the other detail types.
 function dispatchDesignChange(detail) {
   window.dispatchEvent(new CustomEvent('rd:design-change', { detail }));
+}
+
+// Spacing and font changes alter the rendered height but only apply CSS / load a
+// font — they don't re-split paginated sheets. Debounce a re-paginate (main.js
+// no-ops it in continuous mode) so a slider drag stays smooth and the breaks
+// settle once the change lands.
+let repaginateTimer = null;
+function scheduleRepaginate() {
+  clearTimeout(repaginateTimer);
+  repaginateTimer = setTimeout(() => dispatchDesignChange({ type: 'spacing' }), 200);
 }
 
 // Detect if current spacing matches a preset (ported verbatim)
@@ -493,6 +513,9 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
   const initialSettings = getSettings();
   const [palette, setPalette] = useState(initialSettings.colorPalette || 'terracotta');
   const [layout, setLayout] = useState(initialSettings.layout || 'sidebar');
+  const [pageSize, setPageSize] = useState(initialSettings.pageSize || 'continuous');
+  const [orientation, setOrientation] = useState(initialSettings.orientation || 'portrait');
+  const [pageWidthIn, setPageWidthIn] = useState(initialSettings.pageWidthIn ?? 8.5);
   const [customColor, setCustomColor] = useState(initialSettings.customColor || '#c45c3e');
 
   const [fontSettings, setFontSettings] = useState(() => getCurrentFontSettings());
@@ -546,6 +569,24 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     dispatchDesignChange({ type: 'layout', value });
   }
 
+  // ===== Page Setup handlers ===============================================
+
+  function handleSetPageSize(value) {
+    setPageSize(value);
+    dispatchDesignChange({ type: 'pageSize', value });
+  }
+
+  function handleSetOrientation(value) {
+    setOrientation(value);
+    dispatchDesignChange({ type: 'orientation', value });
+  }
+
+  function handleSetPageWidth(raw) {
+    setPageWidthIn(raw);
+    const n = parseFloat(raw);
+    if (Number.isFinite(n) && n > 0) dispatchDesignChange({ type: 'pageWidthIn', value: n });
+  }
+
   // ===== Typography handlers ===============================================
 
   function getCurrentPreviewFonts() {
@@ -583,6 +624,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyFontSettings(next);
     saveFontSettings(next);
     setFontSettings(next);
+    scheduleRepaginate();
   }
 
   async function handleSelectGoogleFont(family, category, fontType) {
@@ -604,6 +646,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyFontSettings(next);
     saveFontSettings(next);
     setFontSettings(next);
+    scheduleRepaginate();
   }
 
   function handleSelectSystemFont(fontId, fontType) {
@@ -623,6 +666,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyFontSettings(next);
     saveFontSettings(next);
     setFontSettings(next);
+    scheduleRepaginate();
   }
 
   // ===== Header Style handlers =============================================
@@ -687,6 +731,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
+    scheduleRepaginate();
   }
 
   function handleMarginChange(side, value) {
@@ -694,10 +739,12 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
+    scheduleRepaginate();
   }
 
   function handleResetSpacing() {
     setSpacing(resetSpacingSettings());
+    scheduleRepaginate();
   }
 
   function handleApplySpacingPreset(presetId) {
@@ -713,6 +760,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applySpacingSettings(next);
     saveSpacingSettings(next);
     setSpacing(next);
+    scheduleRepaginate();
   }
 
   // ===== Accent handlers ===================================================
@@ -735,10 +783,12 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
     applyPhotoSettings(next);
     savePhotoSettings(next);
     setPhoto(next);
+    scheduleRepaginate();
   }
 
   function handleRemovePhoto() {
     setPhoto(removePhoto());
+    scheduleRepaginate();
   }
 
   function handlePhotoFile(file) {
@@ -749,6 +799,7 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
       applyPhotoSettings(next);
       savePhotoSettings(next);
       setPhoto(next);
+      scheduleRepaginate();
     };
     reader.readAsDataURL(file);
   }
@@ -827,6 +878,50 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
   // -------------------------------------------------------------------------
   return (
     <>
+      {/* ===== Page Setup ===== */}
+      <PanelSection title="Page Setup" {...sectionProps('page-setup')}>
+        <ControlGroup label="Page Size">
+          <Select value={pageSize} onValueChange={handleSetPageSize}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZE_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ControlGroup>
+
+        {pageSize === 'continuous' ? (
+          <ControlGroup label="Page Width (inches)">
+            <Input
+              type="number"
+              step="0.1"
+              min="3"
+              max="20"
+              className="h-8 px-2"
+              value={pageWidthIn}
+              onChange={(e) => handleSetPageWidth(e.target.value)}
+            />
+          </ControlGroup>
+        ) : (
+          <ControlGroup label="Orientation">
+            <Segmented
+              stretch
+              options={[
+                { value: 'portrait', label: 'Portrait' },
+                { value: 'landscape', label: 'Landscape' },
+              ]}
+              value={orientation}
+              onChange={handleSetOrientation}
+            />
+          </ControlGroup>
+        )}
+      </PanelSection>
+
       {/* ===== Color Theme ===== */}
       <PanelSection title="Color Theme" {...sectionProps('color-theme')}>
         {/* Palette swatches — mockup `.sw`: 34px, rounded-8, three-tone fill,

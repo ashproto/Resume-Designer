@@ -18,9 +18,9 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 // GitHub's `/releases/latest` redirect excludes pre-releases, so stable users
 // never see beta builds; the beta channel reads the rolling `next` pre-release.
 const STABLE_ENDPOINT: &str =
-    "https://github.com/SiriusA7/Resume-Designer/releases/latest/download/latest.json";
+    "https://github.com/ashproto/Resume-Designer/releases/latest/download/latest.json";
 const BETA_ENDPOINT: &str =
-    "https://github.com/SiriusA7/Resume-Designer/releases/download/next/latest.json";
+    "https://github.com/ashproto/Resume-Designer/releases/download/next/latest.json";
 
 // The beta channel is a *superset*: it also reads the stable manifest so a beta
 // user still receives a stable release that's newer than the latest pre-release

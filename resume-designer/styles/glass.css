@@ -133,6 +133,16 @@
     0 12px 48px rgba(0, 0, 0, 0.24);
 }
 
+/* Paginated: each .resume-page is the paper. The container + the gaps between
+   sheets go clear so the native vibrancy shows through — just like the space
+   around a single page. Each sheet keeps its own opaque-white paper + tight
+   shadow (main.css), which lifts it without flooding the gap. The rule above
+   out-specifies the base `.is-paginated` transparency, so re-state it here. */
+:root[data-tauri="true"] .resume-container.is-paginated {
+  background: transparent;
+  box-shadow: none;
+}
+
 /* --- 7. Floating menus / dropdowns / pop-overs ---------------------------- */
 /* Light panel-style menus (dark text on --color-panel-bg). Moderate opacity +
    blur = legible glass. */

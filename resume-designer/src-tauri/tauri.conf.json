@@ -56,7 +56,7 @@
     "macOS": {
       "entitlements": "Entitlements.plist",
       "hardenedRuntime": true,
-      "minimumSystemVersion": "12.3",
+      "minimumSystemVersion": "14.4",
       "providerShortName": null
     },
     "windows": {
@@ -73,7 +73,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/SiriusA7/Resume-Designer/releases/latest/download/latest.json"
+        "https://github.com/ashproto/Resume-Designer/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3MTEzQjY0MzM0OUFBQjUKUldTMXFra3paRHNSTjBjMjFpMUJxMk9nbGhxcERNUXNBaTh0YmsyWUFGR29Id291b3o1WTh0NFQK",
       "windows": {

@@ -489,7 +489,7 @@ export async function pickPdfSavePath(defaultName = 'Resume.pdf') {
  *   anchors the resume at origin so x/y are always 0) is consumed by the
  *   macOS WKWebView createPDF path.
  */
-export async function capturePdfFromWindow(windowLabel, pageSize = null, captureRect = null) {
+export async function capturePdfFromWindow(windowLabel, pageSize = null, captureRect = null, captureRects = null) {
   if (!isTauri) {
     return { success: false, error: 'Native PDF generation not available in browser' };
   }
@@ -498,7 +498,40 @@ export async function capturePdfFromWindow(windowLabel, pageSize = null, capture
     windowLabel,
     pageSize,
     captureRect,
+    captureRects,
   });
+}
+
+/**
+ * Read the just-generated preview PDF as base64 so the renderer can display it
+ * in an <iframe> before the user saves. Returns null in the browser (no native
+ * preview there).
+ */
+export async function readPdfPreview() {
+  if (!isTauri) return null;
+  const { core } = await tauri();
+  return await core.invoke('read_pdf_preview');
+}
+
+/**
+ * Copy the previewed temp PDF to the path the user just confirmed via
+ * pickPdfSavePath. Returns a PdfResult ({ success, filePath?, error?, canceled? }).
+ */
+export async function savePdfPreview() {
+  if (!isTauri) return { success: false, error: 'Native PDF save not available in browser' };
+  const { core } = await tauri();
+  return await core.invoke('save_pdf_preview');
+}
+
+/** Delete the preview temp PDF (user cancelled). Best-effort; never throws. */
+export async function discardPdfPreview() {
+  if (!isTauri) return;
+  try {
+    const { core } = await tauri();
+    await core.invoke('discard_pdf_preview');
+  } catch (e) {
+    console.warn('discardPdfPreview failed:', e);
+  }
 }
 
 /**
