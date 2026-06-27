@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 
 import { getSettings, saveSettings } from '../../persistence.js';
 import { openSettings } from '../../settingsModal.js';
+import { loadVariant } from '../../variantManager.js';
 import { useVariants } from '../../hooks/useVariants.js';
 import { useChat } from './useChat.js';
 import { MessageList } from './MessageList.jsx';
@@ -118,6 +119,13 @@ export default function ChatPanel() {
 
   const openApiSettings = () => openSettings('api-keys');
 
+  // Cross-résumé state: is the open thread homed to a DIFFERENT résumé than the
+  // active one? If so, surface a slim banner with a Jump to its home résumé.
+  const openThread = chat.threads.find((t) => t.id === chat.currentThreadId);
+  const openHome = openThread?.homeVariantId ?? null;
+  const crossResume = openHome !== null && openHome !== chat.currentVariantId;
+  const homeName = variants.list.find((v) => v.id === openHome)?.name;
+
   if (!host) return null;
 
   return createPortal(
@@ -172,6 +180,21 @@ export default function ChatPanel() {
           </div>
         )}
       </div>
+
+      {/* Cross-résumé banner: pinned slim row when the open thread belongs to a
+          different résumé than the active one, with a Jump to its home. */}
+      {chat.configured && crossResume && homeName && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground">
+          <span className="min-w-0 truncate">Thread from «{homeName}»</span>
+          <button
+            type="button"
+            className="shrink-0 font-medium text-foreground hover:underline"
+            onClick={() => loadVariant(openHome)}
+          >
+            Jump
+          </button>
+        </div>
+      )}
 
       <MessageList
         messages={chat.messages}
