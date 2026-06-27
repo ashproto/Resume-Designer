@@ -741,6 +741,32 @@ Let's begin!`);
       .catch(() => {});
   }, [setThreads, setCurrentThreadId, setMessages, modelRef]);
 
+  // Follow the active résumé: when the user switches variants (store emits
+  // 'dataLoaded'), persist the current thread, reload threads from storage (to
+  // pick up any external mutation, e.g. a variant delete), and open that
+  // variant's most-recent thread — creating a fresh homed one if it has none.
+  useEffect(() => {
+    const unsub = store.subscribe((event) => {
+      if (event !== 'dataLoaded') return;
+      const activeId = getCurrentId();
+      if (currentThreadIdRef.current) persistCurrentThread(messagesRef.current);
+      const migrated = migrateThreads(loadThreads().threads);
+      let cid = pickCurrentThreadId(migrated, activeId);
+      let next = migrated;
+      if (!cid && activeId) {
+        const t = makeThread('New Chat', [], activeId);
+        next = [t, ...migrated];
+        cid = t.id;
+        persistThreads(next);
+      }
+      if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
+      setThreads(next);
+      setCurrentThreadId(cid);
+      setMessages(next.find((t) => t.id === cid)?.messages || []);
+    });
+    return unsub;
+  }, [setThreads, setCurrentThreadId, setMessages]);
+
   useEffect(() => {
     const onSettings = () => refresh();
     window.addEventListener(SETTINGS_UPDATED_EVENT, onSettings);
