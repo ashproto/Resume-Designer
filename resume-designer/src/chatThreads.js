@@ -87,6 +87,34 @@ export function pickCurrentThreadId(threads, currentVariantId) {
   return homed.length ? homed[0].id : null;
 }
 
+/** variantId of the last non-context message (the "current context"), or null. */
+export function lastTurnVariantId(messages) {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role !== 'context') return messages[i].variantId ?? null;
+  }
+  return null;
+}
+
+/**
+ * Append a `context` divider marker iff the active variant differs from the
+ * thread's last turn AND the thread is non-empty. Returns the SAME array
+ * reference when no marker is needed (cheap no-op for the common case).
+ */
+export function withContextMarker(messages, activeVariantId, activeVariantName) {
+  const list = Array.isArray(messages) ? messages : [];
+  if (list.length === 0) return messages;
+  if (lastTurnVariantId(list) === activeVariantId) return messages;
+  const marker = {
+    id: `ctx-${Date.now()}-${randomSuffix()}`,
+    role: 'context',
+    variantId: activeVariantId,
+    variantName: activeVariantName,
+    timestamp: new Date().toISOString(),
+  };
+  return [...list, marker];
+}
+
 /**
  * Load all threads and decide which is current. Migrates legacy single-thread
  * history on first run, guarantees at least one thread, and selects the

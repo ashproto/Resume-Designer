@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { makeThread, migrateThreads, groupThreadsByHome, pickCurrentThreadId } from '../src/chatThreads.js';
+import {
+  makeThread, migrateThreads, groupThreadsByHome, pickCurrentThreadId,
+  lastTurnVariantId, withContextMarker,
+} from '../src/chatThreads.js';
 
 describe('makeThread homeVariantId', () => {
   it('defaults homeVariantId to null (General)', () => {
@@ -52,5 +55,37 @@ describe('pickCurrentThreadId', () => {
   });
   it('returns null when the active variant has no threads', () => {
     expect(pickCurrentThreadId(threads, 'v3')).toBe(null);
+  });
+});
+
+describe('lastTurnVariantId', () => {
+  it('returns the variantId of the last non-context message', () => {
+    const msgs = [
+      { role: 'user', variantId: 'v1' },
+      { role: 'context', variantId: 'v2' },
+      { role: 'assistant', variantId: 'v1' },
+    ];
+    expect(lastTurnVariantId(msgs)).toBe('v1');
+  });
+  it('returns null for an empty thread', () => {
+    expect(lastTurnVariantId([])).toBe(null);
+  });
+});
+
+describe('withContextMarker', () => {
+  it('appends a context marker when the active variant differs from the last turn', () => {
+    const msgs = [{ id: 'm1', role: 'user', variantId: 'v1' }];
+    const out = withContextMarker(msgs, 'v2', 'Globex');
+    expect(out).toHaveLength(2);
+    expect(out[1]).toMatchObject({ role: 'context', variantId: 'v2', variantName: 'Globex' });
+    expect(typeof out[1].id).toBe('string');
+  });
+  it('is a no-op when the active variant matches the last turn', () => {
+    const msgs = [{ id: 'm1', role: 'user', variantId: 'v1' }];
+    expect(withContextMarker(msgs, 'v1', 'Acme')).toBe(msgs);
+  });
+  it('is a no-op for an empty thread (no prior turn to switch from)', () => {
+    const msgs = [];
+    expect(withContextMarker(msgs, 'v1', 'Acme')).toBe(msgs);
   });
 });
