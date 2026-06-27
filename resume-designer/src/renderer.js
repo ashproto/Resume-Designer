@@ -3,6 +3,14 @@
  * Converts parsed resume data into styled HTML with inline editing support
  */
 
+// Separator between inline skill/tool tokens. The trailing <wbr> is a zero-width
+// soft-wrap opportunity: the tag spans are joined with no surrounding whitespace,
+// so without it a bullet-separated run has no break point at the separators and a
+// long run overflows its column instead of wrapping — e.g. skills/tools spilling
+// out of a narrow sidebar into the main column. The <wbr> lets the line wrap at
+// each separator (it adds no width; the gap comes from .skill-sep's margin).
+const SKILL_SEPARATOR = '<span class="skill-sep">•</span><wbr>';
+
 function normalizeSectionType(type) {
   return type === 'skills' ? 'skills' : 'list';
 }
@@ -52,7 +60,7 @@ function formatSkillsLineStacked(line) {
   const items = normalizeLineItems(line, 'skills');
   return items
     .map(item => `<span class="skill-tag-inline">${formatInlineMarkdown(item)}</span>`)
-    .join('<span class="skill-sep">•</span>');
+    .join(SKILL_SEPARATOR);
 }
 
 function renderSectionLine(line, mode, variant = 'sidebar') {
@@ -76,7 +84,7 @@ function renderSectionContent(section, sIdx, variant = 'sidebar') {
         return `<span class="skill-tag-row" data-editable="sections[${sIdx}].content[${i}]">${rendered}</span>`;
       })
       .filter(Boolean)
-      .join('<span class="skill-sep">•</span>');
+      .join(SKILL_SEPARATOR);
   }
   return (section.content || [])
     .map((line, i) => `
@@ -133,7 +141,7 @@ function renderToolsInline(tools, editablePath = null) {
   const tokens = normalizeTools(tools);
   if (tokens.length === 0) return '';
   const editableAttr = editablePath ? ` data-editable="${editablePath}"` : '';
-  return `<span class="skill-tag-row">${tokens.map(token => `<span class="skill-tag tool-token"${editableAttr}>${formatInlineMarkdown(token)}</span>`).join('<span class="skill-sep">•</span>')}</span>`;
+  return `<span class="skill-tag-row">${tokens.map(token => `<span class="skill-tag tool-token"${editableAttr}>${formatInlineMarkdown(token)}</span>`).join(SKILL_SEPARATOR)}</span>`;
 }
 
 // Tools as a vertical bulleted list (toolsDisplay === 'list'). Each tool is a
@@ -159,7 +167,7 @@ function renderToolsInlineStacked(tools, editablePath = null) {
   const editableAttr = editablePath ? ` data-editable="${editablePath}"` : '';
   return tokens
     .map((token) => `<span class="skill-tag-inline"${editableAttr}>${formatInlineMarkdown(token)}</span>`)
-    .join('<span class="skill-sep">•</span>');
+    .join(SKILL_SEPARATOR);
 }
 
 // Bulleted is the default tools display; only an explicit 'skills' opts into the
@@ -484,7 +492,7 @@ function renderSidebar(data) {
             return `<span class="skill-tag-row" data-editable="sections[${sIdx}].content[${i}]">${rendered}</span>`;
           })
           .filter(Boolean)
-          .join('<span class="skill-sep">•</span>');
+          .join(SKILL_SEPARATOR);
 
         html += `
           <div class="sidebar-section" data-section-id="${section.id || sIdx}">
