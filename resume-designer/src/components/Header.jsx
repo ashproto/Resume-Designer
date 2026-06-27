@@ -22,8 +22,12 @@ import { cn } from '@/lib/utils';
 import { useVariants } from '../hooks/useVariants.js';
 import {
   loadVariant, duplicateVariant, deleteCurrentVariant, renameCurrentVariant,
-  importVariant, exportCurrentVariant,
+  importVariant, exportCurrentVariant, getCurrentId,
 } from '../variantManager.js';
+import {
+  loadThreads, persistThreads, reassignThreadsForDeletedVariant, countThreadsForVariant,
+} from '../chatThreads.js';
+import { askDeleteVariantThreads } from './chat/DeleteVariantThreadsDialog.jsx';
 import { openSettings } from '../settingsModal.js';
 
 // Format a variant's updatedAt for the selector menu (relative, then absolute).
@@ -130,12 +134,28 @@ export default function Header() {
       toast.info("You can't delete your only resume.");
       return;
     }
-    const ok = await confirmDestructive({
-      title: 'Delete this resume?',
-      description: `"${currentName}" will be permanently deleted. This can't be undone.`,
-      actionLabel: 'Delete',
-    });
-    if (ok) deleteCurrentVariant();
+    // If the résumé has chat threads, ask whether to keep (→General) or delete
+    // them, and reassign BEFORE deleteCurrentVariant() so the id still exists.
+    // After delete, loadVariant(newId) fires dataLoaded and useChat's follow
+    // effect reloads threads, so the change is reflected automatically.
+    const deletingId = getCurrentId();
+    const all = loadThreads().threads;
+    const n = countThreadsForVariant(all, deletingId);
+    if (n > 0) {
+      const choice = await askDeleteVariantThreads({ name: currentName, count: n });
+      if (choice === 'cancel') return;
+      persistThreads(
+        reassignThreadsForDeletedVariant(all, deletingId, choice === 'delete' ? 'delete' : 'general')
+      );
+    } else {
+      const ok = await confirmDestructive({
+        title: 'Delete this resume?',
+        description: `"${currentName}" will be permanently deleted. This can't be undone.`,
+        actionLabel: 'Delete',
+      });
+      if (!ok) return;
+    }
+    deleteCurrentVariant();
   };
 
   // Variant action items reused by the expanded icon buttons, the kebab menu, and
