@@ -195,6 +195,14 @@ export function useChat() {
     persistThreads(next);
   };
 
+  // addMessage variant that routes the finished turn to the thread that was
+  // active when the flow STARTED (pass startThreadId = currentThreadIdRef.current
+  // captured at dispatch). The non-streamed slash-command flows use this so a
+  // mid-request thread switch can't misroute their result — mirrors how the
+  // streamed flows commit via commitToThread.
+  const addMessageTo = (startThreadId, role, content, applyData = null) =>
+    commitToThread(startThreadId, { id: uid(), role, content, applyData, timestamp: new Date().toISOString() });
+
   // ── animated "thinking" process ────────────────────────────────────────
   const beginThinking = () => {
     setLoading(true);
@@ -290,20 +298,22 @@ export function useChat() {
   };
 
   const getAIFeedback = async () => {
+    const startThreadId = currentThreadIdRef.current;
     beginThinking();
     try {
       addThinkingStep('Analyzing your resume...');
       const response = await getFeedback(modelRef.current);
       completeThinkingStep('Feedback ready');
       endThinking();
-      addMessage('assistant', response);
+      addMessageTo(startThreadId, 'assistant', response);
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      addMessageTo(startThreadId, 'error', error.message);
     }
   };
 
   const getAIImproveSummary = async () => {
+    const startThreadId = currentThreadIdRef.current;
     beginThinking();
     try {
       addThinkingStep('Reading current summary...');
@@ -312,24 +322,25 @@ export function useChat() {
       const response = await improveSummary(modelRef.current);
       completeThinkingStep('Summary improved');
       endThinking();
-      addMessage('assistant', response, { action: 'apply-summary', value: response });
+      addMessageTo(startThreadId, 'assistant', response, { action: 'apply-summary', value: response });
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      addMessageTo(startThreadId, 'error', error.message);
     }
   };
 
   const getAIGenerateBullets = async (context) => {
+    const startThreadId = currentThreadIdRef.current;
     beginThinking();
     try {
       addThinkingStep('Generating bullet points...');
       const response = await generateBullets(modelRef.current, context, 3);
       completeThinkingStep('Bullets generated');
       endThinking();
-      addMessage('assistant', response);
+      addMessageTo(startThreadId, 'assistant', response);
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      addMessageTo(startThreadId, 'error', error.message);
     }
   };
 
@@ -396,6 +407,7 @@ export function useChat() {
       addMessage('error', 'Please configure an API key in settings before starting a profile interview.');
       return;
     }
+    const startThreadId = currentThreadIdRef.current;
     interviewModeRef.current = true;
     interviewMsgsRef.current = [];
     addMessage('assistant', `**Profile Interview Started**
@@ -414,15 +426,16 @@ Let's begin!`);
       interviewMsgsRef.current.push({ role: 'assistant', content: response });
       completeThinkingStep('Ready');
       endThinking();
-      addMessage('assistant', response);
+      addMessageTo(startThreadId, 'assistant', response);
     } catch (error) {
       endThinking();
       interviewModeRef.current = false;
-      addMessage('error', `Failed to start interview: ${error.message}`);
+      addMessageTo(startThreadId, 'error', `Failed to start interview: ${error.message}`);
     }
   };
 
   const continueInterview = async (userMessage) => {
+    const startThreadId = currentThreadIdRef.current;
     interviewMsgsRef.current.push({ role: 'user', content: userMessage });
     beginThinking();
     try {
@@ -431,10 +444,10 @@ Let's begin!`);
       interviewMsgsRef.current.push({ role: 'assistant', content: response });
       completeThinkingStep('Response ready');
       endThinking();
-      addMessage('assistant', response);
+      addMessageTo(startThreadId, 'assistant', response);
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      addMessageTo(startThreadId, 'error', error.message);
     }
   };
 
@@ -443,6 +456,7 @@ Let's begin!`);
       addMessage('assistant', "We haven't talked enough yet! Please answer a few more questions so I have information to save.");
       return;
     }
+    const startThreadId = currentThreadIdRef.current;
     beginThinking();
     try {
       addThinkingStep('Analyzing conversation...');
@@ -467,10 +481,10 @@ Let's begin!`);
       if (extracted.industryKnowledge) summary += '- Industry knowledge\n';
       if (extracted.preferences) summary += '- Work preferences\n';
       summary += '\nYou can view and edit your profile from **Tools > User Profile**.';
-      addMessage('assistant', summary);
+      addMessageTo(startThreadId, 'assistant', summary);
     } catch (error) {
       endThinking();
-      addMessage('error', `Failed to extract profile: ${error.message}\n\nYou can try \`/done\` again or continue the conversation.`);
+      addMessageTo(startThreadId, 'error', `Failed to extract profile: ${error.message}\n\nYou can try \`/done\` again or continue the conversation.`);
     }
   };
 
