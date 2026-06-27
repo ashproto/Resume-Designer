@@ -45,6 +45,48 @@ export function migrateThreads(threads) {
   return threads.map((t) => (t && t.homeVariantId === undefined ? { ...t, homeVariantId: null } : t));
 }
 
+// Newest-first by updatedAt (stable for equal timestamps).
+function byUpdatedDesc(a, b) {
+  return new Date(b.updatedAt) - new Date(a.updatedAt);
+}
+
+/**
+ * Split threads for the selector, relative to the active variant.
+ * A thread whose homeVariantId is null OR points at a variant not in `variants`
+ * falls into `general`. `variants` is [{ id, name }] (useVariants().list).
+ * @returns {{ current: Thread[], general: Thread[],
+ *            others: { variantId, variantName, threads: Thread[] }[] }}
+ */
+export function groupThreadsByHome(threads, currentVariantId, variants = []) {
+  const known = new Map(variants.map((v) => [v.id, v.name]));
+  const current = [];
+  const general = [];
+  const othersByVariant = new Map();
+  for (const t of Array.isArray(threads) ? threads : []) {
+    const home = t.homeVariantId ?? null;
+    if (home === currentVariantId) current.push(t);
+    else if (home === null || !known.has(home)) general.push(t);
+    else {
+      if (!othersByVariant.has(home)) othersByVariant.set(home, []);
+      othersByVariant.get(home).push(t);
+    }
+  }
+  current.sort(byUpdatedDesc);
+  general.sort(byUpdatedDesc);
+  const others = [...othersByVariant.entries()].map(([variantId, ts]) => ({
+    variantId, variantName: known.get(variantId), threads: ts.sort(byUpdatedDesc),
+  }));
+  return { current, general, others };
+}
+
+/** Id of the most-recently-updated thread homed to the active variant, or null. */
+export function pickCurrentThreadId(threads, currentVariantId) {
+  const homed = (Array.isArray(threads) ? threads : [])
+    .filter((t) => (t.homeVariantId ?? null) === currentVariantId)
+    .sort(byUpdatedDesc);
+  return homed.length ? homed[0].id : null;
+}
+
 /**
  * Load all threads and decide which is current. Migrates legacy single-thread
  * history on first run, guarantees at least one thread, and selects the
