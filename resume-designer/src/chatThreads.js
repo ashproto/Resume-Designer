@@ -150,6 +150,23 @@ export function loadThreads() {
   }
 }
 
+/**
+ * When a variant is deleted, either move its threads to General
+ * (mode 'general') or drop them (mode 'delete'). Pure; caller persists.
+ */
+export function reassignThreadsForDeletedVariant(threads, deletedVariantId, mode) {
+  const list = Array.isArray(threads) ? threads : [];
+  if (mode === 'delete') return list.filter((t) => (t.homeVariantId ?? null) !== deletedVariantId);
+  return list.map((t) =>
+    (t.homeVariantId ?? null) === deletedVariantId ? { ...t, homeVariantId: null } : t);
+}
+
+/** Count threads homed to a given variant (for the delete prompt). */
+export function countThreadsForVariant(threads, variantId) {
+  return (Array.isArray(threads) ? threads : [])
+    .filter((t) => (t.homeVariantId ?? null) === variantId).length;
+}
+
 export function persistThreads(threads) {
   try {
     appStorage.setItem(THREADS_KEY, JSON.stringify(threads));

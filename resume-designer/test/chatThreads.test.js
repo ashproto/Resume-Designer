@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   makeThread, migrateThreads, groupThreadsByHome, pickCurrentThreadId,
   lastTurnVariantId, withContextMarker,
+  reassignThreadsForDeletedVariant,
 } from '../src/chatThreads.js';
 
 describe('makeThread homeVariantId', () => {
@@ -87,5 +88,21 @@ describe('withContextMarker', () => {
   it('is a no-op for an empty thread (no prior turn to switch from)', () => {
     const msgs = [];
     expect(withContextMarker(msgs, 'v1', 'Acme')).toBe(msgs);
+  });
+});
+
+describe('reassignThreadsForDeletedVariant', () => {
+  const threads = [
+    { id: 'a', homeVariantId: 'v1' }, { id: 'b', homeVariantId: 'v2' },
+    { id: 'c', homeVariantId: null },
+  ];
+  it("mode 'general' clears homeVariantId for the deleted variant's threads", () => {
+    const out = reassignThreadsForDeletedVariant(threads, 'v1', 'general');
+    expect(out.find((t) => t.id === 'a').homeVariantId).toBe(null);
+    expect(out.find((t) => t.id === 'b').homeVariantId).toBe('v2'); // untouched
+  });
+  it("mode 'delete' removes the deleted variant's threads", () => {
+    const out = reassignThreadsForDeletedVariant(threads, 'v1', 'delete');
+    expect(out.map((t) => t.id)).toEqual(['b', 'c']);
   });
 });
