@@ -12,7 +12,7 @@ import { showDiffView } from '../../diffView.js';
 import { showInlineChanges } from '../../inlineChanges.js';
 import {
   loadThreads, persistThreads, makeThread, trimMessages, clearLegacyHistory,
-  migrateThreads, pickCurrentThreadId,
+  migrateThreads, pickCurrentThreadId, withContextMarker,
 } from '../../chatThreads.js';
 import { getCurrentId } from '../../variantManager.js';
 
@@ -178,7 +178,19 @@ export function useChat() {
   };
 
   const addMessage = (role, content, applyData = null) =>
-    appendMessage({ id: uid(), role, content, applyData, timestamp: new Date().toISOString() });
+    appendMessage({ id: uid(), role, content, applyData, variantId: getCurrentId(), timestamp: new Date().toISOString() });
+
+  // Insert a context-switch divider into the current thread when the active
+  // résumé differs from the thread's last turn (no-op otherwise). Called at the
+  // start of send() and handleCommand() so every flow is preceded by a divider
+  // when the résumé changed.
+  const markContextIfSwitched = () => {
+    const withMarker = withContextMarker(messagesRef.current, getCurrentId(), store.getData()?.name);
+    if (withMarker !== messagesRef.current) {
+      setMessages(withMarker);
+      persistCurrentThread(withMarker);
+    }
+  };
 
   // Commit a finished turn to the thread that was active when the flow STARTED.
   // If the user switched threads mid-stream, persist into that original thread
@@ -281,13 +293,13 @@ export function useChat() {
         id: uid(), role: 'assistant',
         content: res.stopped ? (res.text ? `${res.text}\n\n_(stopped)_` : '_(stopped)_') : res.text,
         reasoning: res.reasoning, reasoningDetails: res.reasoningDetails,
-        annotations: res.annotations, run: res.run, timestamp: new Date().toISOString(),
+        annotations: res.annotations, run: res.run, variantId: getCurrentId(), timestamp: new Date().toISOString(),
       });
       refreshCustomModels(); // chat() records any newly-used custom slug
     } catch (error) {
       clearStreaming();
       setLoading(false);
-      commitToThread(startThreadId, { id: uid(), role: 'error', content: error.message, timestamp: new Date().toISOString() });
+      commitToThread(startThreadId, { id: uid(), role: 'error', content: error.message, variantId: getCurrentId(), timestamp: new Date().toISOString() });
     }
   };
 
@@ -365,7 +377,7 @@ export function useChat() {
           id: uid(), role: 'assistant',
           content: result.explanation || 'No changes were generated. The AI may need more specific instructions.',
           reasoning: capturedReasoning || null, run: capturedRun,
-          timestamp: new Date().toISOString(),
+          variantId: getCurrentId(), timestamp: new Date().toISOString(),
         });
         return;
       }
@@ -378,7 +390,7 @@ export function useChat() {
         id: uid(), role: 'assistant',
         content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''} to your resume.`}\n\nChanges are highlighted on your resume. Use the buttons to apply or reject individual changes, or click "Review Changes" below for a detailed diff view.`,
         reasoning: capturedReasoning || null, run: capturedRun,
-        timestamp: new Date().toISOString(),
+        variantId: getCurrentId(), timestamp: new Date().toISOString(),
         pendingChanges: changeSet,
       });
     } catch (error) {
@@ -387,8 +399,8 @@ export function useChat() {
       // A user Stop aborts the buffered JSON mid-stream → JSON.parse fails. Show a
       // clean "(stopped)" turn instead of a misleading "not valid JSON" error.
       commitToThread(startThreadId, controller.signal.aborted
-        ? { id: uid(), role: 'assistant', content: '_(stopped)_', timestamp: new Date().toISOString() }
-        : { id: uid(), role: 'error', content: error.message, timestamp: new Date().toISOString() });
+        ? { id: uid(), role: 'assistant', content: '_(stopped)_', variantId: getCurrentId(), timestamp: new Date().toISOString() }
+        : { id: uid(), role: 'error', content: error.message, variantId: getCurrentId(), timestamp: new Date().toISOString() });
     }
   };
 
@@ -527,6 +539,7 @@ Let's begin!`);
   };
 
   const handleCommand = async (command) => {
+    markContextIfSwitched();
     const parts = command.split(' ');
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1).join(' ');
@@ -591,6 +604,7 @@ Let's begin!`);
       messageWithContext = `Context from resume:\n${contextText}\n\n---\n\nUser request: ${text}`;
     }
 
+    markContextIfSwitched();
     addMessage('user', text);
     const targetPath = chips.length > 0 ? chips[0].path : null;
     clearChips();
