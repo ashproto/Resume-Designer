@@ -672,6 +672,14 @@ Let's begin!`);
       persistThreads(next);
     }
   };
+  // Re-home a thread to the active résumé (the "Move here" affordance).
+  const moveThreadToCurrentVariant = (threadId) => {
+    const activeId = getCurrentId();
+    const next = threadsRef.current.map((t) =>
+      t.id === threadId ? { ...t, homeVariantId: activeId, updatedAt: new Date().toISOString() } : t);
+    setThreads(next);
+    persistThreads(next);
+  };
 
   // ── model + options ────────────────────────────────────────────────────
   const selectModel = (value) => {
@@ -792,10 +800,13 @@ Let's begin!`);
     messages, threads, currentThreadId, loading, thinking, streamingMessage, contextChips,
     currentModel, reasoningEffort, webSearchEnabled,
     configured, configuredProviders, reasoningSupported, customModels,
+    // active résumé (re-read each render; the follow effect re-renders on switch)
+    currentVariantId: getCurrentId(),
     // actions
     send, stop, selectModel, applyCustomSlug, removeCustomModelEntry,
     setReasoning, toggleWebSearch, addChip, openWithContext, removeChip, clearChips,
-    newThread, switchThread, deleteThread, openDiffForMessage, applyAction,
+    newThread, switchThread, deleteThread, moveThreadToCurrentVariant,
+    openDiffForMessage, applyAction,
     startInterview, refresh,
   };
 }
