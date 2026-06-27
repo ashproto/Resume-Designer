@@ -257,13 +257,13 @@ export default function Header() {
                 <VariantMenuItems actions={variantActions} />
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={pickImport}>
-                  <Upload className="size-4" /> Import…
+                  <Download className="size-4" /> Import…
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => exportCurrentVariant('json')}>
-                  <Download className="size-4" /> Export as JSON
+                  <Upload className="size-4" /> Export as JSON
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => exportCurrentVariant('md')}>
-                  <Download className="size-4" /> Export as Markdown
+                  <Upload className="size-4" /> Export as Markdown
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -343,13 +343,13 @@ export default function Header() {
               <DropdownMenuSeparator />
               <DropdownMenuLabel>File</DropdownMenuLabel>
               <DropdownMenuItem onSelect={pickImport}>
-                <Upload className="size-4" /> Import
+                <Download className="size-4" /> Import
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => exportCurrentVariant('json')}>
-                <Download className="size-4" /> Export as JSON
+                <Upload className="size-4" /> Export as JSON
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => exportCurrentVariant('md')}>
-                <Download className="size-4" /> Export as Markdown
+                <Upload className="size-4" /> Export as Markdown
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
