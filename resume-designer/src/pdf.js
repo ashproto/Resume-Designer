@@ -473,7 +473,10 @@ async function generatePdfWithHtml2Pdf(resumeEl, filename) {
     jsPDF: {
       unit: 'in',
       format: [pageWidthInches, pageHeightInches],
-      orientation: 'portrait'
+      // Match orientation to the page dims: jsPDF normalizes a custom [w,h] to
+      // satisfy 'portrait' (swapping when w > h), so a landscape page would
+      // otherwise export rotated/cropped instead of matching the sheet.
+      orientation: pageWidthInches > pageHeightInches ? 'landscape' : 'portrait'
     }
   };
 
