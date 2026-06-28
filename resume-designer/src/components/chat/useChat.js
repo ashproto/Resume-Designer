@@ -143,6 +143,10 @@ export function useChat() {
 
   const interviewModeRef = useRef(false);
   const interviewMsgsRef = useRef([]);
+  // The thread `/profile` was started in. The interview only routes messages
+  // (and honors /done) while that thread is active, so switching threads can't
+  // funnel an unrelated thread's chat into the interview or let /done save from it.
+  const interviewThreadIdRef = useRef(null);
   const idCounterRef = useRef(0);
 
   // Settings/catalog-derived values, held as state and refreshed explicitly at
@@ -402,6 +406,10 @@ export function useChat() {
   };
 
   // ── profile interview ──────────────────────────────────────────────────
+  // True only while an interview is active AND its origin thread is the one in view.
+  const interviewActiveHere = () =>
+    interviewModeRef.current && interviewThreadIdRef.current === currentThreadIdRef.current;
+
   const startInterview = async () => {
     if (getConfiguredProviders().length === 0) {
       addMessage('error', 'Please configure an API key in settings before starting a profile interview.');
@@ -409,6 +417,7 @@ export function useChat() {
     }
     const startThreadId = currentThreadIdRef.current;
     interviewModeRef.current = true;
+    interviewThreadIdRef.current = startThreadId;
     interviewMsgsRef.current = [];
     addMessage('assistant', `**Profile Interview Started**
 
@@ -430,6 +439,7 @@ Let's begin!`);
     } catch (error) {
       endThinking();
       interviewModeRef.current = false;
+      interviewThreadIdRef.current = null;
       addMessageTo(startThreadId, 'error', `Failed to start interview: ${error.message}`);
     }
   };
@@ -467,6 +477,7 @@ Let's begin!`);
       endThinking();
 
       interviewModeRef.current = false;
+      interviewThreadIdRef.current = null;
       interviewMsgsRef.current = [];
 
       let summary = "**Profile Updated!**\n\nI've saved the following information to your profile:\n\n";
@@ -571,7 +582,7 @@ Let's begin!`);
         await startInterview();
         break;
       case '/done':
-        if (interviewModeRef.current) await finishInterview();
+        if (interviewActiveHere()) await finishInterview();
         else addMessage('assistant', 'No active interview to finish. Use `/profile` to start a profile interview.');
         break;
       case '/debug':
@@ -607,7 +618,7 @@ Let's begin!`);
     const targetPath = chips.length > 0 ? chips[0].path : null;
     clearChips();
 
-    if (interviewModeRef.current) {
+    if (interviewActiveHere()) {
       await continueInterview(text);
       return;
     }
