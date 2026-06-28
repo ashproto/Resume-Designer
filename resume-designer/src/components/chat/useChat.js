@@ -639,12 +639,28 @@ Let's begin!`);
     // Abandon any in-flight stream's live display; it still commits to its
     // original thread via commitToThread (the captured start id).
     if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
-    if (save && currentThreadIdRef.current) persistCurrentThread(messagesRef.current);
     const thread = threadsRef.current.find((t) => t.id === threadId);
-    if (thread) {
-      setCurrentThreadId(threadId);
-      setMessages(thread.messages || []);
-    }
+    if (!thread) return;
+    // Save the outgoing thread's messages AND bump the target's updatedAt in one
+    // write. Variant/startup selection (pickCurrentThreadId) opens the most-
+    // recently-updated thread, so without bumping the target the saved-on-exit
+    // outgoing thread would reopen instead of the one the user switched to.
+    const now = new Date().toISOString();
+    const outgoingId = currentThreadIdRef.current;
+    const next = threadsRef.current.map((t) => {
+      // The selected thread becomes the most-recent so selection reopens it.
+      if (t.id === threadId) return { ...t, updatedAt: now };
+      // Save the outgoing thread's messages but DON'T bump its updatedAt — else
+      // it ties/outranks the target and selection reopens the thread we just left.
+      if (save && outgoingId && t.id === outgoingId) {
+        return { ...t, messages: trimMessages(messagesRef.current) };
+      }
+      return t;
+    });
+    setThreads(next);
+    persistThreads(next);
+    setCurrentThreadId(threadId);
+    setMessages(thread.messages || []);
   };
   const newThread = () => {
     const t = makeThread('New Chat', [], getCurrentId());
