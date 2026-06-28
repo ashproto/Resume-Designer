@@ -2,7 +2,8 @@ use tauri::WebviewWindow;
 use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2Environment9, ICoreWebView2PrintSettings, ICoreWebView2PrintSettings2,
-    ICoreWebView2_16, COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
+    ICoreWebView2_16, COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE,
+    COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
 };
 use webview2_com::{ExecuteScriptCompletedHandler, PrintToPdfStreamCompletedHandler};
 // webview2-com 0.38 maps the raw COM args into Rust-native types for the
@@ -155,12 +156,19 @@ async fn print_sheet(
             settings
                 .SetPageHeight(height_in)
                 .map_err(|e| e.message().to_string())?;
+            // Match the print orientation to the sheet so a landscape page
+            // (width > height) isn't paginated/rotated as portrait.
+            let orientation = if width_in > height_in {
+                COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE
+            } else {
+                COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT
+            };
             settings
                 .SetMarginTop(0.0)
                 .and_then(|_| settings.SetMarginBottom(0.0))
                 .and_then(|_| settings.SetMarginLeft(0.0))
                 .and_then(|_| settings.SetMarginRight(0.0))
-                .and_then(|_| settings.SetOrientation(COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT))
+                .and_then(|_| settings.SetOrientation(orientation))
                 .and_then(|_| settings.SetShouldPrintBackgrounds(true))
                 .map_err(|e| e.message().to_string())?;
 
