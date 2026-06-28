@@ -95,6 +95,19 @@ function splittableConfig(el) {
     return { head: [':scope > .section-title'], itemWrap: ':scope > .education-content', itemSel: ':scope > p' };
   }
   if (el.classList.contains('sidebar-section')) {
+    const content = el.querySelector(':scope > .sidebar-content');
+    // Bulleted tools/highlights: split on the .highlight-bullet blocks (inside the
+    // .tools-bulleted wrapper for tools, or directly under .sidebar-content).
+    if (content && content.querySelector(':scope > .tools-bulleted > .highlight-bullet')) {
+      return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content > .tools-bulleted', itemSel: ':scope > .highlight-bullet' };
+    }
+    // Inline skills/tools render as .skill-tag-row spans with .skill-sep / <wbr>
+    // separators BETWEEN them (not <p>). Treat every direct child as a unit so the
+    // section flows across pages and the separators ride along, instead of the whole
+    // section being an unsplittable block that overflows/clips a fixed-size sheet.
+    if (content && (content.classList.contains('sidebar-skills') || content.querySelector(':scope > .skill-tag-row'))) {
+      return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content', itemSel: ':scope > *' };
+    }
     return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content', itemSel: ':scope > p' };
   }
   return null;
