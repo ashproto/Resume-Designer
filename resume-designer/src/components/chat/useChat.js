@@ -256,6 +256,14 @@ export function useChat() {
     streamingRef.current = null;
     abortRef.current = null;
   };
+  // Drop the live streaming display from the CURRENT view WITHOUT aborting the
+  // request or discarding its buffer — used on a thread switch so an in-flight
+  // reply keeps running and commits to its origin thread (commitToThread); the
+  // gated hooks below won't repaint it in the thread we switched to.
+  const clearStreamingDisplay = () => {
+    if (flushRaf.current) { cancelAnimationFrame(flushRaf.current); flushRaf.current = 0; }
+    setStreamingMessage(null);
+  };
   const stop = () => { if (abortRef.current) abortRef.current.abort(); };
 
   // ── AI flows ───────────────────────────────────────────────────────────
@@ -292,9 +300,12 @@ export function useChat() {
         signal: controller.signal,
         structured: true,
         hooks: {
-          onReasoning: (_d, full) => scheduleFlush(() => ({ reasoning: full })),
-          onContent: (_d, full) => scheduleFlush(() => ({ content: full })),
-          onAnnotations: (list) => scheduleFlush(() => ({ annotations: list })),
+          // Only paint the live stream while its origin thread is in view — if the
+          // user switched away, keep buffering/finishing but don't leak it into the
+          // thread they're now looking at (the full reply still commits below).
+          onReasoning: (_d, full) => { if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ reasoning: full })); },
+          onContent: (_d, full) => { if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ content: full })); },
+          onAnnotations: (list) => { if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ annotations: list })); },
         },
       });
       clearStreaming();
@@ -378,7 +389,11 @@ export function useChat() {
         reasoningEffort: reasoningRef.current,
         signal: controller.signal,
         hooks: {
-          onReasoning: (_d, full) => { capturedReasoning = full; scheduleFlush(() => ({ reasoning: full })); },
+          onReasoning: (_d, full) => {
+            capturedReasoning = full;
+            // Paint live only while the origin thread is in view (see getAIResponse).
+            if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ reasoning: full }));
+          },
           onRun: (r) => { capturedRun = r; },
         },
       });
@@ -656,9 +671,11 @@ Let's begin!`);
 
   // ── threads ────────────────────────────────────────────────────────────
   const switchThread = (threadId, save = true) => {
-    // Abandon any in-flight stream's live display; it still commits to its
-    // original thread via commitToThread (the captured start id).
-    if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
+    // Drop the in-flight stream's live display from this view but DON'T abort it —
+    // it keeps running and commits to its origin thread via commitToThread (the
+    // captured start id). Aborting here would turn a mid-response switch into a
+    // lost "(stopped)" turn. Explicit Stop still aborts (see stop()).
+    clearStreamingDisplay();
     const thread = threadsRef.current.find((t) => t.id === threadId);
     if (!thread) return;
     // Save the outgoing thread's messages AND bump the target's updatedAt in one
