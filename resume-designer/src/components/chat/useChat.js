@@ -659,7 +659,10 @@ Let's begin!`);
     if (next.length === threadsRef.current.length) return; // not found
     if (threadId === currentThreadIdRef.current) {
       if (next.length === 0) {
-        const t = makeThread('New Chat');
+        // Home the replacement to the active résumé (mirror newThread()), else
+        // the next messages land in General and switching away/back spawns yet
+        // another empty homed thread because none matches the active variant.
+        const t = makeThread('New Chat', [], getCurrentId());
         setThreads([t]);
         persistThreads([t]);
         setCurrentThreadId(t.id);
