@@ -59,6 +59,10 @@ export default function ChatPanel() {
   // Reflect open/closed on the host; focus the input when opening.
   useEffect(() => {
     host?.classList.toggle('closed', !open);
+    // The ≤768px stylesheet keeps .chat-panel off-canvas and slides it in only
+    // for .chat-panel.open, so toggle `open` too — otherwise opening on a narrow
+    // viewport gives the panel width but leaves it translated off-screen.
+    host?.classList.toggle('open', open);
     if (open) {
       const t = setTimeout(() => document.getElementById('chat-input')?.focus(), 300);
       return () => clearTimeout(t);
