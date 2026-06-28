@@ -812,11 +812,13 @@ Let's begin!`);
       // a stale in-memory write.
       let next = migrateThreads(loadThreads().threads);
       // Save the OUTGOING thread's latest messages onto the fresh array — but only if
-      // it still exists (a deleted thread must not be resurrected).
+      // it still exists (a deleted thread must not be resurrected). trimMessages()
+      // caps the tail + strips heavy reasoning blobs, matching the append/switch
+      // paths so a variant switch can't persist an oversize/quota-busting thread.
       const prevId = currentThreadIdRef.current;
       if (prevId && next.some((t) => t.id === prevId)) {
         next = next.map((t) =>
-          t.id === prevId ? { ...t, messages: messagesRef.current, updatedAt: new Date().toISOString() } : t);
+          t.id === prevId ? { ...t, messages: trimMessages(messagesRef.current), updatedAt: new Date().toISOString() } : t);
       }
       let cid = pickCurrentThreadId(next, activeId);
       if (!cid && activeId) {
