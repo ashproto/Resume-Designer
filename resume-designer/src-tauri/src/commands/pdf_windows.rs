@@ -2,7 +2,8 @@ use tauri::WebviewWindow;
 use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2Environment9, ICoreWebView2PrintSettings, ICoreWebView2PrintSettings2,
-    ICoreWebView2_16, COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
+    ICoreWebView2_16, COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE,
+    COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
 };
 use webview2_com::PrintToPdfCompletedHandler;
 // webview2-com 0.38 wraps the raw HRESULT/BOOL the COM interface returns into
@@ -58,12 +59,18 @@ pub async fn capture_pdf(
                     .SetPageHeight(size.height)
                     .map_err(|e| e.message().to_string())?;
             }
+            // Match the print orientation to the page so a landscape sheet
+            // (width > height) isn't paginated/rotated as portrait.
+            let orientation = match page_size.as_ref() {
+                Some(size) if size.width > size.height => COREWEBVIEW2_PRINT_ORIENTATION_LANDSCAPE,
+                _ => COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT,
+            };
             settings
                 .SetMarginTop(0.0)
                 .and_then(|_| settings.SetMarginBottom(0.0))
                 .and_then(|_| settings.SetMarginLeft(0.0))
                 .and_then(|_| settings.SetMarginRight(0.0))
-                .and_then(|_| settings.SetOrientation(COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT))
+                .and_then(|_| settings.SetOrientation(orientation))
                 .and_then(|_| settings.SetShouldPrintBackgrounds(true))
                 .map_err(|e| e.message().to_string())?;
 
