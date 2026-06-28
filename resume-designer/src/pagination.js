@@ -110,6 +110,14 @@ function splittableConfig(el) {
     }
     return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content', itemSel: ':scope > p' };
   }
+  // Inline Tools (renderToolsInline) wrap EVERY .tool-token in a single
+  // .skill-tag-row, so the sidebar-section split above sees that row as one
+  // atomic child. Make the row itself splittable on its tokens (+ separators) so
+  // a long inline Tools list flows across sidebar pages instead of being clipped.
+  // Skills phrase-rows carry no .tool-token and stay atomic — phrases never break.
+  if (el.classList.contains('skill-tag-row') && el.querySelector(':scope > .tool-token')) {
+    return { head: [], itemWrap: null, itemSel: ':scope > *' };
+  }
   return null;
 }
 
