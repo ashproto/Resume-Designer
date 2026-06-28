@@ -12,7 +12,7 @@ import { showDiffView } from '../../diffView.js';
 import { showInlineChanges } from '../../inlineChanges.js';
 import {
   loadThreads, persistThreads, makeThread, trimMessages, clearLegacyHistory,
-  migrateThreads, pickCurrentThreadId, withContextMarker,
+  migrateThreads, pickCurrentThreadId, chooseThreadAfterDelete, withContextMarker,
 } from '../../chatThreads.js';
 import { getCurrentId } from '../../variantManager.js';
 
@@ -655,25 +655,19 @@ Let's begin!`);
   };
   const deleteThread = (threadId) => {
     if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
-    const next = threadsRef.current.filter((t) => t.id !== threadId);
-    if (next.length === threadsRef.current.length) return; // not found
+    if (!threadsRef.current.some((t) => t.id === threadId)) return; // not found
     if (threadId === currentThreadIdRef.current) {
-      if (next.length === 0) {
-        // Home the replacement to the active résumé (mirror newThread()), else
-        // the next messages land in General and switching away/back spawns yet
-        // another empty homed thread because none matches the active variant.
-        const t = makeThread('New Chat', [], getCurrentId());
-        setThreads([t]);
-        persistThreads([t]);
-        setCurrentThreadId(t.id);
-        setMessages([]);
-      } else {
-        setThreads(next);
-        persistThreads(next);
-        setCurrentThreadId(next[0].id);
-        setMessages(next[0].messages || []);
-      }
+      // Deleting the active thread: keep selection within the active résumé —
+      // open its most-recent remaining thread or create a fresh homed one, never
+      // an unrelated General/other-résumé thread (and never an empty panel).
+      const { threads: next, currentThreadId: pick } =
+        chooseThreadAfterDelete(threadsRef.current, threadId, getCurrentId());
+      setThreads(next);
+      persistThreads(next);
+      setCurrentThreadId(pick);
+      setMessages(next.find((t) => t.id === pick)?.messages || []);
     } else {
+      const next = threadsRef.current.filter((t) => t.id !== threadId);
       setThreads(next);
       persistThreads(next);
     }

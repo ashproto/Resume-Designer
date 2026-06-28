@@ -87,6 +87,25 @@ export function pickCurrentThreadId(threads, currentVariantId) {
   return homed.length ? homed[0].id : null;
 }
 
+/**
+ * Decide the thread list + selection after the CURRENT thread is deleted.
+ * Keeps selection within the active résumé: opens its most-recent remaining thread,
+ * or creates a fresh homed one when it has none — never an unrelated General/other-
+ * résumé thread, and never an empty selection.
+ * @returns {{ threads: Thread[], currentThreadId: string, created: Thread|null }}
+ */
+export function chooseThreadAfterDelete(threads, deletedId, activeVariantId) {
+  const next = (Array.isArray(threads) ? threads : []).filter((t) => t.id !== deletedId);
+  let currentThreadId = pickCurrentThreadId(next, activeVariantId);
+  let created = null;
+  if (!currentThreadId) {
+    created = makeThread('New Chat', [], activeVariantId || null);
+    next.unshift(created);
+    currentThreadId = created.id;
+  }
+  return { threads: next, currentThreadId, created };
+}
+
 /** variantId of the last non-context message (the "current context"), or null. */
 export function lastTurnVariantId(messages) {
   if (!Array.isArray(messages)) return null;
