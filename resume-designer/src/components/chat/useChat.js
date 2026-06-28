@@ -258,6 +258,12 @@ export function useChat() {
   const getAIResponse = async (userMessage, hasExplicitContext = false) => {
     const modelId = modelRef.current;
     const startThreadId = currentThreadIdRef.current;
+    // Capture the active résumé at request START. The reply commits to
+    // startThreadId, so it must also be stamped with the variant that thread
+    // belongs to — using getCurrentId() at completion would mis-stamp the turn
+    // (and corrupt lastTurnVariantId/context dividers) if the user switched
+    // résumés mid-stream.
+    const startVariantId = getCurrentId();
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -293,13 +299,13 @@ export function useChat() {
         id: uid(), role: 'assistant',
         content: res.stopped ? (res.text ? `${res.text}\n\n_(stopped)_` : '_(stopped)_') : res.text,
         reasoning: res.reasoning, reasoningDetails: res.reasoningDetails,
-        annotations: res.annotations, run: res.run, variantId: getCurrentId(), timestamp: new Date().toISOString(),
+        annotations: res.annotations, run: res.run, variantId: startVariantId, timestamp: new Date().toISOString(),
       });
       refreshCustomModels(); // chat() records any newly-used custom slug
     } catch (error) {
       clearStreaming();
       setLoading(false);
-      commitToThread(startThreadId, { id: uid(), role: 'error', content: error.message, variantId: getCurrentId(), timestamp: new Date().toISOString() });
+      commitToThread(startThreadId, { id: uid(), role: 'error', content: error.message, variantId: startVariantId, timestamp: new Date().toISOString() });
     }
   };
 
@@ -349,6 +355,9 @@ export function useChat() {
 
   const requestAIChanges = async (instruction, targetPath = null) => {
     const startThreadId = currentThreadIdRef.current;
+    // Stamp the committed turns with the résumé active at request START (the one
+    // startThreadId belongs to), not getCurrentId() at completion — see getAIResponse.
+    const startVariantId = getCurrentId();
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -377,7 +386,7 @@ export function useChat() {
           id: uid(), role: 'assistant',
           content: result.explanation || 'No changes were generated. The AI may need more specific instructions.',
           reasoning: capturedReasoning || null, run: capturedRun,
-          variantId: getCurrentId(), timestamp: new Date().toISOString(),
+          variantId: startVariantId, timestamp: new Date().toISOString(),
         });
         return;
       }
@@ -390,7 +399,7 @@ export function useChat() {
         id: uid(), role: 'assistant',
         content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''} to your resume.`}\n\nChanges are highlighted on your resume. Use the buttons to apply or reject individual changes, or click "Review Changes" below for a detailed diff view.`,
         reasoning: capturedReasoning || null, run: capturedRun,
-        variantId: getCurrentId(), timestamp: new Date().toISOString(),
+        variantId: startVariantId, timestamp: new Date().toISOString(),
         pendingChanges: changeSet,
       });
     } catch (error) {
@@ -399,8 +408,8 @@ export function useChat() {
       // A user Stop aborts the buffered JSON mid-stream → JSON.parse fails. Show a
       // clean "(stopped)" turn instead of a misleading "not valid JSON" error.
       commitToThread(startThreadId, controller.signal.aborted
-        ? { id: uid(), role: 'assistant', content: '_(stopped)_', variantId: getCurrentId(), timestamp: new Date().toISOString() }
-        : { id: uid(), role: 'error', content: error.message, variantId: getCurrentId(), timestamp: new Date().toISOString() });
+        ? { id: uid(), role: 'assistant', content: '_(stopped)_', variantId: startVariantId, timestamp: new Date().toISOString() }
+        : { id: uid(), role: 'error', content: error.message, variantId: startVariantId, timestamp: new Date().toISOString() });
     }
   };
 
