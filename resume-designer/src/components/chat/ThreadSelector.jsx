@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, CornerUpLeft, Plus, X } from 'lucide-react';
+import { ChevronDown, CornerUpLeft, MessageSquare, Plus, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -48,11 +48,12 @@ export function ThreadSelector({
     <div
       key={t.id}
       className={cn(
-        'group flex cursor-default items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground',
+        'group flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground',
         t.id === currentThreadId && 'bg-accent text-accent-foreground'
       )}
       onClick={() => { onSwitch(t.id); setOpen(false); }}
     >
+      <MessageSquare className="size-3.5 shrink-0 opacity-60" />
       <span className="min-w-0 flex-1 truncate">{getThreadDisplayName(t)}</span>
       {showMove && (
         <Button
@@ -80,7 +81,7 @@ export function ThreadSelector({
   );
 
   const SectionLabel = ({ children }) => (
-    <div className="px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="mt-1 border-t border-border px-2 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
       {children}
     </div>
   );

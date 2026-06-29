@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 
 import { getSettings, saveSettings } from '../../persistence.js';
 import { openSettings } from '../../settingsModal.js';
-import { loadVariant } from '../../variantManager.js';
 import { useVariants } from '../../hooks/useVariants.js';
 import { useChat } from './useChat.js';
 import { MessageList } from './MessageList.jsx';
@@ -189,13 +188,18 @@ export default function ChatPanel() {
           different résumé than the active one, with a Jump to its home. */}
       {chat.configured && crossResume && homeName && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground">
-          <span className="min-w-0 truncate">Thread from «{homeName}»</span>
+          <span className="flex min-w-0 items-center" title={`Thread from «${homeName}»`}>
+            <span className="shrink-0">Thread from&nbsp;«</span>
+            <span className="truncate">{homeName}</span>
+            <span className="shrink-0">»</span>
+          </span>
           <button
             type="button"
             className="shrink-0 font-medium text-foreground hover:underline"
-            onClick={() => loadVariant(openHome)}
+            onClick={() => chat.jumpToVariant(openHome)}
+            title={`Make «${homeName}» the active résumé — this thread stays open`}
           >
-            Jump
+            Switch résumé
           </button>
         </div>
       )}
@@ -205,10 +209,13 @@ export default function ChatPanel() {
         thinking={chat.thinking}
         streamingMessage={chat.streamingMessage}
         configured={chat.configured}
+        currentThreadId={chat.currentThreadId}
+        variants={variants.list}
         onReviewChanges={chat.openDiffForMessage}
         onApply={chat.applyAction}
         onConfigure={openApiSettings}
         onStop={chat.stop}
+        onJumpVariant={chat.jumpToVariant}
       />
 
       {chat.configured && (
