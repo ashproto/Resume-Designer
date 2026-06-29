@@ -56,6 +56,28 @@ export function assignBlocksToPages(blockHeightsPx, { firstPageContentPx, pageCo
   return pages;
 }
 
+/**
+ * Page indices whose assigned units sum to more than that page's content budget —
+ * i.e. a single atomic (non-breakable) block, or an unsplittable remainder, taller
+ * than the sheet. assignBlocksToPages deliberately lets such a block overflow the
+ * sheet bottom rather than emit a blank page, but a fixed-height sheet with
+ * `overflow: hidden` would clip it. The paginator tags these sheets with
+ * `.is-overflowing` so CSS can let just those grow (height:auto) instead of
+ * cutting content off on screen and in the PDF.
+ * @param {number[]} blockHeightsPx
+ * @param {number[]} assign - page index per block (from assignBlocksToPages)
+ * @param {{firstPageContentPx:number, pageContentPx:number}} budgets
+ * @returns {Set<number>} 0-based page indices that overflow their budget.
+ */
+export function overflowingPages(blockHeightsPx, assign, { firstPageContentPx, pageContentPx }) {
+  const used = [];
+  for (let i = 0; i < assign.length; i++) used[assign[i]] = (used[assign[i]] || 0) + blockHeightsPx[i];
+  const out = new Set();
+  // +0.5 epsilon so sub-pixel float drift on an exact fit doesn't flag a sheet.
+  used.forEach((u, p) => { if (u > (p === 0 ? firstPageContentPx : pageContentPx) + 0.5) out.add(p); });
+  return out;
+}
+
 // --- measurement (getBoundingClientRect is VISUAL px; divide by the zoom scale
 // on .resume-container to recover layout px) ---
 
@@ -247,11 +269,13 @@ function paginateSingle(resumeEl, cfg, widthPx, heightPx, scale) {
   const pageContentPx = Math.max(1, heightPx - pad);
   const firstPageContentPx = Math.max(1, pageContentPx - headerH);
   const assign = assignBlocksToPages(heights, { firstPageContentPx, pageContentPx });
+  const overflow = overflowingPages(heights, assign, { firstPageContentPx, pageContentPx });
   const numPages = Math.max(1, (assign[assign.length - 1] ?? 0) + 1);
 
   const pages = makePagesContainer();
   for (let p = 0; p < numPages; p++) {
     const page = makeSheet(widthPx, heightPx);
+    if (overflow.has(p)) page.classList.add('is-overflowing');
     if (p === 0 && header) page.appendChild(header);
     const bodyClone = body.cloneNode(false); // shallow: keep classes, drop children
     grow(bodyClone);
@@ -285,13 +309,18 @@ function paginateTwo(resumeEl, cfg, widthPx, heightPx, scale) {
     const pageContentPx = Math.max(1, heightPx - vPadding(col));
     const firstPageContentPx = Math.max(1, pageContentPx - headerH - leadH);
     const assign = assignBlocksToPages(heights, { firstPageContentPx, pageContentPx });
-    return { col, units, assign };
+    return { col, units, assign, heights, firstPageContentPx, pageContentPx };
   });
   const numPages = Math.max(1, ...cols.map(({ assign }) => (assign[assign.length - 1] ?? 0) + 1));
+  // A sheet overflows if EITHER column's content exceeds its budget on that page.
+  const overflow = new Set();
+  cols.forEach(({ heights, assign, firstPageContentPx, pageContentPx }) =>
+    overflowingPages(heights, assign, { firstPageContentPx, pageContentPx }).forEach((p) => overflow.add(p)));
 
   const pages = makePagesContainer();
   for (let p = 0; p < numPages; p++) {
     const page = makeSheet(widthPx, heightPx);
+    if (overflow.has(p)) page.classList.add('is-overflowing');
     if (p === 0 && header) page.appendChild(header);
 
     // Rebuild the body-wrapper chain (compact/executive) so its CSS + lead apply.
