@@ -521,8 +521,10 @@ Let's begin!`);
   };
 
   const finishInterview = async () => {
+    const startThreadId = currentThreadIdRef.current;
+    const startVariantId = getCurrentId();
     if (interviewMsgsRef.current.length < 4) {
-      addMessage('assistant', "We haven't talked enough yet! Please answer a few more questions so I have information to save.");
+      commitHelperTurn(startThreadId, startVariantId, 'assistant', "We haven't talked enough yet! Please answer a few more questions so I have information to save.");
       return;
     }
     beginThinking();
@@ -550,10 +552,10 @@ Let's begin!`);
       if (extracted.industryKnowledge) summary += '- Industry knowledge\n';
       if (extracted.preferences) summary += '- Work preferences\n';
       summary += '\nYou can view and edit your profile from **Tools > User Profile**.';
-      addMessage('assistant', summary);
+      commitHelperTurn(startThreadId, startVariantId, 'assistant', summary);
     } catch (error) {
       endThinking();
-      addMessage('error', `Failed to extract profile: ${error.message}\n\nYou can try \`/done\` again or continue the conversation.`);
+      commitHelperTurn(startThreadId, startVariantId, 'error', `Failed to extract profile: ${error.message}\n\nYou can try \`/done\` again or continue the conversation.`);
     }
   };
 
@@ -881,7 +883,10 @@ Let's begin!`);
         next = [t, ...next];
         cid = t.id;
       }
-      if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
+      // Navigating résumés must NOT abort an in-flight reply — it commits to its
+      // origin thread via commitToThread(startThreadId), so just drop its live
+      // display from this view (the gated stream hooks won't repaint it here).
+      clearStreamingDisplay();
       // Persist unconditionally so the migration write-back is guaranteed,
       // matching the init effect (whether or not a fresh thread was created).
       persistThreads(next);
