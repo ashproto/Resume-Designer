@@ -4,6 +4,8 @@ import { Check, KeyRound, Loader2, MessageCircle, Pencil, Settings2, Square } fr
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+import { loadVariant } from '../../variantManager.js';
+
 import { Markdown } from './Markdown.jsx';
 import { LiveReasoning } from './LiveReasoning.jsx';
 import { Citations } from './Citations.jsx';
@@ -73,6 +75,26 @@ function StreamingBubble({ msg, onStop }) {
 }
 
 function MessageBubble({ msg, onReviewChanges, onApply }) {
+  // Context-switch divider: a "Now discussing «Name»" row whose button switches
+  // the active résumé (loadVariant no-ops on a deleted id, so it's always safe).
+  if (msg.role === 'context') {
+    return (
+      <div className="my-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+        <span className="h-px flex-1 bg-border" />
+        <span className="shrink-0">Now discussing</span>
+        <button
+          type="button"
+          className="shrink-0 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-accent"
+          onClick={() => loadVariant(msg.variantId)}
+          title={`Jump to ${msg.variantName}`}
+        >
+          {msg.variantName}
+        </button>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+    );
+  }
+
   if (msg.role === 'error') {
     return (
       <div className="w-fit max-w-[85%] rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
