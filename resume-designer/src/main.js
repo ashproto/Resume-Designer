@@ -1285,7 +1285,18 @@ function getPageSetup() {
 function renderCurrentResume() {
   const container = document.getElementById('resume');
   if (!container) return;
-  
+
+  // Preserve the preview scroll position across the full DOM rebuild below.
+  // renderCurrentResume() replaces #resume's innerHTML and paginate() then
+  // replaceChildren()s the sheets — a destructive rebuild of the scrolled
+  // subtree of #resume-scroller. Chromium retains scrollTop through this, but
+  // WebKit/WKWebView (the macOS Tauri build) drops it to 0, so the résumé
+  // snaps to the top on every re-render — most noticeably when toggling the
+  // Tools bulleted/inline view. Capture now; restore after paginate().
+  const scroller = document.getElementById('resume-scroller');
+  const savedScrollTop = scroller ? scroller.scrollTop : 0;
+  const savedScrollLeft = scroller ? scroller.scrollLeft : 0;
+
   const data = store.getData();
   if (!data) {
     resetPaginatedState(container);
@@ -1361,6 +1372,23 @@ function renderCurrentResume() {
   // this path (continuous = one open-height sheet); the print window calls the
   // same renderCurrentResume(), so the exported PDF matches what's on screen.
   paginate(container, getPageSetup(), currentLayout);
+
+  // Restore the scroll position captured before the rebuild. paginate() is
+  // synchronous, so the sheets are already laid out and scrollHeight is valid;
+  // clamp to the new max so we stay in range when the two layouts differ in
+  // height (e.g. bulleted vs inline Tools). Restore synchronously AND on the
+  // next frame: WebKit can drop the offset during the rebuild or a frame later,
+  // and the re-apply is imperceptible in engines that already retained it.
+  if (scroller && (savedScrollTop || savedScrollLeft)) {
+    const restoreScroll = () => {
+      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const maxLeft = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      scroller.scrollTop = Math.min(savedScrollTop, maxTop);
+      scroller.scrollLeft = Math.min(savedScrollLeft, maxLeft);
+    };
+    restoreScroll();
+    requestAnimationFrame(restoreScroll);
+  }
 
   // Refresh inline editor
   refreshInlineEditor();

@@ -117,7 +117,28 @@ function splittableConfig(el) {
     return { head: [':scope > .section-title'], itemWrap: ':scope > .education-content', itemSel: ':scope > p' };
   }
   if (el.classList.contains('sidebar-section')) {
+    const content = el.querySelector(':scope > .sidebar-content');
+    // Bulleted tools/highlights: split on the .highlight-bullet blocks (inside the
+    // .tools-bulleted wrapper for tools, or directly under .sidebar-content).
+    if (content && content.querySelector(':scope > .tools-bulleted > .highlight-bullet')) {
+      return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content > .tools-bulleted', itemSel: ':scope > .highlight-bullet' };
+    }
+    // Inline skills/tools render as .skill-tag-row spans with .skill-sep / <wbr>
+    // separators BETWEEN them (not <p>). Treat every direct child as a unit so the
+    // section flows across pages and the separators ride along, instead of the whole
+    // section being an unsplittable block that overflows/clips a fixed-size sheet.
+    if (content && (content.classList.contains('sidebar-skills') || content.querySelector(':scope > .skill-tag-row'))) {
+      return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content', itemSel: ':scope > *' };
+    }
     return { head: [':scope > .sidebar-title'], itemWrap: ':scope > .sidebar-content', itemSel: ':scope > p' };
+  }
+  // Inline Tools (renderToolsInline) wrap EVERY .tool-token in a single
+  // .skill-tag-row, so the sidebar-section split above sees that row as one
+  // atomic child. Make the row itself splittable on its tokens (+ separators) so
+  // a long inline Tools list flows across sidebar pages instead of being clipped.
+  // Skills phrase-rows carry no .tool-token and stay atomic — phrases never break.
+  if (el.classList.contains('skill-tag-row') && el.querySelector(':scope > .tool-token')) {
+    return { head: [], itemWrap: null, itemSel: ':scope > *' };
   }
   return null;
 }
