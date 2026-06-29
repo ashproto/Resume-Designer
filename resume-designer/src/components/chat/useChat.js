@@ -707,12 +707,16 @@ Let's begin!`);
     switchThread(t.id, true);
   };
   const deleteThread = (threadId) => {
-    if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
     if (!threadsRef.current.some((t) => t.id === threadId)) return; // not found
     if (threadId === currentThreadIdRef.current) {
-      // Deleting the active thread: keep selection within the active résumé —
-      // open its most-recent remaining thread or create a fresh homed one, never
-      // an unrelated General/other-résumé thread (and never an empty panel).
+      // Deleting the ACTIVE thread: abort its in-flight reply (its commit target is
+      // about to vanish) and clear the live display. Deleting a background thread
+      // (else branch) must NOT touch the stream — the active thread's reply keeps
+      // running and committing.
+      if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
+      // Keep selection within the active résumé — open its most-recent remaining
+      // thread or create a fresh homed one, never an unrelated General/other-résumé
+      // thread (and never an empty panel).
       const { threads: next, currentThreadId: pick } =
         chooseThreadAfterDelete(threadsRef.current, threadId, getCurrentId());
       setThreads(next);
