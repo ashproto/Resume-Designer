@@ -213,6 +213,16 @@ export function useChat() {
     persistThreads(next);
   };
 
+  // Commit a non-streamed helper turn (/feedback, /improve, /generate, interview)
+  // to the thread + résumé active when the flow STARTED (captured by the caller),
+  // so a mid-request thread/résumé switch can't misroute or mis-stamp it — the same
+  // guarantee the streamed flows already get.
+  const commitHelperTurn = (startThreadId, startVariantId, role, content, applyData = null) =>
+    commitToThread(startThreadId, {
+      id: uid(), role, content, applyData,
+      variantId: startVariantId, timestamp: new Date().toISOString(),
+    });
+
   // ── animated "thinking" process ────────────────────────────────────────
   const beginThinking = () => {
     setLoading(true);
@@ -325,20 +335,24 @@ export function useChat() {
   };
 
   const getAIFeedback = async () => {
+    const startThreadId = currentThreadIdRef.current;
+    const startVariantId = getCurrentId();
     beginThinking();
     try {
       addThinkingStep('Analyzing your resume...');
       const response = await getFeedback(modelRef.current);
       completeThinkingStep('Feedback ready');
       endThinking();
-      addMessage('assistant', response);
+      commitHelperTurn(startThreadId, startVariantId, 'assistant', response);
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      commitHelperTurn(startThreadId, startVariantId, 'error', error.message);
     }
   };
 
   const getAIImproveSummary = async () => {
+    const startThreadId = currentThreadIdRef.current;
+    const startVariantId = getCurrentId();
     beginThinking();
     try {
       addThinkingStep('Reading current summary...');
@@ -347,24 +361,26 @@ export function useChat() {
       const response = await improveSummary(modelRef.current);
       completeThinkingStep('Summary improved');
       endThinking();
-      addMessage('assistant', response, { action: 'apply-summary', value: response });
+      commitHelperTurn(startThreadId, startVariantId, 'assistant', response, { action: 'apply-summary', value: response });
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      commitHelperTurn(startThreadId, startVariantId, 'error', error.message);
     }
   };
 
   const getAIGenerateBullets = async (context) => {
+    const startThreadId = currentThreadIdRef.current;
+    const startVariantId = getCurrentId();
     beginThinking();
     try {
       addThinkingStep('Generating bullet points...');
       const response = await generateBullets(modelRef.current, context, 3);
       completeThinkingStep('Bullets generated');
       endThinking();
-      addMessage('assistant', response);
+      commitHelperTurn(startThreadId, startVariantId, 'assistant', response);
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      commitHelperTurn(startThreadId, startVariantId, 'error', error.message);
     }
   };
 
@@ -410,10 +426,24 @@ export function useChat() {
         return;
       }
 
+      const count = Object.keys(result.changes).length;
+      // The edits were generated for the résumé active at request START. If the
+      // user switched résumés before it returned, building the diff against the
+      // now-current store.getData() (and showing/applying it) would write the old
+      // résumé's edits into the new one — so don't; tell them to switch back.
+      if (getCurrentId() !== startVariantId) {
+        commitToThread(startThreadId, {
+          id: uid(), role: 'assistant',
+          content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''}`}\n\nThese edits are for the résumé you started from — switch back to it and resend to apply them.`,
+          reasoning: capturedReasoning || null, run: capturedRun,
+          variantId: startVariantId, timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
       const changeSet = createChangeSet(store.getData(), result.changes);
       showInlineChanges(changeSet);
 
-      const count = Object.keys(result.changes).length;
       commitToThread(startThreadId, {
         id: uid(), role: 'assistant',
         content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''} to your resume.`}\n\nChanges are highlighted on your resume. Use the buttons to apply or reject individual changes, or click "Review Changes" below for a detailed diff view.`,
@@ -443,7 +473,9 @@ export function useChat() {
       return;
     }
     interviewModeRef.current = true;
-    interviewThreadIdRef.current = currentThreadIdRef.current;
+    const startThreadId = currentThreadIdRef.current;
+    const startVariantId = getCurrentId();
+    interviewThreadIdRef.current = startThreadId;
     interviewMsgsRef.current = [];
     addMessage('assistant', `**Profile Interview Started**
 
@@ -461,16 +493,18 @@ Let's begin!`);
       interviewMsgsRef.current.push({ role: 'assistant', content: response });
       completeThinkingStep('Ready');
       endThinking();
-      addMessage('assistant', response);
+      commitHelperTurn(startThreadId, startVariantId, 'assistant', response);
     } catch (error) {
       endThinking();
       interviewModeRef.current = false;
       interviewThreadIdRef.current = null;
-      addMessage('error', `Failed to start interview: ${error.message}`);
+      commitHelperTurn(startThreadId, startVariantId, 'error', `Failed to start interview: ${error.message}`);
     }
   };
 
   const continueInterview = async (userMessage) => {
+    const startThreadId = currentThreadIdRef.current;
+    const startVariantId = getCurrentId();
     interviewMsgsRef.current.push({ role: 'user', content: userMessage });
     beginThinking();
     try {
@@ -479,10 +513,10 @@ Let's begin!`);
       interviewMsgsRef.current.push({ role: 'assistant', content: response });
       completeThinkingStep('Response ready');
       endThinking();
-      addMessage('assistant', response);
+      commitHelperTurn(startThreadId, startVariantId, 'assistant', response);
     } catch (error) {
       endThinking();
-      addMessage('error', error.message);
+      commitHelperTurn(startThreadId, startVariantId, 'error', error.message);
     }
   };
 
