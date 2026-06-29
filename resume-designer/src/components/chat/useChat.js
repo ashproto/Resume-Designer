@@ -693,10 +693,13 @@ Let's begin!`);
     switchThread(t.id, true);
   };
   const deleteThread = (threadId) => {
-    if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
     const next = threadsRef.current.filter((t) => t.id !== threadId);
     if (next.length === threadsRef.current.length) return; // not found
     if (threadId === currentThreadIdRef.current) {
+      // Deleting the ACTIVE thread: abort its in-flight reply + clear the live
+      // display (its commit target is vanishing). Deleting a background thread
+      // (else branch) leaves the active thread's stream running.
+      if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
       if (next.length === 0) {
         const t = makeThread('New Chat');
         setThreads([t]);
