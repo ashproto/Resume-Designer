@@ -141,6 +141,10 @@ export function useChat() {
   // separate from the synthetic `thinking` steps the non-streamed flows still use.
   const [streamingMessage, setStreamingMessage, streamingRef] = useStateRef(null);
   const abortRef = useRef(null);
+  // The thread the in-flight `abortRef` stream ORIGINATED from, so deleting a thread
+  // aborts the stream only when that thread is its origin — a reply that kept running
+  // after the user switched away must survive deletion of the now-active thread.
+  const streamThreadRef = useRef(null);
   const flushRaf = useRef(0);
 
   const interviewModeRef = useRef(false);
@@ -275,6 +279,7 @@ export function useChat() {
     setStreamingMessage(null);
     streamingRef.current = null;
     abortRef.current = null;
+    streamThreadRef.current = null;
   };
   // Drop the live streaming display from the CURRENT view WITHOUT aborting the
   // request or discarding its buffer — used on a thread switch so an in-flight
@@ -299,6 +304,7 @@ export function useChat() {
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    streamThreadRef.current = startThreadId;
     // Last 10 user/assistant turns; replace the final turn with the
     // context-augmented version we actually want to send. reasoningDetails ride
     // along on assistant turns for Anthropic thinking continuity.
@@ -402,6 +408,7 @@ export function useChat() {
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    streamThreadRef.current = startThreadId;
     // Stream the model's reasoning live (the JSON answer is buffered and parsed
     // into a diff when the stream completes).
     setStreamingMessage({
@@ -754,12 +761,16 @@ Let's begin!`);
   };
   const deleteThread = (threadId) => {
     if (!threadsRef.current.some((t) => t.id === threadId)) return; // not found
+    // Abort the in-flight reply ONLY when it ORIGINATED from the thread being deleted
+    // (its commit target is about to vanish). Keying off the stream's origin — not
+    // which thread happens to be active — means a reply still streaming in thread A
+    // survives the user switching to and deleting thread B, and conversely a reply
+    // running in a background thread is aborted when THAT thread is deleted.
+    if (abortRef.current && streamThreadRef.current === threadId) {
+      abortRef.current.abort();
+      clearStreaming();
+    }
     if (threadId === currentThreadIdRef.current) {
-      // Deleting the ACTIVE thread: abort its in-flight reply (its commit target is
-      // about to vanish) and clear the live display. Deleting a background thread
-      // (else branch) must NOT touch the stream — the active thread's reply keeps
-      // running and committing.
-      if (abortRef.current) { abortRef.current.abort(); clearStreaming(); }
       // Keep selection within the active résumé — open its most-recent remaining
       // thread or create a fresh homed one, never an unrelated General/other-résumé
       // thread (and never an empty panel).

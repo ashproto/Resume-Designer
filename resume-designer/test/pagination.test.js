@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { assignBlocksToPages, overflowingPages } from '../src/pagination.js';
+import {
+  assignBlocksToPages, overflowingPages, makeNode, flatten, buildColumnRecursive,
+} from '../src/pagination.js';
 
 describe('assignBlocksToPages', () => {
   const budgets = { firstPageContentPx: 250, pageContentPx: 300 };
@@ -48,5 +50,61 @@ describe('overflowingPages', () => {
     const h = [100, 100, 400]; // page0: 100+100; page1: 400 alone (> 300)
     const assign = assignBlocksToPages(h, budgets);
     expect([...overflowingPages(h, assign, budgets)]).toEqual([1]);
+  });
+});
+
+describe('buildColumnRecursive — sidebar wrapper preservation', () => {
+  // Regression for the "bulleted Tools in a sidebar lose their wrapper on split"
+  // bug: the two-level itemWrap (.sidebar-content > .tools-bulleted) must rebuild
+  // BOTH wrappers, not collapse .tools-bulleted directly under .sidebar-section
+  // (which would drop the .tools-list font/overflow styles in the paginated PDF).
+  const el = (tag, className, text) => {
+    const n = document.createElement(tag);
+    if (className) n.className = className;
+    if (text) n.textContent = text;
+    return n;
+  };
+  const buildSidebarToolsSection = () => {
+    const section = el('div', 'sidebar-section');
+    section.appendChild(el('div', 'sidebar-title', 'Tools'));
+    const content = el('div', 'sidebar-content sidebar-skills tools-list');
+    const bulleted = el('div', 'tools-bulleted');
+    bulleted.appendChild(el('div', 'highlight-bullet', 'Photoshop'));
+    bulleted.appendChild(el('div', 'highlight-bullet', 'Illustrator'));
+    content.appendChild(bulleted);
+    section.appendChild(content);
+    return section;
+  };
+
+  it('captures the full wrapper chain (outer→inner) in makeNode', () => {
+    const node = makeNode(buildSidebarToolsSection());
+    expect(node.group).toBe(true);
+    expect(node.wrapChain.map((w) => w.className)).toEqual([
+      'sidebar-content sidebar-skills tools-list',
+      'tools-bulleted',
+    ]);
+  });
+
+  it('rebuilds a page with the .sidebar-content/tools-list wrapper intact', () => {
+    const node = makeNode(buildSidebarToolsSection());
+    const units = [];
+    flatten(node, [], units);
+    // mimic flowColumn's firstOf marking so heads/wrappers emit once
+    const seen = new Set();
+    for (const u of units) {
+      u.firstOf = [];
+      for (const g of u.chain) if (!seen.has(g)) { seen.add(g); u.firstOf.push(g); }
+    }
+
+    const target = document.createElement('div');
+    buildColumnRecursive(target, units);
+
+    // full chain preserved: section > sidebar-content.tools-list > tools-bulleted > bullets
+    expect(
+      target.querySelector('.sidebar-section > .sidebar-content.tools-list > .tools-bulleted > .highlight-bullet'),
+    ).not.toBeNull();
+    expect(target.querySelectorAll('.highlight-bullet')).toHaveLength(2);
+    // and NOT the buggy flattened shape (.tools-bulleted directly under the section)
+    expect(target.querySelector('.sidebar-section > .tools-bulleted')).toBeNull();
   });
 });
