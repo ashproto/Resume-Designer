@@ -22,6 +22,46 @@ pub fn run() {
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.manage(commands::updater::PendingUpdate::default());
+
+                // Add "Settings…" and "Check for Updates…" to the application
+                // (app-name) menu, just under "About" and above the Services separator.
+                // We start from the platform default menu so every standard item (Edit,
+                // Window, Hide, Quit, …) is preserved, and only insert the two extra
+                // items. Each click emits an event the frontend routes to the existing
+                // flow (Settings dialog / manual update-check).
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::Emitter;
+                let menu = Menu::default(app.handle())?;
+                let settings = MenuItem::with_id(
+                    app.handle(),
+                    "open-settings",
+                    "Settings…",
+                    true,
+                    None::<&str>,
+                )?;
+                let check_updates = MenuItem::with_id(
+                    app.handle(),
+                    "check-updates",
+                    "Check for Updates…",
+                    true,
+                    None::<&str>,
+                )?;
+                let items = menu.items()?;
+                if let Some(app_menu) = items.first().and_then(|item| item.as_submenu()) {
+                    // Insert just under "About" (index 0): Settings…, then Check for Updates…
+                    app_menu.insert(&settings, 1)?;
+                    app_menu.insert(&check_updates, 2)?;
+                }
+                app.set_menu(menu)?;
+                app.on_menu_event(|app_handle, event| match event.id().as_ref() {
+                    "open-settings" => {
+                        let _ = app_handle.emit("menu:open-settings", ());
+                    }
+                    "check-updates" => {
+                        let _ = app_handle.emit("menu:check-updates", ());
+                    }
+                    _ => {}
+                });
             }
             Ok(())
         })
