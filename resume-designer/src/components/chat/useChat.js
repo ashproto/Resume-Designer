@@ -14,7 +14,7 @@ import {
   loadThreads, persistThreads, makeThread, trimMessages, clearLegacyHistory,
   migrateThreads, pickCurrentThreadId, chooseThreadAfterDelete, withContextMarker,
 } from '../../chatThreads.js';
-import { getCurrentId } from '../../variantManager.js';
+import { getCurrentId, loadVariant, getVariantList } from '../../variantManager.js';
 
 // AI model catalog, derived from aiService's curated MODELS (single source of
 // truth). Shape: [{ group, options: [{ value: slug, label }] }]. Custom slugs
@@ -150,6 +150,10 @@ export function useChat() {
   // funnel an unrelated thread's chat into the interview or let /done save from it.
   const interviewThreadIdRef = useRef(null);
   const idCounterRef = useRef(0);
+  // Set by jumpToVariant() to the thread to KEEP open across the imminent résumé
+  // switch, so the variant-follow effect re-selects it instead of the target
+  // résumé's home thread. One-shot: the follow effect reads then clears it.
+  const pinThreadIdRef = useRef(null);
 
   // Settings/catalog-derived values, held as state and refreshed explicitly at
   // the moments they can change (API keys saved, a model picked, the live model
@@ -188,8 +192,14 @@ export function useChat() {
   // résumé differs from the thread's last turn (no-op otherwise). Called at the
   // start of send() and handleCommand() so every flow is preceded by a divider
   // when the résumé changed.
+  // The active variant's LABEL (e.g. "Backend SWE") for the context divider — NOT
+  // store.getData()?.name, which is the person's NAME printed on the résumé and so
+  // mislabelled every divider with the candidate's name instead of the résumé.
+  const activeVariantLabel = () =>
+    getVariantList().find((v) => v.id === getCurrentId())?.name || '';
+
   const markContextIfSwitched = () => {
-    const withMarker = withContextMarker(messagesRef.current, getCurrentId(), store.getData()?.name);
+    const withMarker = withContextMarker(messagesRef.current, getCurrentId(), activeVariantLabel());
     if (withMarker !== messagesRef.current) {
       setMessages(withMarker);
       persistCurrentThread(withMarker);
@@ -765,6 +775,18 @@ Let's begin!`);
       persistThreads(next);
     }
   };
+  // Switch the active résumé from inside a thread (the context divider or the
+  // cross-résumé banner) WITHOUT losing the open thread. Pin the current thread so
+  // the variant-follow effect re-selects it instead of the target's home thread.
+  const jumpToVariant = (variantId) => {
+    if (!variantId) return;
+    pinThreadIdRef.current = currentThreadIdRef.current;
+    // loadVariant emits 'dataLoaded' → the follow effect consumes the pin. If it
+    // bails (unknown id, no event fired), clear the pin so it can't leak onto a
+    // later, unrelated résumé switch.
+    if (!loadVariant(variantId)) pinThreadIdRef.current = null;
+  };
+
   // Re-home a thread to the active résumé (the "Move here" affordance).
   const moveThreadToCurrentVariant = (threadId) => {
     const activeId = getCurrentId();
@@ -877,7 +899,13 @@ Let's begin!`);
         next = next.map((t) =>
           t.id === prevId ? { ...t, messages: trimMessages(messagesRef.current), updatedAt: new Date().toISOString() } : t);
       }
-      let cid = pickCurrentThreadId(next, activeId);
+      // An explicit in-thread jump (jumpToVariant) pins the thread to KEEP open, so
+      // following the résumé doesn't swap a cross-résumé thread out from under the
+      // user. One-shot — read and clear. Falls through to normal selection if the
+      // pinned thread has since vanished.
+      const pinned = pinThreadIdRef.current;
+      pinThreadIdRef.current = null;
+      let cid = pinned && next.some((t) => t.id === pinned) ? pinned : pickCurrentThreadId(next, activeId);
       if (!cid && activeId) {
         const t = makeThread('New Chat', [], activeId);
         next = [t, ...next];
@@ -913,7 +941,7 @@ Let's begin!`);
     // actions
     send, stop, selectModel, applyCustomSlug, removeCustomModelEntry,
     setReasoning, toggleWebSearch, addChip, openWithContext, removeChip, clearChips,
-    newThread, switchThread, deleteThread, moveThreadToCurrentVariant,
+    newThread, switchThread, deleteThread, moveThreadToCurrentVariant, jumpToVariant,
     openDiffForMessage, applyAction,
     startInterview, refresh,
   };
