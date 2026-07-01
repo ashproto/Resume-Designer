@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 
 import { getSettings, saveSettings } from '../../persistence.js';
 import { openSettings } from '../../settingsModal.js';
+import { useVariants } from '../../hooks/useVariants.js';
 import { useChat } from './useChat.js';
 import { MessageList } from './MessageList.jsx';
 import { ChatComposer } from './ChatComposer.jsx';
@@ -27,6 +28,7 @@ const MAX_WIDTH = 500;
  */
 export default function ChatPanel() {
   const chat = useChat();
+  const variants = useVariants();
   const [host] = useState(() => document.getElementById('chat-panel'));
   const [open, setOpen] = useState(false);
 
@@ -56,6 +58,10 @@ export default function ChatPanel() {
   // Reflect open/closed on the host; focus the input when opening.
   useEffect(() => {
     host?.classList.toggle('closed', !open);
+    // The ≤768px stylesheet keeps .chat-panel off-canvas and slides it in only
+    // for .chat-panel.open, so toggle `open` too — otherwise opening on a narrow
+    // viewport gives the panel width but leaves it translated off-screen.
+    host?.classList.toggle('open', open);
     if (open) {
       const t = setTimeout(() => document.getElementById('chat-input')?.focus(), 300);
       return () => clearTimeout(t);
@@ -116,6 +122,13 @@ export default function ChatPanel() {
 
   const openApiSettings = () => openSettings('api-keys');
 
+  // Cross-résumé state: is the open thread homed to a DIFFERENT résumé than the
+  // active one? If so, surface a slim banner with a Jump to its home résumé.
+  const openThread = chat.threads.find((t) => t.id === chat.currentThreadId);
+  const openHome = openThread?.homeVariantId ?? null;
+  const crossResume = openHome !== null && openHome !== chat.currentVariantId;
+  const homeName = variants.list.find((v) => v.id === openHome)?.name;
+
   if (!host) return null;
 
   return createPortal(
@@ -160,23 +173,49 @@ export default function ChatPanel() {
             <ThreadSelector
               threads={chat.threads}
               currentThreadId={chat.currentThreadId}
+              currentVariantId={chat.currentVariantId}
+              variants={variants.list}
               onSwitch={chat.switchThread}
               onNew={chat.newThread}
               onDelete={chat.deleteThread}
+              onMoveToCurrent={chat.moveThreadToCurrentVariant}
             />
           </div>
         )}
       </div>
+
+      {/* Cross-résumé banner: pinned slim row when the open thread belongs to a
+          different résumé than the active one, with a Jump to its home. */}
+      {chat.configured && crossResume && homeName && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground">
+          <span className="flex min-w-0 items-center" title={`Thread from «${homeName}»`}>
+            <span className="shrink-0">Thread from&nbsp;«</span>
+            <span className="truncate">{homeName}</span>
+            <span className="shrink-0">»</span>
+          </span>
+          <button
+            type="button"
+            className="shrink-0 font-medium text-foreground hover:underline"
+            onClick={() => chat.jumpToVariant(openHome)}
+            title={`Make «${homeName}» the active résumé — this thread stays open`}
+          >
+            Switch résumé
+          </button>
+        </div>
+      )}
 
       <MessageList
         messages={chat.messages}
         thinking={chat.thinking}
         streamingMessage={chat.streamingMessage}
         configured={chat.configured}
+        currentThreadId={chat.currentThreadId}
+        variants={variants.list}
         onReviewChanges={chat.openDiffForMessage}
         onApply={chat.applyAction}
         onConfigure={openApiSettings}
         onStop={chat.stop}
+        onJumpVariant={chat.jumpToVariant}
       />
 
       {chat.configured && (

@@ -1070,7 +1070,15 @@ export async function chat(modelId, messages, includeContext = true, options = {
   }
 
   const { hooks, ...rest } = options;
-  const res = await streamOpenRouter(validModelId, processedMessages, rest, hooks || {});
+  // Always tell the model which résumé is active, so a thread continued under a
+  // different résumé isn't reasoned about against the old one. getResumeContext()
+  // already attaches the résumé's data; this is the explicit one-line cue.
+  const baseSystem = rest.systemPrompt || SYSTEM_PROMPT;
+  const activeName = store.getData()?.name;
+  const systemPrompt = activeName
+    ? `${baseSystem}\n\nThe user is currently working on the résumé "${activeName}".`
+    : baseSystem;
+  const res = await streamOpenRouter(validModelId, processedMessages, { ...rest, systemPrompt }, hooks || {});
   if (options.structured) {
     return {
       text: res.text, thinking: res.reasoning, reasoning: res.reasoning,

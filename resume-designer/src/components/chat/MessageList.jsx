@@ -1,10 +1,10 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { Check, KeyRound, Loader2, MessageCircle, Pencil, Settings2, Square } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-import { Markdown } from './Markdown.jsx';
+import { Markdown, StreamingMarkdown } from './Markdown.jsx';
 import { LiveReasoning } from './LiveReasoning.jsx';
 import { Citations } from './Citations.jsx';
 import { RunMeta } from './RunMeta.jsx';
@@ -56,13 +56,13 @@ function ThinkingBlock({ thinking }) {
 
 // Live streaming assistant turn: real reasoning streams into the LiveReasoning
 // panel, the answer streams below it, and Stop aborts the run mid-stream.
-function StreamingBubble({ msg, onStop }) {
+function StreamingBubble({ msg, onStop, onRender }) {
   return (
     <div className="w-[92%] max-w-[92%] self-start space-y-2 rounded-[14px_14px_14px_4px] border bg-background px-3 py-2.5">
       <LiveReasoning reasoning={msg.reasoning} reasoningTokens={msg.run?.reasoningTokens || 0} streaming defaultOpen />
       {msg.content ? (
-        <div className="text-[13.5px] leading-relaxed">
-          <Markdown content={msg.content} />
+        <div className="min-w-0 text-[13.5px] leading-relaxed">
+          <StreamingMarkdown content={msg.content} onRender={onRender} />
         </div>
       ) : null}
       <Button variant="outline" size="sm" className="h-6 gap-1 text-[11px]" onClick={onStop}>
@@ -72,7 +72,33 @@ function StreamingBubble({ msg, onStop }) {
   );
 }
 
-function MessageBubble({ msg, onReviewChanges, onApply }) {
+function MessageBubble({ msg, onReviewChanges, onApply, onJumpVariant, variants }) {
+  // Context-switch divider: a "Now discussing «Name»" row whose button makes that
+  // résumé active WITHOUT leaving this thread (onJumpVariant pins it). The name is
+  // resolved live from the variant list so it tracks renames and so older markers
+  // — which mis-stamped the person's name instead of the résumé label — read right.
+  if (msg.role === 'context') {
+    const name =
+      variants?.find((v) => v.id === msg.variantId)?.name || msg.variantName || 'this résumé';
+    return (
+      <div className="my-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+        <span className="h-px flex-1 bg-border" />
+        <span className="flex min-w-0 shrink items-center gap-1.5">
+          <span className="shrink-0">Now discussing</span>
+          <button
+            type="button"
+            className="min-w-0 truncate rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-accent"
+            onClick={() => onJumpVariant?.(msg.variantId)}
+            title={`Switch the editor to «${name}» — this thread stays open`}
+          >
+            {name}
+          </button>
+        </span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+    );
+  }
+
   if (msg.role === 'error') {
     return (
       <div className="w-fit max-w-[85%] rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -169,15 +195,46 @@ function Welcome() {
  * <ThinkingBlock> (helper flows). Auto-scrolls to the bottom on any change.
  */
 export function MessageList({
-  messages, thinking, streamingMessage, configured,
-  onReviewChanges, onApply, onConfigure, onStop,
+  messages, thinking, streamingMessage, configured, currentThreadId, variants,
+  onReviewChanges, onApply, onConfigure, onStop, onJumpVariant,
 }) {
   const scrollerRef = useRef(null);
+  // Whether the viewport is parked at the bottom. While it is, new content sticks;
+  // once the user scrolls up we leave them be (so streaming tokens don't yank the
+  // view down), re-arming only when they return to within THRESHOLD px of the end.
+  const pinnedRef = useRef(true);
 
   useEffect(() => {
     const el = scrollerRef.current;
+    if (!el) return undefined;
+    const THRESHOLD = 80;
+    const onScroll = () => {
+      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= THRESHOLD;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Switching threads always re-arms stick and drops to the newest message.
+  useEffect(() => {
+    pinnedRef.current = true;
+    const el = scrollerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
+  }, [currentThreadId]);
+
+  // Follow new messages / streaming tokens only while the user is pinned to the end.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, thinking, streamingMessage]);
+
+  // The streaming buffer reveals text across frames that don't change props, so the
+  // effect above won't fire for them. It calls this after each frame to stay pinned —
+  // honouring the same rule, so a user who scrolled up is never yanked back down.
+  const followStream = useCallback(() => {
+    const el = scrollerRef.current;
+    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
+  }, []);
 
   return (
     <div id="chat-messages" ref={scrollerRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-muted/40 p-4">
@@ -188,9 +245,16 @@ export function MessageList({
       ) : (
         <>
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} onReviewChanges={onReviewChanges} onApply={onApply} />
+            <MessageBubble
+              key={msg.id}
+              msg={msg}
+              onReviewChanges={onReviewChanges}
+              onApply={onApply}
+              onJumpVariant={onJumpVariant}
+              variants={variants}
+            />
           ))}
-          {streamingMessage && <StreamingBubble msg={streamingMessage} onStop={onStop} />}
+          {streamingMessage && <StreamingBubble msg={streamingMessage} onStop={onStop} onRender={followStream} />}
           {thinking && <ThinkingBlock thinking={thinking} />}
         </>
       )}

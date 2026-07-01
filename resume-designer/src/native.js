@@ -449,6 +449,28 @@ export async function startupUpdateCheck() {
 }
 
 /**
+ * Register a handler for the macOS "Check for Updates…" application-menu item. The
+ * Rust side (src-tauri/src/lib.rs) emits `menu:check-updates` when it's clicked.
+ * No-op on the web build; resolves to an unlisten function on desktop.
+ */
+export async function onMenuCheckUpdates(callback) {
+  if (!isTauri) return () => {};
+  const { event } = await tauri();
+  return event.listen('menu:check-updates', () => callback());
+}
+
+/**
+ * Register a handler for the macOS "Settings…" application-menu item. The Rust side
+ * (src-tauri/src/lib.rs) emits `menu:open-settings` when it's clicked. No-op on the
+ * web build; resolves to an unlisten function on desktop.
+ */
+export async function onMenuOpenSettings(callback) {
+  if (!isTauri) return () => {};
+  const { event } = await tauri();
+  return event.listen('menu:open-settings', () => callback());
+}
+
+/**
  * Open a URL in the system default browser.
  * Mirror of electron's setWindowOpenHandler/shell.openExternal pattern.
  */
