@@ -145,19 +145,28 @@ function splittableConfig(el) {
 
 // Build a flow node: a GROUP (splittable: head + child nodes) or a LEAF (atomic).
 // Falls back to a leaf when the container has nothing to split (e.g. no bullets).
-function makeNode(el) {
+export function makeNode(el) {
   const cfg = splittableConfig(el);
   if (!cfg) return { group: false, el };
   const wrapEl = cfg.itemWrap ? el.querySelector(cfg.itemWrap) : el;
   const items = wrapEl ? Array.from(wrapEl.querySelectorAll(cfg.itemSel)) : [];
   if (items.length < 1) return { group: false, el };
   const head = cfg.head.map((s) => el.querySelector(s)).filter(Boolean);
-  return { group: true, el, head, wrapEl: wrapEl === el ? null : wrapEl, children: items.map(makeNode) };
+  // The FULL wrapper chain from `el`'s child down to itemWrap (outer→inner), so a
+  // rebuilt page reproduces every intermediate wrapper — e.g. the
+  // `.sidebar-content.tools-list` around `.tools-bulleted` — and keeps its styles
+  // (font-size, line-height, overflow-wrap), not just the innermost itemWrap element.
+  let wrapChain = null;
+  if (wrapEl && wrapEl !== el) {
+    wrapChain = [];
+    for (let w = wrapEl; w && w !== el; w = w.parentElement) wrapChain.unshift(w);
+  }
+  return { group: true, el, head, wrapChain, children: items.map(makeNode) };
 }
 
 // Flatten the tree to leaf UNITS in document order, each carrying its chain of
 // ancestor groups; firstOf marks the groups a unit opens (so heads emit once).
-function flatten(node, chain, out) {
+export function flatten(node, chain, out) {
   if (!node.group) { out.push({ leaf: node.el, chain }); return; }
   const ch = chain.concat([node]);
   for (const child of node.children) flatten(child, ch, out);
@@ -190,7 +199,7 @@ function measureUnits(units, scale) {
 // Rebuild a column from the units assigned to one page. Group wrappers are cloned
 // and reused while consecutive units share them; a group's head is emitted only
 // on the page where the group first appears (no repeated titles/entry headers).
-function buildColumnRecursive(targetEl, units) {
+export function buildColumnRecursive(targetEl, units) {
   let open = []; // [{ group, content }] — currently-open cloned chain, outer→inner
   for (const u of units) {
     let common = 0;
@@ -207,7 +216,9 @@ function buildColumnRecursive(targetEl, units) {
       clone.style.flex = '0 0 auto';
       if (u.firstOf.includes(group)) for (const h of group.head) clone.appendChild(h);
       let content = clone;
-      if (group.wrapEl) { const w = group.wrapEl.cloneNode(false); clone.appendChild(w); content = w; }
+      if (group.wrapChain) {
+        for (const wrap of group.wrapChain) { const w = wrap.cloneNode(false); content.appendChild(w); content = w; }
+      }
       (d === 0 ? targetEl : open[d - 1].content).appendChild(clone);
       open.push({ group, content });
     }
