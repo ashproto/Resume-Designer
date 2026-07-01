@@ -26,7 +26,7 @@ import { initVariants } from './variantManager.js';
 import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initDiffView } from './diffView.js';
 import { initInlineChanges } from './inlineChanges.js';
-import { initSettingsModal } from './settingsModal.js';
+import { initSettingsModal, openSettings } from './settingsModal.js';
 import { initZoomControls } from './zoomControls.js';
 import { initWindowDrag } from './tauriDrag.js';
 import {
@@ -43,6 +43,7 @@ import {
   getPlatform,
   openExternal,
   startupUpdateCheck,
+  onMenuOpenSettings,
   probeLegacyElectronData,
   importLegacyElectronData,
 } from './native.js';
@@ -496,6 +497,9 @@ export async function init() {
   
   // Initialize settings modal
   initSettingsModal();
+
+  // macOS app-menu "Settings…" opens the same Settings dialog as the header gear.
+  onMenuOpenSettings(() => openSettings()).catch(() => {});
 
   // Keep chat availability in sync when settings change. Settings is now a React
   // dialog (SettingsDialog.jsx) that reads settings reactively, so the old
