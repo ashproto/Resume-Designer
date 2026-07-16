@@ -6,11 +6,39 @@ import {
   createBridgeClient,
 } from '../src/bridgeClient.js';
 
-function jsonResponse(body, { status = 200 } = {}) {
+const ONE_MIB = 1024 * 1024;
+
+function jsonResponse(body, { status = 200, headers = {} } = {}) {
   return new Response(JSON.stringify(body), {
     status,
+    headers: { 'Content-Type': 'application/json', ...headers },
+  });
+}
+
+function streamedJsonResponse(body, { chunkSize = 64 * 1024 } = {}) {
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  const telemetry = { bytesEnqueued: 0, cancelled: false };
+  let offset = 0;
+
+  const response = new Response(new ReadableStream({
+    pull(controller) {
+      if (offset >= bytes.byteLength) {
+        controller.close();
+        return;
+      }
+
+      controller.enqueue(bytes.slice(offset, offset + chunkSize));
+      offset += chunkSize;
+      telemetry.bytesEnqueued = offset;
+    },
+    cancel() {
+      telemetry.cancelled = true;
+    },
+  }), {
     headers: { 'Content-Type': 'application/json' },
   });
+
+  return { response, telemetry, totalBytes: bytes.byteLength };
 }
 
 async function captureError(promise) {
@@ -91,6 +119,76 @@ describe('createBridgeClient', () => {
     const result = await makeClient(fetchImpl).complete(payload);
 
     expect(result).toEqual({ text: 'Drafted answer' });
+  });
+
+  it('rejects an AI completion whose Content-Length exceeds 1 MiB before reading it', async () => {
+    const getReader = vi.fn();
+    const readText = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'Content-Length': String(ONE_MIB + 1) }),
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: readText,
+    };
+    const fetchImpl = vi.fn(async () => response);
+
+    const error = await captureError(makeClient(fetchImpl).complete({
+      messages: [{ role: 'user', content: 'Hello' }],
+    }));
+
+    expect(getReader).not.toHaveBeenCalled();
+    expect(readText).not.toHaveBeenCalled();
+    expect(error).toBeInstanceOf(BridgeError);
+    expect(error).toMatchObject({
+      code: 'response_too_large',
+      retryable: false,
+    });
+  });
+
+  it('stream-counts UTF-8 bytes when rejecting an oversized AI completion', async () => {
+    const { response, telemetry, totalBytes } = streamedJsonResponse({
+      text: 'é'.repeat(ONE_MIB * 2),
+    });
+    const fetchImpl = vi.fn(async () => response);
+
+    const error = await captureError(makeClient(fetchImpl).complete({
+      messages: [{ role: 'user', content: 'Hello' }],
+    }));
+
+    expect(error).toBeInstanceOf(BridgeError);
+    expect(error).toMatchObject({
+      code: 'response_too_large',
+      retryable: false,
+    });
+    expect(telemetry.cancelled).toBe(true);
+    expect(telemetry.bytesEnqueued).toBeLessThan(totalBytes);
+  });
+
+  it('accepts an AI completion whose JSON body is exactly 1 MiB', async () => {
+    const envelopeBytes = new TextEncoder().encode(JSON.stringify({ text: '' })).byteLength;
+    const body = { text: 'x'.repeat(ONE_MIB - envelopeBytes) };
+    expect(new TextEncoder().encode(JSON.stringify(body))).toHaveLength(ONE_MIB);
+    const fetchImpl = vi.fn(async () => jsonResponse(body));
+
+    const result = await makeClient(fetchImpl).complete({
+      messages: [{ role: 'user', content: 'Hello' }],
+    });
+
+    expect(result.text).toHaveLength(ONE_MIB - envelopeBytes);
+  });
+
+  it('does not apply the AI completion response cap to PDF responses', async () => {
+    const pdfBase64 = 'A'.repeat(ONE_MIB + 1);
+    const fetchImpl = vi.fn(async () => jsonResponse(
+      { filename: 'resume.pdf', pdfBase64 },
+      { headers: { 'Content-Length': String(ONE_MIB + 100) } },
+    ));
+
+    const result = await makeClient(fetchImpl).getPdf('variant-1');
+
+    expect(result).toEqual({ filename: 'resume.pdf', pdfBase64 });
   });
 
   it('escapes resume ids as a single path segment', async () => {

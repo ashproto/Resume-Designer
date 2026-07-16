@@ -71,6 +71,7 @@ The token is stored in `chrome.storage.local`. If a restored backup changes the 
 
 - The bridge binds only to `127.0.0.1:17872`; it is not reachable from another machine.
 - Every bridge endpoint except `/health` requires the pairing token.
+- V1 trusts the same-user local processes and host. Loopback binding plus the bearer token does not defend against a malicious local process impersonating Resume Designer on the fixed port, or against a compromised host.
 - The extension contains no OpenRouter key and makes no direct model request. AI calls go through the running app and its configured provider account.
 - Compact field labels, types, native options, and required flags reach the user's configured model together with the selected resume data, shared profile, and learned answers. Labels and resume content are treated as untrusted data and cannot override the mapping instructions.
 - Raw application HTML and DOM nodes do not leave the page. The generated resume PDF returns through the authenticated loopback bridge only when a reviewed resume-file marker requires it.

@@ -10,6 +10,8 @@ import {
   requestMapping,
 } from '../src/mapping.js';
 
+const ONE_MIB = 1024 * 1024;
+
 const mappingEvals = JSON.parse(readFileSync(
   new URL('./fixtures/mapping-evals.json', import.meta.url),
   'utf8',
@@ -178,6 +180,34 @@ describe('parseMappingResponse', () => {
       ],
       needs_human: [],
     });
+  });
+
+  it('rejects mapping responses above 1 MiB by UTF-8 byte length', () => {
+    const exactLimit = JSON.stringify(validObject()).padEnd(ONE_MIB, ' ');
+
+    expect(new TextEncoder().encode(exactLimit)).toHaveLength(ONE_MIB);
+    expect(parseMappingResponse(exactLimit, validDescriptors)).toEqual(validObject());
+    expect(() => parseMappingResponse(`${exactLimit}é`, validDescriptors))
+      .toThrow(/mapping response exceeds 1 MiB/i);
+  });
+
+  it('recovers a valid mapping after many unmatched braces without quadratic rescanning', {
+    timeout: 1_000,
+  }, () => {
+    const response = `${'{'.repeat(40_000)}${JSON.stringify(validObject())}`;
+
+    const parsed = parseMappingResponse(response, validDescriptors);
+
+    expect(parsed).toEqual(validObject());
+  });
+
+  it('skips deeply nested well-formed noise without reparsing every object', {
+    timeout: 1_000,
+  }, () => {
+    const nestedNoise = `${'{"noise":'.repeat(6_000)}null${'}'.repeat(6_000)}`;
+    const response = `${nestedNoise}${JSON.stringify(validObject())}`;
+
+    expect(parseMappingResponse(response, validDescriptors)).toEqual(validObject());
   });
 
   it.each([
