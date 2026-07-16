@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Resume Designer Companion",
+  "version": "0.1.0",
+  "description": "Review and fill job applications with the local Resume Designer app.",
+  "action": {
+    "default_title": "Open Resume Designer Companion"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:17872/*"
+  ]
+}
