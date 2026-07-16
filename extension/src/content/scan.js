@@ -221,10 +221,12 @@ export function scanForm(root = document) {
   for (const control of controls) {
     if (descriptorType(control) !== 'radio') continue;
     const name = normalize(control.getAttribute('name'));
-    const key = name || control;
-    const group = radioGroups.get(key) ?? [];
+    const owner = name ? control.form : control;
+    const ownerGroups = radioGroups.get(owner) ?? new Map();
+    const group = ownerGroups.get(name) ?? [];
     group.push(control);
-    radioGroups.set(key, group);
+    ownerGroups.set(name, group);
+    radioGroups.set(owner, ownerGroups);
   }
 
   const visitedRadios = new Set();
@@ -234,7 +236,8 @@ export function scanForm(root = document) {
     if (descriptorType(control) === 'radio') {
       if (visitedRadios.has(control)) continue;
       const name = normalize(control.getAttribute('name'));
-      const group = radioGroups.get(name || control);
+      const owner = name ? control.form : control;
+      const group = radioGroups.get(owner).get(name);
       group.forEach((radio) => visitedRadios.add(radio));
       descriptors.push(radioDescriptor(group));
       continue;

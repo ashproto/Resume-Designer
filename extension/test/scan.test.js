@@ -114,6 +114,47 @@ describe('scanForm', () => {
     expect(checkboxes.every(({ options }) => options.length === 0)).toBe(true);
   });
 
+  it('scopes named radio groups to form owners while keeping unnamed radios independent', () => {
+    const document = new JSDOM(`
+      <form id="first-form">
+        <fieldset>
+          <legend>First choice</legend>
+          <label><input type="radio" name="choice" value="first-a"> First A</label>
+          <label><input type="radio" name="choice" value="first-b"> First B</label>
+          <label><input type="radio"> First unnamed</label>
+        </fieldset>
+      </form>
+      <form id="second-form">
+        <fieldset>
+          <legend>Second choice</legend>
+          <label><input type="radio" name="choice" value="second-a"> Second A</label>
+          <label><input type="radio" name="choice" value="second-b"> Second B</label>
+          <label><input type="radio"> Second unnamed</label>
+        </fieldset>
+      </form>
+    `).window.document;
+
+    const descriptors = scanForm(document).filter(({ type }) => type === 'radio');
+    const firstNamed = [...document.querySelectorAll('#first-form input[name="choice"]')];
+    const secondNamed = [...document.querySelectorAll('#second-form input[name="choice"]')];
+
+    expect(descriptors.map(({ options }) => options.map(({ value }) => value))).toEqual([
+      ['first-a', 'first-b'],
+      ['First unnamed'],
+      ['second-a', 'second-b'],
+      ['Second unnamed'],
+    ]);
+    expect(firstNamed.map((element) => element.getAttribute(FIELD_ID_ATTRIBUTE))).toEqual([
+      descriptors[0].field_id,
+      descriptors[0].field_id,
+    ]);
+    expect(secondNamed.map((element) => element.getAttribute(FIELD_ID_ATTRIBUTE))).toEqual([
+      descriptors[2].field_id,
+      descriptors[2].field_id,
+    ]);
+    expect(new Set(descriptors.map(({ field_id }) => field_id)).size).toBe(4);
+  });
+
   it('skips Ashby helper controls while retaining its labelled resume and descriptor-only custom field', () => {
     const document = loadFixture('ashby');
     const helperFile = document.querySelector('input[type="file"]:not([id])');
