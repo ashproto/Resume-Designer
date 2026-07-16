@@ -60,11 +60,13 @@ export default function App({ client = runtimeClient }) {
   const [fillResult, setFillResult] = useState(null);
   const [retrySnapshot, setRetrySnapshot] = useState(null);
   const [savingAnswers, setSavingAnswers] = useState(() => new Set());
-  const [savedAnswers, setSavedAnswers] = useState(() => new Set());
+  const [savedAnswers, setSavedAnswers] = useState(() => new Map());
   const [company, setCompany] = useState('');
   const [title, setTitle] = useState('');
   const [hasFilled, setHasFilled] = useState(false);
   const [logState, setLogState] = useState('idle');
+  const operationPending = useRef(null);
+  const answerPending = useRef(new Set());
   const logPending = useRef(false);
 
   useEffect(() => {
@@ -94,10 +96,25 @@ export default function App({ client = runtimeClient }) {
     setFillResult(null);
     setRetrySnapshot(null);
     setSavingAnswers(new Set());
-    setSavedAnswers(new Set());
+    setSavedAnswers(new Map());
     setHasFilled(false);
     setLogState('idle');
-    logPending.current = false;
+  }
+
+  function hasPendingInteraction() {
+    return operationPending.current !== null
+      || answerPending.current.size > 0
+      || logPending.current;
+  }
+
+  function beginOperation(name) {
+    if (hasPendingInteraction()) return false;
+    operationPending.current = name;
+    return true;
+  }
+
+  function finishOperation(name) {
+    if (operationPending.current === name) operationPending.current = null;
   }
 
   async function handlePair(token) {
@@ -116,11 +133,14 @@ export default function App({ client = runtimeClient }) {
   }
 
   function handleResumeChange(event) {
+    if (!beginOperation('resume-change')) return;
     setSelectedResumeId(event.target.value);
     resetPostScanState();
+    queueMicrotask(() => finishOperation('resume-change'));
   }
 
   async function handleScan() {
+    if (!beginOperation('scan')) return;
     setScanBusy(true);
     setRuntimeError(null);
     setScanResult(null);
@@ -134,16 +154,18 @@ export default function App({ client = runtimeClient }) {
       setRuntimeError(error);
     } finally {
       setScanBusy(false);
+      finishOperation('scan');
     }
   }
 
   async function handleCreateReview() {
     if (!scanResult || !selectedResumeId) return;
+    if (!beginOperation('mapping')) return;
     setMappingBusy(true);
     setRuntimeError(null);
     setReviewItems([]);
     setSavingAnswers(new Set());
-    setSavedAnswers(new Set());
+    setSavedAnswers(new Map());
     try {
       const mapping = await client.createMapping(selectedResumeId, scanResult.descriptors);
       setReviewItems(buildReviewItems(scanResult.descriptors, mapping));
@@ -156,30 +178,32 @@ export default function App({ client = runtimeClient }) {
       setRuntimeError(error);
     } finally {
       setMappingBusy(false);
+      finishOperation('mapping');
     }
   }
 
   function handleReviewChange(fieldId, value) {
+    if (hasPendingInteraction()) return;
     setReviewItems((current) => current.map((item) => (
       item.field_id === fieldId ? { ...item, value } : item
     )));
-    setSavedAnswers((current) => {
-      if (!current.has(fieldId)) return current;
-      const next = new Set(current);
-      next.delete(fieldId);
-      return next;
-    });
   }
 
   async function handleSaveAnswer(item) {
     const answer = item.value.trim();
     if (!answer || !item.question || item.manualFile) return;
+    if (hasPendingInteraction()) return;
 
+    answerPending.current.add(item.field_id);
     setRuntimeError(null);
     setSavingAnswers((current) => new Set(current).add(item.field_id));
     try {
       await client.saveAnswer(item.question, answer);
-      setSavedAnswers((current) => new Set(current).add(item.field_id));
+      setSavedAnswers((current) => {
+        const next = new Map(current);
+        next.set(item.field_id, answer);
+        return next;
+      });
     } catch (error) {
       setRuntimeError(error);
     } finally {
@@ -188,10 +212,12 @@ export default function App({ client = runtimeClient }) {
         next.delete(item.field_id);
         return next;
       });
+      answerPending.current.delete(item.field_id);
     }
   }
 
   async function performFill(snapshot) {
+    if (!beginOperation('fill')) return;
     setFillBusy(true);
     setRuntimeError(null);
     try {
@@ -204,6 +230,7 @@ export default function App({ client = runtimeClient }) {
       setRetrySnapshot(error?.code === 'pdf_busy' ? snapshot : null);
     } finally {
       setFillBusy(false);
+      finishOperation('fill');
     }
   }
 
@@ -222,7 +249,7 @@ export default function App({ client = runtimeClient }) {
   }
 
   async function handleLogApplication() {
-    if (logPending.current || logState === 'logged') return;
+    if (hasPendingInteraction() || logState === 'logged') return;
     logPending.current = true;
     setLogState('pending');
     setRuntimeError(null);
@@ -244,8 +271,14 @@ export default function App({ client = runtimeClient }) {
 
   const contentWarnings = (fillResult?.unfilled ?? []).map((item) => ({
     field_id: item.field_id,
+    label: reviewItems.find((reviewItem) => reviewItem.field_id === item.field_id)?.label,
     reason: item.reason,
   }));
+  const workflowBusy = scanBusy
+    || mappingBusy
+    || fillBusy
+    || logState === 'pending'
+    || savingAnswers.size > 0;
 
   return (
     <main className="panel-shell">
@@ -275,7 +308,7 @@ export default function App({ client = runtimeClient }) {
               id="resume-picker"
               value={selectedResumeId}
               onChange={handleResumeChange}
-              disabled={scanBusy || mappingBusy || fillBusy}
+              disabled={workflowBusy}
             >
               {connection.resumes.map((resume) => (
                 <option key={resume.id} value={resume.id}>{resume.name}</option>
@@ -285,7 +318,7 @@ export default function App({ client = runtimeClient }) {
               <button
                 type="button"
                 className="primary-button"
-                disabled={!selectedResumeId || scanBusy || mappingBusy}
+                disabled={!selectedResumeId || workflowBusy}
                 onClick={handleScan}
               >
                 {scanBusy ? 'Scanning…' : 'Scan page'}
@@ -294,7 +327,7 @@ export default function App({ client = runtimeClient }) {
                 <button
                   type="button"
                   className="secondary-button"
-                  disabled={!selectedResumeId || mappingBusy}
+                  disabled={!selectedResumeId || workflowBusy}
                   onClick={handleCreateReview}
                 >
                   {mappingBusy ? 'Creating review…' : 'Create review'}
@@ -311,11 +344,12 @@ export default function App({ client = runtimeClient }) {
                 onSaveAnswer={handleSaveAnswer}
                 savedAnswers={savedAnswers}
                 savingAnswers={savingAnswers}
+                disabled={workflowBusy}
               />
               <button
                 type="button"
                 className="primary-button fill-button"
-                disabled={fillBusy}
+                disabled={workflowBusy}
                 onClick={handleFill}
               >
                 {fillBusy ? 'Filling…' : 'Fill reviewed fields'}
@@ -327,7 +361,7 @@ export default function App({ client = runtimeClient }) {
             <button
               type="button"
               className="secondary-button"
-              disabled={fillBusy}
+              disabled={workflowBusy}
               onClick={handleRetryFill}
             >
               Retry fill
@@ -345,21 +379,25 @@ export default function App({ client = runtimeClient }) {
                 id="application-company"
                 type="text"
                 value={company}
-                onChange={(event) => setCompany(event.target.value)}
-                disabled={logState !== 'idle'}
+                onChange={(event) => {
+                  if (!hasPendingInteraction()) setCompany(event.target.value);
+                }}
+                disabled={workflowBusy || logState !== 'idle'}
               />
               <label htmlFor="application-title">Role title</label>
               <input
                 id="application-title"
                 type="text"
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                disabled={logState !== 'idle'}
+                onChange={(event) => {
+                  if (!hasPendingInteraction()) setTitle(event.target.value);
+                }}
+                disabled={workflowBusy || logState !== 'idle'}
               />
               <button
                 type="button"
                 className="primary-button"
-                disabled={logState !== 'idle'}
+                disabled={workflowBusy || logState !== 'idle'}
                 onClick={handleLogApplication}
               >
                 {logState === 'pending'

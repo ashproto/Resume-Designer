@@ -320,8 +320,202 @@ describe('App explicit workflow', () => {
     ]);
     expect(container.textContent).toContain('What salary do you expect?');
     expect(container.textContent).toContain('Attach cover letter manually.');
-    expect(container.textContent).toContain('Custom control must be filled manually');
+    expect(container.textContent).toContain('Consent: Custom control must be filled manually');
     expect(container.textContent).toContain('Log application');
+  });
+
+  it('serializes scan and mapping actions synchronously and locks resume changes', async () => {
+    const scanRequest = deferred();
+    const mappingRequest = deferred();
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const client = makeClient({
+      checkConnection: vi.fn(async () => ({
+        connected: true,
+        health: { ok: true },
+        resumes: [
+          { id: 'resume-1', name: 'Backend résumé' },
+          { id: 'resume-2', name: 'Frontend résumé' },
+        ],
+      })),
+      scanPage: vi.fn(() => scanRequest.promise),
+      createMapping: vi.fn(() => mappingRequest.promise),
+    });
+    await renderApp(client);
+
+    const resumePicker = labelled('Résumé');
+    const scanButton = button('Scan page');
+    await act(async () => {
+      scanButton.click();
+      scanButton.click();
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
+        .set.call(resumePicker, 'resume-2');
+      resumePicker.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(resumePicker.value).toBe('resume-1');
+    expect(resumePicker.disabled).toBe(true);
+
+    scanRequest.resolve({ descriptors, page: {} });
+    await settle();
+    const createButton = button('Create review');
+    await act(async () => {
+      createButton.click();
+      createButton.click();
+      scanButton.click();
+      await Promise.resolve();
+    });
+
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(scanButton.disabled).toBe(true);
+
+    mappingRequest.resolve({ fields: [mapped('name', 'Jane')], needs_human: [] });
+    await settle();
+    expect(labelled('Full name').value).toBe('Jane');
+  });
+
+  it('keeps workflow controls locked while a fill request is pending', async () => {
+    const fillRequest = deferred();
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Jane')], needs_human: [],
+      })),
+      fillPage: vi.fn(() => fillRequest.promise),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    const fillButton = button('Fill reviewed fields');
+    const scanButton = button('Scan page');
+    const createButton = button('Create review');
+    await act(async () => {
+      fillButton.click();
+      fillButton.click();
+      scanButton.click();
+      createButton.click();
+      await Promise.resolve();
+    });
+
+    expect(client.fillPage).toHaveBeenCalledOnce();
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(labelled('Résumé').disabled).toBe(true);
+    expect(labelled('Full name').disabled).toBe(true);
+    expect(scanButton.disabled).toBe(true);
+    expect(createButton.disabled).toBe(true);
+
+    fillRequest.resolve({ filled: ['name'], unfilled: [] });
+    await settle();
+    expect(container.textContent).toContain('Log application');
+  });
+
+  it('keeps the exact saved answer value and locks its editor while saving', async () => {
+    const saveRequest = deferred();
+    const descriptors = [descriptor('work-auth', { label: 'Work authorization?' })];
+    const client = makeClient({
+      checkConnection: vi.fn(async () => ({
+        connected: true,
+        health: { ok: true },
+        resumes: [
+          { id: 'resume-1', name: 'Backend résumé' },
+          { id: 'resume-2', name: 'Frontend résumé' },
+        ],
+      })),
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [],
+        needs_human: [{
+          field_id: 'work-auth',
+          question: 'Are you authorized to work here?',
+        }],
+      })),
+      saveAnswer: vi.fn(() => saveRequest.promise),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    const editor = labelled('Work authorization?');
+    const resumePicker = labelled('Résumé');
+    const scanButton = button('Scan page');
+    const createButton = button('Create review');
+    await change(editor, 'Answer A');
+    await act(async () => {
+      button('Save answer').click();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        .set.call(editor, 'Answer B');
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
+        .set.call(resumePicker, 'resume-2');
+      resumePicker.dispatchEvent(new Event('change', { bubbles: true }));
+      scanButton.click();
+      createButton.click();
+      await Promise.resolve();
+    });
+
+    expect(client.saveAnswer).toHaveBeenCalledOnce();
+    expect(client.saveAnswer).toHaveBeenCalledWith(
+      'Are you authorized to work here?',
+      'Answer A',
+    );
+    expect(resumePicker.value).toBe('resume-1');
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(editor.disabled).toBe(true);
+    expect(editor.value).toBe('Answer A');
+    expect(button('Scan page').disabled).toBe(true);
+    expect(button('Fill reviewed fields').disabled).toBe(true);
+
+    saveRequest.resolve({ answer: { id: 'answer-1' } });
+    await settle();
+    expect(button('Answer saved').disabled).toBe(true);
+
+    await change(editor, 'Answer B');
+    expect(button('Save answer').disabled).toBe(false);
+  });
+
+  it('associates stable needs-human and low-confidence descriptions with their editors', async () => {
+    const descriptors = [
+      descriptor('name', { label: 'Full name' }),
+      descriptor('work-auth', { label: 'Work authorization?' }),
+      descriptor('consent', { label: 'Consent?', type: 'checkbox' }),
+    ];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Jane', 0.5)],
+        needs_human: [{
+          field_id: 'work-auth',
+          question: 'Are you authorized to work here?',
+        }, {
+          field_id: 'consent',
+          question: 'Do you consent?',
+        }],
+      })),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    const nameEditor = labelled('Full name');
+    const answerEditor = labelled('Work authorization?');
+    const consentEditor = labelled('Consent?');
+    const confidenceId = nameEditor.getAttribute('aria-describedby');
+    const questionId = answerEditor.getAttribute('aria-describedby');
+    const consentQuestionId = consentEditor.getAttribute('aria-describedby');
+    expect(document.getElementById(confidenceId)?.textContent).toBe('Low confidence');
+    expect(document.getElementById(questionId)?.textContent)
+      .toBe('Are you authorized to work here?');
+    expect(document.getElementById(consentQuestionId)?.textContent).toBe('Do you consent?');
+
+    await change(nameEditor, 'Janet');
+    await change(answerEditor, 'Yes');
+    await change(consentEditor, 'false');
+    expect(nameEditor.getAttribute('aria-describedby')).toBe(confidenceId);
+    expect(answerEditor.getAttribute('aria-describedby')).toBe(questionId);
+    expect(consentEditor.getAttribute('aria-describedby')).toBe(consentQuestionId);
   });
 
   it('retries PDF busy with the exact captured payload despite later edits', async () => {
@@ -453,6 +647,14 @@ describe('App explicit workflow', () => {
     const logRequest = deferred();
     const descriptors = [descriptor('name', { label: 'Full name' })];
     const client = makeClient({
+      checkConnection: vi.fn(async () => ({
+        connected: true,
+        health: { ok: true },
+        resumes: [
+          { id: 'resume-1', name: 'Backend résumé' },
+          { id: 'resume-2', name: 'Frontend résumé' },
+        ],
+      })),
       scanPage: vi.fn(async () => ({
         descriptors,
         page: { company: 'Scraped Co', title: 'Scraped Role' },
@@ -470,8 +672,18 @@ describe('App explicit workflow', () => {
     await change(labelled('Company'), 'Edited Co');
     await change(labelled('Role title'), 'Edited Role');
     const logButton = button('Log application');
+    const resumePicker = labelled('Résumé');
+    const scanButton = button('Scan page');
+    const createButton = button('Create review');
+    const fillButton = button('Fill reviewed fields');
     await act(async () => {
       logButton.click();
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
+        .set.call(resumePicker, 'resume-2');
+      resumePicker.dispatchEvent(new Event('change', { bubbles: true }));
+      scanButton.click();
+      createButton.click();
+      fillButton.click();
       logButton.click();
       await Promise.resolve();
     });
@@ -482,6 +694,11 @@ describe('App explicit workflow', () => {
       company: 'Edited Co',
       title: 'Edited Role',
     });
+    expect(resumePicker.value).toBe('resume-1');
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(client.fillPage).toHaveBeenCalledOnce();
+    expect(resumePicker.disabled).toBe(true);
     expect(button('Logging…').disabled).toBe(true);
 
     logRequest.resolve({ application: { id: 'application-1' } });

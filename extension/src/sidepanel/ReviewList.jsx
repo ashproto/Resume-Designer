@@ -1,4 +1,4 @@
-function editorFor(item, controlId, onChange) {
+function editorFor(item, controlId, onChange, { describedBy, disabled }) {
   if (item.type === 'file') {
     if (item.manualFile) return null;
     return <p className="file-value">Selected résumé PDF</p>;
@@ -9,6 +9,8 @@ function editorFor(item, controlId, onChange) {
       <select
         id={controlId}
         value={item.value}
+        aria-describedby={describedBy}
+        disabled={disabled}
         onChange={(event) => onChange(item.field_id, event.target.value)}
       >
         {item.needsHuman ? <option value="">Choose…</option> : null}
@@ -24,6 +26,8 @@ function editorFor(item, controlId, onChange) {
       <select
         id={controlId}
         value={item.value}
+        aria-describedby={describedBy}
+        disabled={disabled}
         onChange={(event) => onChange(item.field_id, event.target.value)}
       >
         {item.needsHuman ? <option value="">Choose…</option> : null}
@@ -38,6 +42,8 @@ function editorFor(item, controlId, onChange) {
       id={controlId}
       type="text"
       value={item.value}
+      aria-describedby={describedBy}
+      disabled={disabled}
       onChange={(event) => onChange(item.field_id, event.target.value)}
     />
   );
@@ -49,6 +55,7 @@ export default function ReviewList({
   onSaveAnswer,
   savedAnswers,
   savingAnswers,
+  disabled = false,
 }) {
   return (
     <section className="panel-section" aria-labelledby="review-heading">
@@ -59,11 +66,14 @@ export default function ReviewList({
       <ol className="review-list">
         {items.map((item, index) => {
           const controlId = `review-field-${index}`;
+          const questionId = item.question ? `${controlId}-question` : null;
+          const confidenceId = item.lowConfidence ? `${controlId}-confidence` : null;
+          const describedBy = [questionId, confidenceId].filter(Boolean).join(' ') || undefined;
           const canSave = item.needsHuman
             && !item.manualFile
             && Boolean(item.value.trim());
           const saving = savingAnswers.has(item.field_id);
-          const saved = savedAnswers.has(item.field_id);
+          const saved = savedAnswers.get(item.field_id) === item.value.trim();
 
           return (
             <li className="review-item" key={item.field_id}>
@@ -71,10 +81,17 @@ export default function ReviewList({
                 {item.type === 'file'
                   ? <p className="field-label">{item.label}</p>
                   : <label htmlFor={controlId}>{item.label}</label>}
-                {item.lowConfidence ? <span className="confidence-warning">Low confidence</span> : null}
+                {item.lowConfidence ? (
+                  <span id={confidenceId} className="confidence-warning">Low confidence</span>
+                ) : null}
               </div>
-              {item.question ? <p className="field-question">{item.question}</p> : null}
-              {editorFor(item, controlId, onChange)}
+              {item.question ? (
+                <p id={questionId} className="field-question">{item.question}</p>
+              ) : null}
+              {editorFor(item, controlId, onChange, {
+                describedBy,
+                disabled: disabled || saving,
+              })}
               {item.manualFile ? (
                 <p className="manual-warning" role="note">Complete this file field manually.</p>
               ) : null}
@@ -83,7 +100,7 @@ export default function ReviewList({
                   type="button"
                   className="secondary-button compact-button"
                   aria-label={`Save answer for ${item.label}`}
-                  disabled={saving || saved}
+                  disabled={disabled || saving || saved}
                   onClick={() => onSaveAnswer(item)}
                 >
                   {saved ? 'Answer saved' : saving ? 'Saving…' : 'Save answer'}
