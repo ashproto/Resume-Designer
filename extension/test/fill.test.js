@@ -142,6 +142,31 @@ describe('fillForm', () => {
     expect(events).toEqual([]);
   });
 
+  it('fills browser-valid number and date values and dispatches native events', () => {
+    const document = new JSDOM(`
+      <form>
+        <label>Salary <input type="number" value="120000"></label>
+        <label>Start date <input type="date" value="2026-08-01"></label>
+      </form>
+    `).window.document;
+    const [salaryField, dateField] = scanForm(document);
+    const [salary, date] = document.querySelectorAll('input');
+    const events = eventLog(document.querySelector('form'));
+
+    const result = fillForm([
+      { field_id: salaryField.field_id, value: '150000' },
+      { field_id: dateField.field_id, value: '2026-08-04' },
+    ], { root: document });
+
+    expect(result).toEqual({
+      filled: [salaryField.field_id, dateField.field_id],
+      unfilled: [],
+    });
+    expect(salary.value).toBe('150000');
+    expect(date.value).toBe('2026-08-04');
+    expect(events.map(({ type }) => type)).toEqual(['input', 'change', 'input', 'change']);
+  });
+
   it('matches selects by exact value before a case-insensitive visible label', () => {
     const document = new JSDOM(`
       <form>
