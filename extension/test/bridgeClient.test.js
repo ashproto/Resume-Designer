@@ -122,10 +122,11 @@ describe('createBridgeClient', () => {
   });
 
   it('rejects an AI completion whose Content-Length exceeds 1 MiB before reading it', async () => {
+    const cancel = vi.fn(async () => undefined);
     const getReader = vi.fn();
     const readText = vi.fn();
     const response = {
-      body: { getReader },
+      body: { cancel, getReader },
       headers: new Headers({ 'Content-Length': String(ONE_MIB + 1) }),
       ok: true,
       status: 200,
@@ -138,6 +139,7 @@ describe('createBridgeClient', () => {
       messages: [{ role: 'user', content: 'Hello' }],
     }));
 
+    expect(cancel).toHaveBeenCalledOnce();
     expect(getReader).not.toHaveBeenCalled();
     expect(readText).not.toHaveBeenCalled();
     expect(error).toBeInstanceOf(BridgeError);

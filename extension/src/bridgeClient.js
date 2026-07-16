@@ -53,6 +53,11 @@ function declaredContentLength(response) {
 async function readTextWithinLimit(response, maxBytes) {
   const contentLength = declaredContentLength(response);
   if (contentLength !== null && contentLength > maxBytes) {
+    try {
+      await response.body?.cancel?.();
+    } catch {
+      // The declared size remains authoritative if stream cancellation fails.
+    }
     throw responseTooLargeError();
   }
 
