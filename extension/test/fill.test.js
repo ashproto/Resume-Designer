@@ -110,6 +110,38 @@ describe('fillForm', () => {
     expect(events.every(({ target }) => target === input || target === textarea)).toBe(true);
   });
 
+  it('reports browser-sanitized number and date values as unfilled without erasing prior values', () => {
+    const document = new JSDOM(`
+      <form>
+        <label>Salary <input type="number" value="120000"></label>
+        <label>Start date <input type="date" value="2026-08-01"></label>
+      </form>
+    `).window.document;
+    const [salaryField, dateField] = scanForm(document);
+    const [salary, date] = document.querySelectorAll('input');
+    const events = eventLog(document.querySelector('form'));
+
+    const result = fillForm([
+      { field_id: salaryField.field_id, value: 'USD 150k' },
+      { field_id: dateField.field_id, value: 'next Monday' },
+    ], { root: document });
+
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toEqual([
+      {
+        field_id: salaryField.field_id,
+        reason: expect.stringMatching(/browser rejected.*complete.*manually/i),
+      },
+      {
+        field_id: dateField.field_id,
+        reason: expect.stringMatching(/browser rejected.*complete.*manually/i),
+      },
+    ]);
+    expect(salary.value).toBe('120000');
+    expect(date.value).toBe('2026-08-01');
+    expect(events).toEqual([]);
+  });
+
   it('matches selects by exact value before a case-insensitive visible label', () => {
     const document = new JSDOM(`
       <form>

@@ -98,8 +98,16 @@ function fillText(element, value) {
   const prototypeName = element.tagName === 'TEXTAREA'
     ? 'HTMLTextAreaElement'
     : 'HTMLInputElement';
+  const requestedValue = String(value ?? '');
+  const previousValue = element.value;
 
-  nativeSetter(element, prototypeName, 'value', String(value ?? ''));
+  nativeSetter(element, prototypeName, 'value', requestedValue);
+
+  if (element.value !== requestedValue) {
+    nativeSetter(element, prototypeName, 'value', previousValue);
+    throw new Error('The browser rejected this value; complete the field manually');
+  }
+
   dispatchFillEvents(element);
 }
 
