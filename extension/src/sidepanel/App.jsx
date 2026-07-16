@@ -285,7 +285,7 @@ export default function App({ client = runtimeClient }) {
               <button
                 type="button"
                 className="primary-button"
-                disabled={!selectedResumeId || scanBusy}
+                disabled={!selectedResumeId || scanBusy || mappingBusy}
                 onClick={handleScan}
               >
                 {scanBusy ? 'Scanning…' : 'Scan page'}

@@ -11,6 +11,7 @@ function editorFor(item, controlId, onChange) {
         value={item.value}
         onChange={(event) => onChange(item.field_id, event.target.value)}
       >
+        {item.needsHuman ? <option value="">Choose…</option> : null}
         {item.options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
@@ -25,6 +26,7 @@ function editorFor(item, controlId, onChange) {
         value={item.value}
         onChange={(event) => onChange(item.field_id, event.target.value)}
       >
+        {item.needsHuman ? <option value="">Choose…</option> : null}
         <option value="true">True</option>
         <option value="false">False</option>
       </select>

@@ -360,6 +360,67 @@ describe('App explicit workflow', () => {
     expect(client.fillPage.mock.calls[1]).toEqual(captured);
   });
 
+  it('shows an explicit empty choice for needs-human radio and checkbox fields', async () => {
+    const descriptors = [
+      descriptor('sponsorship', {
+        label: 'Sponsorship?',
+        type: 'radio',
+        options: [
+          { value: 'yes_required', label: 'Yes' },
+          { value: 'no_required', label: 'No' },
+        ],
+      }),
+      descriptor('consent', { label: 'Consent?', type: 'checkbox' }),
+    ];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [],
+        needs_human: [
+          { field_id: 'sponsorship', question: 'Will you require sponsorship?' },
+          { field_id: 'consent', question: 'Do you consent?' },
+        ],
+      })),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    const sponsorship = labelled('Sponsorship?');
+    const consent = labelled('Consent?');
+    expect(sponsorship.value).toBe('');
+    expect(consent.value).toBe('');
+    expect(sponsorship.options[0]).toMatchObject({ value: '', textContent: 'Choose…' });
+    expect(consent.options[0]).toMatchObject({ value: '', textContent: 'Choose…' });
+
+    await change(sponsorship, 'no_required');
+    await change(consent, 'false');
+    expect(client.saveAnswer).not.toHaveBeenCalled();
+    await click(button('Fill reviewed fields'));
+    expect(client.fillPage).toHaveBeenCalledWith('resume-1', [
+      { field_id: 'sponsorship', value: 'no_required' },
+      { field_id: 'consent', value: 'false' },
+    ]);
+  });
+
+  it('disables rescanning while a mapping request is in flight', async () => {
+    const mappingRequest = deferred();
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(() => mappingRequest.promise),
+    });
+    await renderApp(client);
+    await click(button('Scan page'));
+    await click(button('Create review'));
+
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(button('Scan page').disabled).toBe(true);
+
+    mappingRequest.resolve({ fields: [mapped('name', 'Jane')], needs_human: [] });
+    await settle();
+    expect(labelled('Full name').value).toBe('Jane');
+  });
+
   it('shows actionable active-tab and running-app errors', async () => {
     const activeTabError = new RuntimeMessageError({
       message: 'Click the extension toolbar button again on that page.',
