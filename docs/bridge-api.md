@@ -54,8 +54,10 @@ HTTP 401
 
 - All request and response bodies are JSON. Responses always carry
   `Content-Type: application/json`.
-- `POST` bodies must be valid JSON. A malformed body returns
-  `400 {"error":"invalid JSON body"}`.
+- `POST` bodies must be valid JSON with a top-level object. A malformed body
+  returns `400 {"error":"invalid JSON body"}`. A valid non-object value such
+  as `null`, an array, a string, or a number returns
+  `400 {"error":"JSON body must be an object"}`.
 - Request bodies must be valid UTF-8. A body that can't be read as UTF-8 text
   returns `400 {"error":"unreadable request body"}` (enforced in Rust before
   the request reaches the router).
@@ -73,6 +75,20 @@ HTTP 401
 - If the server's internal request-tracking state is unusable (a poisoned lock
   after a panic — should not happen in practice), it returns
   `500 {"error":"bridge state lock poisoned"}`.
+- Authenticated résumé, profile, learned-answer, PDF, and application data is
+  scoped to the profile active for the current app boot. `GET /resumes`
+  returns both the stable `profileId` and an opaque, boot-scoped
+  `profileContextId`. The context ID changes on every app reload, including a
+  profile switch or backup restore. Clients must discard profile-scoped
+  selections and work if it changes. The pairing token is install-scoped, so
+  switching profiles does not require re-pairing.
+- While saves are suspended for a destructive backup import, every
+  profile-sensitive route — `GET /resumes`, `GET /resumes/:id`,
+  `GET /resumes/:id/pdf`, `POST /ai/complete`, `POST /applications`, and
+  `POST /profile/answers` — returns
+  `503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
+  until the app reloads. The public `GET /health` probe remains available
+  during this window.
 
 ### Status codes at a glance
 
@@ -83,9 +99,11 @@ HTTP 401
 | `400`  | Invalid JSON body, non-UTF-8 request body, or request-body validation failed |
 | `401`  | Missing/invalid bearer token |
 | `404`  | Unknown resume id, or unknown route |
+| `409`  | A profile-sensitive request supplied a stale or missing `profileContextId` |
 | `413`  | Request body exceeds 1 MiB |
 | `500`  | Unhandled error inside the router (e.g. PDF export failed), or the Rust-side bridge state lock is poisoned |
 | `502`  | AI upstream failed (`/ai/complete`), or app window unavailable |
+| `503`  | A destructive backup import has suspended all profile-sensitive routes until reload (`code: "profile_changed"`) |
 | `504`  | The app did not answer within the timeout |
 
 ---
@@ -97,7 +115,8 @@ In the examples below, `$TOKEN` is the pairing token from Settings.
 ### `GET /health`
 
 Liveness probe. **Public** — the only route that does not require a token. Use
-it to confirm the bridge is up and to read the app version.
+it to confirm the bridge is up and to read the app version. It remains
+available while a destructive backup import suspends profile-sensitive routes.
 
 **Response** `200`
 
@@ -119,6 +138,8 @@ List every resume variant, newest first (sorted by `updatedAt` descending).
 
 ```json
 {
+  "profileId": "pmf2k8s9c1abc234",
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
   "resumes": [
     {"id":"custom-1770251688327","name":"Backend Engineer - Acme Corp","updatedAt":"2026-07-15T22:21:02.749Z"},
     {"id":"custom-1770248233098","name":"Frontend Engineer - Globex","updatedAt":"2026-07-04T02:41:46.505Z"}
@@ -127,26 +148,38 @@ List every resume variant, newest first (sorted by `updatedAt` descending).
 ```
 
 Each entry is a lightweight summary — `id`, `name`, `updatedAt` only. Fetch the
-full document with `GET /resumes/:id`.
+full document with `GET /resumes/:id`. `profileId` identifies the active
+profile; `profileContextId` identifies this exact running-app context. Cache
+both with any selected résumé, mapping, review, or fill payload, and use the
+context ID as the guard before profile-sensitive work. If it differs or is
+absent, discard that state, refetch the list, and ask the user to scan/review
+again. This also invalidates work after a restore that reloads into the same
+profile. Résumé IDs alone are not a safe check because IDs can collide between
+profiles.
 
 ```bash
 curl -s http://127.0.0.1:17872/resumes \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-**Errors:** `401`.
+**Errors:** `401`; `503 {"error":"a data import is in progress; retry after the
+app reloads","code":"profile_changed"}` while a destructive backup import is
+waiting for the app reload.
 
 ---
 
 ### `GET /resumes/:id`
 
-Full detail for one resume variant, plus the user's shared profile and learned
-answers (returned alongside so the extension can fill forms in one round-trip).
+Full detail for one resume variant, plus the active profile's user profile and
+learned answers (returned alongside so the extension can fill forms in one
+round-trip).
 
 **Response** `200`
 
 ```json
 {
+  "profileId": "pmf2k8s9c1abc234",
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
   "id": "custom-1770251688327",
   "name": "Backend Engineer - Acme Corp",
   "updatedAt": "2026-07-15T22:21:02.749Z",
@@ -157,8 +190,10 @@ answers (returned alongside so the extension can fill forms in one round-trip).
 ```
 
 - `data` — the full resume document for this variant.
-- `profile` — the user's shared profile (`getUserProfile()`), independent of the
-  variant.
+- `profileId` / `profileContextId` — the same context labels returned by
+  `GET /resumes`; verify them before using this data.
+- `profile` — the active profile's user profile (`getUserProfile()`),
+  independent of the variant.
 - `learnedAnswers` — every saved question/answer pair (see
   `POST /profile/answers`).
 
@@ -168,8 +203,11 @@ curl -s http://127.0.0.1:17872/resumes/custom-1770251688327 \
 ```
 
 **Errors:** `401`; `404 {"error":"no resume with id <id>"}` if the id is
-unknown. Note: ids are matched by **own key only** — inherited object keys such
-as `__proto__` or `constructor` do not resolve and return `404`.
+unknown; `503 {"error":"a data import is in progress; retry after the app
+reloads","code":"profile_changed"}` while a destructive backup import is
+waiting for the app reload. Note: ids are matched by **own key only** —
+inherited object keys such as `__proto__` or `constructor` do not resolve and
+return `404`.
 
 ---
 
@@ -182,9 +220,11 @@ render happens headlessly in a hidden print window against that specific variant
 **Response** `200`
 
 ```json
-{"filename":"Backend-Engineer---Acme-Corp.pdf","pdfBase64":"JVBERi0…"}
+{"profileId":"pmf2k8s9c1abc234","profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","filename":"Backend-Engineer---Acme-Corp.pdf","pdfBase64":"JVBERi0…"}
 ```
 
+- `profileId` / `profileContextId` — label the context that rendered the PDF;
+  verify them before attaching it.
 - `filename` — derived from the variant name: trimmed, characters outside
   letters/numbers/`_ . -`/space stripped, spaces collapsed to `-`, then
   `.pdf`. Empty names fall back to `Resume.pdf`.
@@ -200,8 +240,10 @@ file out.pdf   # PDF document, version 1.5, N pages
 **Errors:** `401`; `404 {"error":"no resume with id <id>"}`; `500` if the export
 fails, including when another export is already running —
 `{"error":"another PDF export is in progress — try again in a moment"}` (see
-[one export at a time](#one-export-at-a-time)); `504` if the render exceeds
-180 s.
+[one export at a time](#one-export-at-a-time));
+`503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
+while a destructive backup import is waiting for the app reload; `504` if the
+render exceeds 180 s.
 
 ---
 
@@ -215,12 +257,15 @@ message list.
 
 ```json
 {
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
   "messages": [{"role":"user","content":"Reply with exactly: bridge-ok"}],
   "systemPrompt": "optional system prompt",
   "reasoningEffort": "none | low | medium | high (optional)"
 }
 ```
 
+- `profileContextId` (required) — must match the `profileContextId` returned by
+  `GET /resumes` for the app boot currently serving the request.
 - `messages` (required) — non-empty array of `{role, content}`, both strings.
 - `systemPrompt` (optional) — sent as the system message; when omitted, the
   app's default assistant system prompt is used.
@@ -236,14 +281,18 @@ message list.
 curl -s http://127.0.0.1:17872/ai/complete \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Reply with exactly: bridge-ok"}]}'
+  -d '{"profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","messages":[{"role":"user","content":"Reply with exactly: bridge-ok"}]}'
 ```
 
 **Errors:** `401`; `400 {"error":"invalid JSON body"}` (malformed body) or
 `400 {"error":"messages must be a non-empty array of {role, content}"}`
-(validation); `502 {"error":"<upstream message>"}` if the AI request fails
-(e.g. no API key configured, or the model call errors); `504` if the model does
-not respond within 180 s.
+(validation); `409 {"error":"profile context changed; refresh the companion
+extension","code":"profile_changed"}` if `profileContextId` is missing or
+stale; `502 {"error":"<upstream message>"}` if the AI request fails (e.g. no
+API key configured, or the model call errors);
+`503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
+while a destructive backup import is waiting for the app reload; `504` if the
+model does not respond within 180 s.
 
 ---
 
@@ -256,6 +305,7 @@ tracker (Library) immediately.
 
 ```json
 {
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
   "variantId": "custom-1770251688327",
   "company": "Curl Test Co",
   "title": "Engineer",
@@ -263,6 +313,9 @@ tracker (Library) immediately.
 }
 ```
 
+- `profileContextId` (required) — must match
+  the `profileContextId` returned by `GET /resumes` for the app boot currently
+  serving the request.
 - `variantId` (required) — must be a known resume id.
 - `company`, `title`, `notes` (optional) — strings; default to `""`.
 
@@ -293,28 +346,35 @@ in from the resolved variant.
 curl -s http://127.0.0.1:17872/applications \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"variantId":"custom-1770251688327","company":"Curl Test Co","title":"Engineer"}'
+  -d '{"profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","variantId":"custom-1770251688327","company":"Curl Test Co","title":"Engineer"}'
 ```
 
 **Errors:** `401`; `400 {"error":"invalid JSON body"}` or
 `400 {"error":"variantId is required"}`; `404 {"error":"no resume with id <id>"}`
-if `variantId` is unknown.
+if `variantId` is unknown; `409 {"error":"profile context changed; refresh the
+companion extension","code":"profile_changed"}` if `profileContextId` is
+missing or stale;
+`503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
+while a destructive backup import is waiting for the app reload.
 
 ---
 
 ### `POST /profile/answers`
 
 Save a learned question/answer pair (notice period, work authorization, etc.) to
-the shared profile. Upserts by a normalized form of the question, so re-saving
-the same question updates the existing answer. Returned by every
+the active profile. Upserts by a normalized form of the question, so re-saving
+the same question updates the existing answer in that profile. Returned by every
 `GET /resumes/:id` in `learnedAnswers`.
 
 **Request**
 
 ```json
-{"question":"Notice period?","answer":"4 weeks"}
+{"profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","question":"Notice period?","answer":"4 weeks"}
 ```
 
+- `profileContextId` (required) — must match
+  the `profileContextId` returned by `GET /resumes` for the app boot currently
+  serving the request.
 - `question` (required) — non-empty after trimming.
 - `answer` (required) — non-empty after trimming.
 
@@ -337,11 +397,14 @@ the same question updates the existing answer. Returned by every
 curl -s http://127.0.0.1:17872/profile/answers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"question":"Notice period?","answer":"4 weeks"}'
+  -d '{"profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","question":"Notice period?","answer":"4 weeks"}'
 ```
 
 **Errors:** `401`; `400 {"error":"invalid JSON body"}` or
-`400 {"error":"question and answer are required"}`.
+`400 {"error":"question and answer are required"}`; `409` with
+`code:"profile_changed"` if `profileContextId` is missing or stale;
+`503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
+while a destructive backup import is waiting for the app reload.
 
 ---
 
