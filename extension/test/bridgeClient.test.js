@@ -300,6 +300,43 @@ describe('createBridgeClient', () => {
     });
   });
 
+  it('preserves an active-profile conflict as a refreshable profile change', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      error: 'profile context changed; refresh the companion extension',
+      code: 'profile_changed',
+    }, { status: 409 }));
+
+    const error = await captureError(makeClient(fetchImpl).saveAnswer({
+      profileContextId: 'context-old',
+      question: 'Notice period?',
+      answer: 'Two weeks',
+    }));
+
+    expect(error).toMatchObject({
+      status: 409,
+      code: 'profile_changed',
+      retryable: true,
+    });
+  });
+
+  it('classifies a restore-window 503 as a retryable profile change', async () => {
+    const message = 'import in progress; retry after the active profile is restored';
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      error: message,
+      code: 'profile_changed',
+    }, { status: 503 }));
+
+    const error = await captureError(makeClient(fetchImpl).listResumes());
+
+    expect(error).toBeInstanceOf(BridgeError);
+    expect(error).toMatchObject({
+      message,
+      status: 503,
+      code: 'profile_changed',
+      retryable: true,
+    });
+  });
+
   it('classifies fetch failures as retryable network errors', async () => {
     const fetchImpl = vi.fn(async () => {
       throw new TypeError('Failed to fetch');

@@ -45,11 +45,15 @@ function makeClient(overrides = {}) {
     checkConnection: vi.fn(async () => ({
       connected: true,
       health: { ok: true },
+      profileId: 'profile-1',
+      profileContextId: 'context-1',
       resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
     })),
     savePairing: vi.fn(async () => ({
       connected: true,
       health: { ok: true },
+      profileId: 'profile-1',
+      profileContextId: 'context-1',
       resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
     })),
     listResumes: vi.fn(),
@@ -164,11 +168,11 @@ describe('runtimeClient', () => {
     await client.savePairing('token');
     await client.listResumes();
     await client.scanPage();
-    await client.createMapping('resume-1', descriptors);
-    await client.fillPage('resume-1', fields);
-    await client.saveAnswer('Question?', 'Answer');
+    await client.createMapping('context-1', 'resume-1', descriptors);
+    await client.fillPage('context-1', 'resume-1', fields);
+    await client.saveAnswer('context-1', 'Question?', 'Answer');
     await client.logApplication({
-      variantId: 'resume-1', company: 'Acme', title: 'Engineer', notes: 'Optional',
+      profileContextId: 'context-1', variantId: 'resume-1', company: 'Acme', title: 'Engineer', notes: 'Optional',
     });
 
     expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
@@ -176,17 +180,195 @@ describe('runtimeClient', () => {
       { type: 'pairing.save', token: 'token' },
       { type: 'resumes.list' },
       { type: 'page.scan' },
-      { type: 'mapping.create', resumeId: 'resume-1', descriptors },
-      { type: 'page.fill', resumeId: 'resume-1', fields },
-      { type: 'answer.save', question: 'Question?', answer: 'Answer' },
+      { type: 'mapping.create', profileContextId: 'context-1', resumeId: 'resume-1', descriptors },
+      { type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields },
+      { type: 'answer.save', profileContextId: 'context-1', question: 'Question?', answer: 'Answer' },
       {
         type: 'application.log',
+        profileContextId: 'context-1',
         variantId: 'resume-1',
         company: 'Acme',
         title: 'Engineer',
         notes: 'Optional',
       },
     ]);
+  });
+
+  it('refreshes resumes and clears reviewed data when the app context changes', async () => {
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const profileChanged = new RuntimeMessageError({
+      message: 'Resume Designer reloaded or switched profiles. Review the refreshed résumé list and scan again.',
+      code: 'profile_changed',
+      retryable: true,
+    });
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockResolvedValueOnce({
+          connected: true,
+          health: { ok: true },
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
+        })
+        .mockResolvedValueOnce({
+          connected: true,
+          health: { ok: true },
+          profileId: 'profile-1',
+          profileContextId: 'context-2',
+          resumes: [{ id: 'resume-2', name: 'Frontend résumé' }],
+        }),
+      scanPage: vi.fn(async () => ({ descriptors, page: { company: 'Old Co', title: 'Old role' } })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Old Profile Name')], needs_human: [],
+      })),
+      fillPage: vi.fn(async () => { throw profileChanged; }),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    await click(button('Fill reviewed fields'));
+    await waitFor(() => expect(client.checkConnection).toHaveBeenCalledTimes(2));
+
+    expect(client.fillPage).toHaveBeenCalledWith('context-1', 'resume-1', [
+      { field_id: 'name', value: 'Old Profile Name' },
+    ]);
+    expect(labelled('Résumé').value).toBe('resume-2');
+    expect(labelled('Résumé').options[0].textContent).toBe('Frontend résumé');
+    expect(container.textContent).not.toContain('Old Profile Name');
+    expect(container.textContent).not.toContain('Create review');
+    expect(container.querySelector('[role="alert"]').textContent)
+      .toMatch(/reloaded or switched profiles/i);
+  });
+
+  it('retries profile refresh through a restore window without reviving the old review', async () => {
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const profileChanged = new RuntimeMessageError({
+      message: 'Resume Designer is restoring the active profile.',
+      status: 503,
+      code: 'profile_changed',
+      retryable: true,
+    });
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockResolvedValueOnce({
+          connected: true,
+          health: { ok: true },
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
+        })
+        .mockRejectedValueOnce(profileChanged)
+        .mockResolvedValueOnce({
+          connected: true,
+          health: { ok: true },
+          profileId: 'profile-1',
+          profileContextId: 'context-2',
+          resumes: [{ id: 'resume-2', name: 'Frontend résumé' }],
+        }),
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Old Profile Name')], needs_human: [],
+      })),
+      fillPage: vi.fn(async () => { throw profileChanged; }),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        button('Fill reviewed fields').click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(client.checkConnection).toHaveBeenCalledTimes(2);
+      expect([...container.querySelectorAll('label')]
+        .some((label) => label.textContent.includes('Full name'))).toBe(false);
+      expect(container.querySelector('[role="status"]').textContent).toMatch(/reconnecting/i);
+
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      expect(client.checkConnection).toHaveBeenCalledTimes(3);
+      expect(labelled('Résumé').value).toBe('resume-2');
+      expect(labelled('Résumé').options[0].textContent).toBe('Frontend résumé');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reconnects when the initial connection check lands in a restore window', async () => {
+    const profileChanged = new RuntimeMessageError({
+      message: 'Resume Designer is restoring the active profile.',
+      status: 503,
+      code: 'profile_changed',
+      retryable: true,
+    });
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockRejectedValueOnce(profileChanged)
+        .mockResolvedValueOnce({
+          connected: true,
+          health: { ok: true },
+          profileId: 'profile-2',
+          profileContextId: 'context-2',
+          resumes: [{ id: 'resume-2', name: 'Restored résumé' }],
+        }),
+    });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        root.render(<App client={client} />);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(client.checkConnection).toHaveBeenCalledOnce();
+      expect(container.querySelector('[role="status"]')?.textContent).toMatch(/reconnecting/i);
+
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      expect(client.checkConnection).toHaveBeenCalledTimes(2);
+      expect(labelled('Résumé').value).toBe('resume-2');
+      expect(labelled('Résumé').options[0].textContent).toBe('Restored résumé');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns to actionable pairing after an unauthorized fill discards the old review', async () => {
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const unauthorized = new RuntimeMessageError({
+      message: 'Pairing token is no longer valid. Pair the extension again.',
+      status: 401,
+      code: 'unauthorized',
+      retryable: false,
+    });
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Old Profile Name')], needs_human: [],
+      })),
+      fillPage: vi.fn(async () => { throw unauthorized; }),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    await click(button('Fill reviewed fields'));
+
+    expect(client.fillPage).toHaveBeenCalledWith('context-1', 'resume-1', [
+      { field_id: 'name', value: 'Old Profile Name' },
+    ]);
+    expect([...container.querySelectorAll('label')]
+      .some((label) => label.textContent.includes('Full name'))).toBe(false);
+    expect(labelled('Pairing token')).toBeTruthy();
+    expect(container.querySelector('[role="alert"]').textContent)
+      .toMatch(/pair the extension again/i);
   });
 
   it('preserves stable background errors and rejects malformed responses', async () => {
@@ -237,7 +419,7 @@ describe('App explicit workflow', () => {
     expect(client.createMapping).not.toHaveBeenCalled();
 
     await click(button('Create review'));
-    expect(client.createMapping).toHaveBeenCalledWith('resume-1', descriptors);
+    expect(client.createMapping).toHaveBeenCalledWith('context-1', 'resume-1', descriptors);
     expect(labelled('Full name').value).toBe('Jane');
   });
 
@@ -307,12 +489,13 @@ describe('App explicit workflow', () => {
     expect(container.querySelector('[aria-label="Save answer for Cover letter"]')).toBeNull();
     await click(saveButton);
     expect(client.saveAnswer).toHaveBeenCalledWith(
+      'context-1',
       'Are you authorized to work here?',
       'No sponsorship required',
     );
 
     await click(button('Fill reviewed fields'));
-    expect(client.fillPage).toHaveBeenCalledWith('resume-1', [
+    expect(client.fillPage).toHaveBeenCalledWith('context-1', 'resume-1', [
       { field_id: 'name', value: 'Jane' },
       { field_id: 'work-auth', value: 'No sponsorship required' },
       { field_id: 'resume-file', value: '__resume_pdf__' },
@@ -332,6 +515,8 @@ describe('App explicit workflow', () => {
       checkConnection: vi.fn(async () => ({
         connected: true,
         health: { ok: true },
+        profileId: 'profile-1',
+        profileContextId: 'context-1',
         resumes: [
           { id: 'resume-1', name: 'Backend résumé' },
           { id: 'resume-2', name: 'Frontend résumé' },
@@ -420,6 +605,8 @@ describe('App explicit workflow', () => {
       checkConnection: vi.fn(async () => ({
         connected: true,
         health: { ok: true },
+        profileId: 'profile-1',
+        profileContextId: 'context-1',
         resumes: [
           { id: 'resume-1', name: 'Backend résumé' },
           { id: 'resume-2', name: 'Frontend résumé' },
@@ -458,6 +645,7 @@ describe('App explicit workflow', () => {
 
     expect(client.saveAnswer).toHaveBeenCalledOnce();
     expect(client.saveAnswer).toHaveBeenCalledWith(
+      'context-1',
       'Are you authorized to work here?',
       'Answer A',
     );
@@ -590,7 +778,7 @@ describe('App explicit workflow', () => {
     await change(consent, 'false');
     expect(client.saveAnswer).not.toHaveBeenCalled();
     await click(button('Fill reviewed fields'));
-    expect(client.fillPage).toHaveBeenCalledWith('resume-1', [
+    expect(client.fillPage).toHaveBeenCalledWith('context-1', 'resume-1', [
       { field_id: 'sponsorship', value: 'no_required' },
       { field_id: 'consent', value: 'false' },
     ]);
@@ -650,6 +838,8 @@ describe('App explicit workflow', () => {
       checkConnection: vi.fn(async () => ({
         connected: true,
         health: { ok: true },
+        profileId: 'profile-1',
+        profileContextId: 'context-1',
         resumes: [
           { id: 'resume-1', name: 'Backend résumé' },
           { id: 'resume-2', name: 'Frontend résumé' },
@@ -690,6 +880,7 @@ describe('App explicit workflow', () => {
 
     expect(client.logApplication).toHaveBeenCalledOnce();
     expect(client.logApplication).toHaveBeenCalledWith({
+      profileContextId: 'context-1',
       variantId: 'resume-1',
       company: 'Edited Co',
       title: 'Edited Role',

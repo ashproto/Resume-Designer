@@ -12,6 +12,9 @@ const RUNNING_APP_ERROR_CODES = new Set([
   'runtime_unavailable',
 ]);
 
+const PAIRING_ERROR_CODES = new Set(['not_paired', 'unauthorized']);
+const RECONNECT_DELAY_MS = 500;
+
 function visibleError(error) {
   const message = error instanceof Error && error.message
     ? error.message
@@ -27,8 +30,15 @@ function visibleError(error) {
 function connectedState(data) {
   const resumes = Array.isArray(data?.resumes) ? data.resumes : [];
   return data?.connected
-    ? { kind: 'connected', resumes }
-    : { kind: 'pairing', resumes: [] };
+    ? {
+      kind: 'connected',
+      profileId: String(data?.profileId ?? ''),
+      profileContextId: String(data?.profileContextId ?? ''),
+      resumes,
+    }
+    : {
+      kind: 'pairing', profileId: '', profileContextId: '', resumes: [],
+    };
 }
 
 function WarningList({ items, heading }) {
@@ -47,7 +57,9 @@ function WarningList({ items, heading }) {
 }
 
 export default function App({ client = runtimeClient }) {
-  const [connection, setConnection] = useState({ kind: 'loading', resumes: [] });
+  const [connection, setConnection] = useState({
+    kind: 'loading', profileId: '', profileContextId: '', resumes: [],
+  });
   const [selectedResumeId, setSelectedResumeId] = useState('');
   const [pairingBusy, setPairingBusy] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
@@ -81,7 +93,12 @@ export default function App({ client = runtimeClient }) {
       (error) => {
         if (!active) return;
         setRuntimeError(error);
-        setConnection({ kind: 'pairing', resumes: [] });
+        setConnection({
+          kind: error?.code === 'profile_changed' ? 'reconnecting' : 'pairing',
+          profileId: '',
+          profileContextId: '',
+          resumes: [],
+        });
       },
     );
 
@@ -89,6 +106,39 @@ export default function App({ client = runtimeClient }) {
       active = false;
     };
   }, [client]);
+
+  useEffect(() => {
+    if (connection.kind !== 'reconnecting') return undefined;
+
+    let active = true;
+    let retryTimer;
+    const retry = async () => {
+      try {
+        const data = await client.checkConnection();
+        if (!active) return;
+        const next = connectedState(data);
+        setConnection(next);
+        setSelectedResumeId(next.resumes[0]?.id ?? '');
+      } catch (error) {
+        if (!active) return;
+        if (PAIRING_ERROR_CODES.has(error?.code) || error?.retryable === false) {
+          setRuntimeError(error);
+          setConnection({
+            kind: 'pairing', profileId: '', profileContextId: '', resumes: [],
+          });
+          setSelectedResumeId('');
+          return;
+        }
+        retryTimer = setTimeout(retry, RECONNECT_DELAY_MS);
+      }
+    };
+
+    retryTimer = setTimeout(retry, RECONNECT_DELAY_MS);
+    return () => {
+      active = false;
+      clearTimeout(retryTimer);
+    };
+  }, [client, connection.kind]);
 
   function resetPostScanState() {
     setReviewItems([]);
@@ -99,6 +149,46 @@ export default function App({ client = runtimeClient }) {
     setSavedAnswers(new Map());
     setHasFilled(false);
     setLogState('idle');
+  }
+
+  function resetProfileScopedState() {
+    setScanResult(null);
+    setCompany('');
+    setTitle('');
+    resetPostScanState();
+  }
+
+  async function handleWorkflowError(error) {
+    setRuntimeError(error);
+    if (PAIRING_ERROR_CODES.has(error?.code)) {
+      resetProfileScopedState();
+      setConnection({
+        kind: 'pairing', profileId: '', profileContextId: '', resumes: [],
+      });
+      setSelectedResumeId('');
+      return;
+    }
+    if (error?.code !== 'profile_changed') return;
+
+    resetProfileScopedState();
+    try {
+      const data = await client.checkConnection();
+      const next = connectedState(data);
+      setConnection(next);
+      setSelectedResumeId(next.resumes[0]?.id ?? '');
+    } catch (refreshError) {
+      if (PAIRING_ERROR_CODES.has(refreshError?.code) || refreshError?.retryable === false) {
+        setRuntimeError(refreshError);
+        setConnection({
+          kind: 'pairing', profileId: '', profileContextId: '', resumes: [],
+        });
+      } else {
+        setConnection({
+          kind: 'reconnecting', profileId: '', profileContextId: '', resumes: [],
+        });
+      }
+      setSelectedResumeId('');
+    }
   }
 
   function hasPendingInteraction() {
@@ -167,7 +257,11 @@ export default function App({ client = runtimeClient }) {
     setSavingAnswers(new Set());
     setSavedAnswers(new Map());
     try {
-      const mapping = await client.createMapping(selectedResumeId, scanResult.descriptors);
+      const mapping = await client.createMapping(
+        connection.profileContextId,
+        selectedResumeId,
+        scanResult.descriptors,
+      );
       setReviewItems(buildReviewItems(scanResult.descriptors, mapping));
       setLocalWarnings([]);
       setFillResult(null);
@@ -175,7 +269,7 @@ export default function App({ client = runtimeClient }) {
       setHasFilled(false);
       setLogState('idle');
     } catch (error) {
-      setRuntimeError(error);
+      await handleWorkflowError(error);
     } finally {
       setMappingBusy(false);
       finishOperation('mapping');
@@ -198,14 +292,14 @@ export default function App({ client = runtimeClient }) {
     setRuntimeError(null);
     setSavingAnswers((current) => new Set(current).add(item.field_id));
     try {
-      await client.saveAnswer(item.question, answer);
+      await client.saveAnswer(connection.profileContextId, item.question, answer);
       setSavedAnswers((current) => {
         const next = new Map(current);
         next.set(item.field_id, answer);
         return next;
       });
     } catch (error) {
-      setRuntimeError(error);
+      await handleWorkflowError(error);
     } finally {
       setSavingAnswers((current) => {
         const next = new Set(current);
@@ -221,12 +315,16 @@ export default function App({ client = runtimeClient }) {
     setFillBusy(true);
     setRuntimeError(null);
     try {
-      const result = await client.fillPage(snapshot.resumeId, snapshot.fields);
+      const result = await client.fillPage(
+        snapshot.profileContextId,
+        snapshot.resumeId,
+        snapshot.fields,
+      );
       setFillResult(result);
       setRetrySnapshot(null);
       setHasFilled(true);
     } catch (error) {
-      setRuntimeError(error);
+      await handleWorkflowError(error);
       setRetrySnapshot(error?.code === 'pdf_busy' ? snapshot : null);
     } finally {
       setFillBusy(false);
@@ -237,6 +335,7 @@ export default function App({ client = runtimeClient }) {
   function handleFill() {
     const { fields, warnings } = buildFillPayload(reviewItems);
     const snapshot = {
+      profileContextId: connection.profileContextId,
       resumeId: selectedResumeId,
       fields: fields.map((field) => ({ ...field })),
     };
@@ -256,13 +355,14 @@ export default function App({ client = runtimeClient }) {
 
     try {
       await client.logApplication({
+        profileContextId: connection.profileContextId,
         variantId: selectedResumeId,
         company,
         title,
       });
       setLogState('logged');
     } catch (error) {
-      setRuntimeError(error);
+      await handleWorkflowError(error);
       setLogState('idle');
     } finally {
       logPending.current = false;
@@ -293,6 +393,10 @@ export default function App({ client = runtimeClient }) {
 
       {connection.kind === 'loading' ? (
         <p className="connection-status" role="status">Checking the local connection…</p>
+      ) : null}
+
+      {connection.kind === 'reconnecting' ? (
+        <p className="connection-status" role="status">Reconnecting after Resume Designer reloads…</p>
       ) : null}
 
       {connection.kind === 'pairing' ? (

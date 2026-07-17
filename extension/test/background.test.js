@@ -138,6 +138,8 @@ describe('createBackgroundService', () => {
     await expect(service.handleMessage({ type: 'connection.check' })).resolves.toEqual({
       connected: false,
       health: { ok: true, app: 'resume-designer', version: '1.0.0' },
+      profileId: null,
+      profileContextId: null,
       resumes: [],
     });
     expect(fetchImpl).toHaveBeenCalledOnce();
@@ -150,7 +152,11 @@ describe('createBackgroundService', () => {
     const { chromeApi, getStoredToken } = createChrome();
     const fetchImpl = vi.fn(async (url) => {
       if (url.endsWith('/health')) return jsonResponse({ ok: true });
-      if (url.endsWith('/resumes')) return jsonResponse({ resumes: [{ id: 'resume-1' }] });
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1' }],
+        });
+      }
       throw new Error(`Unexpected URL ${url}`);
     });
     const service = createBackgroundService({ chromeApi, fetchImpl });
@@ -161,6 +167,8 @@ describe('createBackgroundService', () => {
     })).resolves.toEqual({
       connected: true,
       health: { ok: true },
+      profileId: 'profile-1',
+      profileContextId: 'context-1',
       resumes: [{ id: 'resume-1' }],
     });
 
@@ -184,13 +192,57 @@ describe('createBackgroundService', () => {
   it('returns the resumes bridge object unchanged', async () => {
     const { chromeApi } = createChrome({ token: 'paired' });
     const fetchImpl = vi.fn(async () => jsonResponse({
+      profileId: 'profile-1',
+      profileContextId: 'context-1',
       resumes: [{ id: 'resume-1', name: 'Backend' }],
     }));
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({ type: 'resumes.list' })).resolves.toEqual({
+      profileId: 'profile-1',
+      profileContextId: 'context-1',
       resumes: [{ id: 'resume-1', name: 'Backend' }],
     });
+  });
+
+  it.each([
+    ['mapping', {
+      type: 'mapping.create', profileContextId: 'context-old', resumeId: 'resume-1', descriptors: [],
+    }],
+    ['non-PDF fill', {
+      type: 'page.fill', profileContextId: 'context-old', resumeId: 'resume-1',
+      fields: [{ field_id: 'name', value: 'Jane' }],
+    }],
+    ['missing-context fill', {
+      type: 'page.fill', resumeId: 'resume-1',
+      fields: [{ field_id: 'name', value: 'Jane' }],
+    }],
+    ['answer save', {
+      type: 'answer.save', profileContextId: 'context-old', question: 'Notice?', answer: 'Two weeks',
+    }],
+    ['application log', {
+      type: 'application.log', profileContextId: 'context-old', variantId: 'resume-1',
+      company: 'Acme', title: 'Engineer',
+    }],
+  ])('blocks stale-profile %s before any side effect', async (_name, message) => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-new', resumes: [{ id: 'resume-2' }],
+        });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage(message)).rejects.toMatchObject({
+      code: 'profile_changed',
+      retryable: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
   });
 
   it('queries and injects the active HTTP(S) tab before an exact scan relay', async () => {
@@ -262,12 +314,19 @@ describe('createBackgroundService', () => {
       required: true,
     }];
     const fullResume = {
+      profileId: 'profile-1',
+      profileContextId: 'context-1',
       id: 'resume-1',
       data: { name: 'Jane Applicant' },
       profile: { location: 'Portland' },
       learnedAnswers: [{ question: 'Notice?', answer: 'Two weeks' }],
     };
     const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1' }],
+        });
+      }
       if (url.endsWith('/resumes/resume-1')) return jsonResponse(fullResume);
       if (url.endsWith('/ai/complete')) {
         const body = JSON.parse(options.body);
@@ -277,6 +336,7 @@ describe('createBackgroundService', () => {
           profile: fullResume.profile,
           learnedAnswers: fullResume.learnedAnswers,
         });
+        expect(body.profileContextId).toBe('context-1');
         expect(body.systemPrompt).toEqual(expect.any(String));
         return jsonResponse({
           text: JSON.stringify({
@@ -296,6 +356,7 @@ describe('createBackgroundService', () => {
 
     await expect(service.handleMessage({
       type: 'mapping.create',
+      profileContextId: 'context-1',
       resumeId: 'resume-1',
       descriptors,
     })).resolves.toEqual({
@@ -308,39 +369,168 @@ describe('createBackgroundService', () => {
       needs_human: [],
     });
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:17872/resumes',
       'http://127.0.0.1:17872/resumes/resume-1',
       'http://127.0.0.1:17872/ai/complete',
+      'http://127.0.0.1:17872/resumes',
     ]);
+  });
+
+  it('drops a completed mapping if the active profile changed while AI was running', async () => {
+    let contextChecks = 0;
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        contextChecks += 1;
+        return jsonResponse({
+          profileId: 'profile-1',
+          profileContextId: contextChecks === 1 ? 'context-1' : 'context-2',
+          resumes: [],
+        });
+      }
+      if (url.endsWith('/resumes/resume-1')) {
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-1',
+          id: 'resume-1', data: { name: 'Jane' }, profile: {}, learnedAnswers: [],
+        });
+      }
+      if (url.endsWith('/ai/complete')) {
+        return jsonResponse({ text: JSON.stringify({ fields: [], needs_human: [] }) });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'mapping.create',
+      profileContextId: 'context-1',
+      resumeId: 'resume-1',
+      descriptors: [],
+    })).rejects.toMatchObject({ code: 'profile_changed', retryable: true });
+    expect(contextChecks).toBe(2);
+  });
+
+  it('rejects a resume detail from another context before sending it to AI', async () => {
+    let aiCalls = 0;
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
+      if (url.endsWith('/resumes/resume-1')) {
+        return jsonResponse({
+          profileId: 'profile-2', profileContextId: 'context-2',
+          id: 'resume-1', data: { name: 'Other profile' }, profile: {}, learnedAnswers: [],
+        });
+      }
+      if (url.endsWith('/ai/complete')) {
+        aiCalls += 1;
+        return jsonResponse({ text: JSON.stringify({ fields: [], needs_human: [] }) });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'mapping.create', profileContextId: 'context-1',
+      resumeId: 'resume-1', descriptors: [],
+    })).rejects.toMatchObject({ code: 'profile_changed' });
+    expect(aiCalls).toBe(0);
+  });
+
+  it('reclassifies a reload-induced resume 404 as a profile change', async () => {
+    let contextChecks = 0;
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        contextChecks += 1;
+        return jsonResponse({
+          profileId: 'profile-1',
+          profileContextId: contextChecks === 1 ? 'context-1' : 'context-2',
+          resumes: [],
+        });
+      }
+      if (url.endsWith('/resumes/resume-1')) {
+        return jsonResponse({ error: 'no resume with id resume-1' }, { status: 404 });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'mapping.create', profileContextId: 'context-1',
+      resumeId: 'resume-1', descriptors: [],
+    })).rejects.toMatchObject({ code: 'profile_changed' });
+    expect(contextChecks).toBe(2);
   });
 
   it('fills reviewed fields without fetching a PDF when no resume marker exists', async () => {
     const fields = [{ field_id: 'name', value: 'Jane' }];
     const fillResult = { filled: ['name'], unfilled: [] };
-    const { chromeApi } = createChrome({ contentResponse: fillResult });
-    const fetchImpl = vi.fn();
+    const { chromeApi } = createChrome({ token: 'paired', contentResponse: fillResult });
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1' }],
+    }));
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({
       type: 'page.fill',
+      profileContextId: 'context-1',
       resumeId: 'resume-1',
       fields,
     })).resolves.toEqual(fillResult);
 
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.every(([url]) => (
+      url === 'http://127.0.0.1:17872/resumes'
+    ))).toBe(true);
     expect(chromeApi.tabs.sendMessage).toHaveBeenCalledWith(17, {
       type: 'content.fill',
       payload: { fields },
     });
   });
 
+  it('rechecks context after delayed injection and blocks the fill relay', async () => {
+    const injection = deferred();
+    let contextChecks = 0;
+    const { chromeApi } = createChrome({
+      token: 'paired', contentResponse: { filled: ['name'], unfilled: [] },
+    });
+    chromeApi.scripting.executeScript.mockReturnValue(injection.promise);
+    const fetchImpl = vi.fn(async () => {
+      contextChecks += 1;
+      return jsonResponse({
+        profileId: 'profile-1',
+        profileContextId: contextChecks === 1 ? 'context-1' : 'context-2',
+        resumes: [],
+      });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    const fill = service.handleMessage({
+      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1',
+      fields: [{ field_id: 'name', value: 'Jane' }],
+    });
+
+    await vi.waitFor(() => expect(chromeApi.scripting.executeScript).toHaveBeenCalledOnce());
+    injection.resolve([]);
+    await expect(fill).rejects.toMatchObject({ code: 'profile_changed' });
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('serializes PDF exports and relays each successful bridge PDF unchanged', async () => {
     const firstPdf = deferred();
     let pdfCalls = 0;
     const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
       if (!url.endsWith('/pdf')) throw new Error(`Unexpected URL ${url}`);
       pdfCalls += 1;
       if (pdfCalls === 1) return firstPdf.promise;
-      return jsonResponse({ filename: 'Second.pdf', pdfBase64: 'UERGMiA=' });
+      return jsonResponse({
+        profileId: 'profile-1', profileContextId: 'context-1',
+        filename: 'Second.pdf', pdfBase64: 'UERGMiA=',
+      });
     });
     const { chromeApi } = createChrome({
       token: 'paired',
@@ -349,19 +539,24 @@ describe('createBackgroundService', () => {
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     const first = service.handleMessage({
-      type: 'page.fill', resumeId: 'resume-1', fields: PDF_FIELD,
+      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
     });
     const second = service.handleMessage({
-      type: 'page.fill', resumeId: 'resume-2', fields: PDF_FIELD,
+      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
     });
 
-    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
-    expect(fetchImpl.mock.calls[0][0]).toContain('/resumes/resume-1/pdf');
-    firstPdf.resolve(jsonResponse({ filename: 'First.pdf', pdfBase64: 'UERGMSA=' }));
+    await vi.waitFor(() => expect(pdfCalls).toBe(1));
+    expect(fetchImpl.mock.calls.find(([url]) => url.endsWith('/pdf'))[0])
+      .toContain('/resumes/resume-1/pdf');
+    firstPdf.resolve(jsonResponse({
+      profileId: 'profile-1', profileContextId: 'context-1',
+      filename: 'First.pdf', pdfBase64: 'UERGMSA=',
+    }));
     await Promise.all([first, second]);
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls[1][0]).toContain('/resumes/resume-2/pdf');
+    expect(pdfCalls).toBe(2);
+    expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/pdf'))[1][0])
+      .toContain('/resumes/resume-2/pdf');
     expect(chromeApi.tabs.sendMessage.mock.calls.map(([, message]) => message)).toEqual([
       {
         type: 'content.fill',
@@ -380,27 +575,112 @@ describe('createBackgroundService', () => {
     ]);
   });
 
+  it('rechecks queued PDF work and drops a stale fill when the profile changes in line', async () => {
+    const firstPdf = deferred();
+    let contextChecks = 0;
+    let pdfCalls = 0;
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        contextChecks += 1;
+        return jsonResponse({
+          profileId: 'profile-1',
+          profileContextId: contextChecks <= 3 ? 'context-1' : 'context-2',
+          resumes: [],
+        });
+      }
+      if (url.endsWith('/pdf')) {
+        pdfCalls += 1;
+        if (pdfCalls === 1) return firstPdf.promise;
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-2',
+          filename: 'Stale.pdf', pdfBase64: 'UERG',
+        });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const { chromeApi } = createChrome({
+      token: 'paired',
+      contentResponse: { filled: ['resume-file'], unfilled: [] },
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    const first = service.handleMessage({
+      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
+    });
+    const second = service.handleMessage({
+      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
+    });
+    await vi.waitFor(() => expect(pdfCalls).toBe(1));
+    firstPdf.resolve(jsonResponse({
+      profileId: 'profile-1', profileContextId: 'context-1',
+      filename: 'Current.pdf', pdfBase64: 'UERG',
+    }));
+
+    const outcomes = await Promise.allSettled([first, second]);
+    expect(outcomes[0].status).toBe('fulfilled');
+    expect(outcomes[1]).toMatchObject({
+      status: 'rejected',
+      reason: { code: 'profile_changed', retryable: true },
+    });
+    expect(pdfCalls).toBe(1);
+    expect(chromeApi.tabs.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a PDF response labelled with another profile context', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
+      if (url.endsWith('/pdf')) {
+        return jsonResponse({
+          profileId: 'profile-2', profileContextId: 'context-2',
+          filename: 'Other.pdf', pdfBase64: 'UERG',
+        });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'page.fill', profileContextId: 'context-1',
+      resumeId: 'resume-1', fields: PDF_FIELD,
+    })).rejects.toMatchObject({ code: 'profile_changed' });
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('does not poison the PDF queue after rejection and never relays the failed fill', async () => {
     const busyMessage = 'another PDF export is in progress — try again in a moment';
     let pdfCalls = 0;
-    const fetchImpl = vi.fn(async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
       pdfCalls += 1;
       if (pdfCalls === 1) return jsonResponse({ error: busyMessage }, { status: 500 });
-      return jsonResponse({ filename: 'Recovered.pdf', pdfBase64: 'UERG' });
+      return jsonResponse({
+        profileId: 'profile-1', profileContextId: 'context-1',
+        filename: 'Recovered.pdf', pdfBase64: 'UERG',
+      });
     });
     const { chromeApi } = createChrome({ token: 'paired', contentResponse: { filled: [], unfilled: [] } });
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     const outcomes = await Promise.allSettled([
-      service.handleMessage({ type: 'page.fill', resumeId: 'resume-1', fields: PDF_FIELD }),
-      service.handleMessage({ type: 'page.fill', resumeId: 'resume-2', fields: PDF_FIELD }),
+      service.handleMessage({
+        type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
+      }),
+      service.handleMessage({
+        type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
+      }),
     ]);
 
     expect(outcomes[0].status).toBe('rejected');
     expect(outcomes[0].reason).toBeInstanceOf(BridgeError);
     expect(outcomes[0].reason).toMatchObject({ code: 'pdf_busy', retryable: true });
     expect(outcomes[1].status).toBe('fulfilled');
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(pdfCalls).toBe(2);
     expect(chromeApi.tabs.sendMessage).toHaveBeenCalledOnce();
     expect(chromeApi.tabs.sendMessage.mock.calls[0][1].payload.pdf.filename).toBe('Recovered.pdf');
   });
@@ -410,11 +690,16 @@ describe('createBackgroundService', () => {
     [504, 'the app did not answer in time — is Resume Designer running and unlocked?', 'app_timeout'],
   ])('keeps a failed %s PDF export atomic with no page mutation', async (status, message, code) => {
     const { chromeApi } = createChrome({ token: 'paired' });
-    const fetchImpl = vi.fn(async () => jsonResponse({ error: message }, { status }));
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
+      return jsonResponse({ error: message }, { status });
+    });
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({
-      type: 'page.fill', resumeId: 'resume-1', fields: PDF_FIELD,
+      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
     })).rejects.toMatchObject({ code, retryable: true });
 
     expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
@@ -424,6 +709,11 @@ describe('createBackgroundService', () => {
   it('proxies only documented save-answer and application-log payload fields', async () => {
     const { chromeApi } = createChrome({ token: 'paired' });
     const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1' }],
+        });
+      }
       if (url.endsWith('/profile/answers')) return jsonResponse({ answer: { id: 'answer-1' } }, { status: 201 });
       if (url.endsWith('/applications')) return jsonResponse({ application: { id: 'app-1' } }, { status: 201 });
       throw new Error(`Unexpected URL ${url}`);
@@ -432,12 +722,14 @@ describe('createBackgroundService', () => {
 
     await service.handleMessage({
       type: 'answer.save',
+      profileContextId: 'context-1',
       question: 'Notice period?',
       answer: 'Two weeks',
       ignored: 'do not send',
     });
     await service.handleMessage({
       type: 'application.log',
+      profileContextId: 'context-1',
       variantId: 'resume-1',
       company: 'Acme',
       title: 'Engineer',
@@ -445,9 +737,44 @@ describe('createBackgroundService', () => {
       ignored: 'do not send',
     });
 
-    expect(fetchImpl.mock.calls.map(([, options]) => JSON.parse(options.body))).toEqual([
-      { question: 'Notice period?', answer: 'Two weeks' },
-      { variantId: 'resume-1', company: 'Acme', title: 'Engineer', notes: 'Referred' },
+    expect(fetchImpl.mock.calls
+      .filter(([, options]) => options.body)
+      .map(([, options]) => JSON.parse(options.body))).toEqual([
+      { profileContextId: 'context-1', question: 'Notice period?', answer: 'Two weeks' },
+      {
+        profileContextId: 'context-1', variantId: 'resume-1', company: 'Acme',
+        title: 'Engineer', notes: 'Referred',
+      },
     ]);
+  });
+
+  it('treats an atomically guarded application log response as definitive', async () => {
+    let contextChecks = 0;
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const application = { id: 'app-1' };
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        contextChecks += 1;
+        return jsonResponse({
+          profileId: 'profile-1',
+          profileContextId: contextChecks === 1 ? 'context-1' : 'context-2',
+          resumes: [{ id: 'resume-1' }],
+        });
+      }
+      if (url.endsWith('/applications')) {
+        return jsonResponse({ application }, { status: 201 });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'application.log',
+      profileContextId: 'context-1',
+      variantId: 'resume-1',
+      company: 'Acme',
+      title: 'Engineer',
+    })).resolves.toEqual({ application });
+    expect(contextChecks).toBe(1);
   });
 });

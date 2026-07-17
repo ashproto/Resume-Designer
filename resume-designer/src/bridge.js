@@ -36,9 +36,15 @@ function ensureBridgeToken() {
   return token;
 }
 
-export async function initBridge() {
+export async function initBridge({ profileId = null } = {}) {
   if (!IS_TAURI) return;
   ensureBridgeToken();
+
+  // A new opaque context on every app boot invalidates extension work after
+  // profile switches, imports, or any other reload — even when profileId is
+  // unchanged. The resolved profileId is captured by main.js before React can
+  // initiate a switch, so it stays aligned with this boot's storage mapping.
+  const profileContextId = crypto.randomUUID();
 
   const [{ listen }, { invoke }, { getVersion }] = await Promise.all([
     import('@tauri-apps/api/event'),
@@ -63,6 +69,8 @@ export async function initBridge() {
 
   const handle = createBridgeRouter({
     version,
+    profileId,
+    profileContextId,
     getToken: getBridgeToken,
     getVariants,
     getUserProfile,

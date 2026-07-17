@@ -61,15 +61,22 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
     savePairing: (token) => request({ type: 'pairing.save', token }),
     listResumes: () => request({ type: 'resumes.list' }),
     scanPage: () => request({ type: 'page.scan' }),
-    createMapping: (resumeId, descriptors) => request({
+    createMapping: (profileContextId, resumeId, descriptors) => request({
       type: 'mapping.create',
+      profileContextId,
       resumeId,
       descriptors,
     }),
-    fillPage: (resumeId, fields) => request({ type: 'page.fill', resumeId, fields }),
-    saveAnswer: (question, answer) => request({ type: 'answer.save', question, answer }),
-    logApplication: ({ variantId, company, title, ...optional }) => {
-      const message = { type: 'application.log', variantId, company, title };
+    fillPage: (profileContextId, resumeId, fields) => request({
+      type: 'page.fill', profileContextId, resumeId, fields,
+    }),
+    saveAnswer: (profileContextId, question, answer) => request({
+      type: 'answer.save', profileContextId, question, answer,
+    }),
+    logApplication: ({ profileContextId, variantId, company, title, ...optional }) => {
+      const message = {
+        type: 'application.log', profileContextId, variantId, company, title,
+      };
       if (Object.prototype.hasOwnProperty.call(optional, 'notes')) {
         message.notes = optional.notes;
       }

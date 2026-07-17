@@ -13,7 +13,7 @@ export class BridgeError extends Error {
   }
 }
 
-function classifyHttpError(status, message) {
+function classifyHttpError(status, message, data) {
   if (status === 401) {
     return { code: 'unauthorized', retryable: false };
   }
@@ -27,6 +27,10 @@ function classifyHttpError(status, message) {
 
   if (status === 504) {
     return { code: 'app_timeout', retryable: true };
+  }
+
+  if ((status === 409 || status === 503) && data?.code === 'profile_changed') {
+    return { code: 'profile_changed', retryable: true };
   }
 
   if (status === 500 && /another PDF export is in progress/i.test(message)) {
@@ -178,7 +182,7 @@ export function createBridgeClient({
       const message = responseMessage(response, text, data);
       throw new BridgeError(message, {
         status: response.status,
-        ...classifyHttpError(response.status, message),
+        ...classifyHttpError(response.status, message, data),
       });
     }
 
