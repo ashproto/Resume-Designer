@@ -14,6 +14,57 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  extension-checks:
+    name: Companion extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Require a Store version bump for package changes
+        run: node extension/scripts/store-version-gate.mjs "${{ github.event.pull_request.base.sha }}" HEAD
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: extension
+
+      - name: Lint
+        run: npm run lint
+        working-directory: extension
+
+      - name: Unit tests
+        run: npm test
+        working-directory: extension
+
+      - name: Build and package the Store ZIP
+        run: npm run package:store
+        working-directory: extension
+
+      - name: Verify ZIP integrity
+        run: unzip -t artifacts/resume-designer-companion-*.zip
+        working-directory: extension
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: extension
+
+      - name: Retain the reviewed Store package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: companion-extension-${{ github.event.pull_request.head.sha }}
+          path: extension/artifacts/resume-designer-companion-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
   checks:
     runs-on: ubuntu-latest
     steps:
