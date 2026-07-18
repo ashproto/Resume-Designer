@@ -186,7 +186,14 @@ npm run lint
 
 # Rebuild extension/dist
 npm run build
+
+# Build and validate the deterministic Chrome Web Store ZIP
+npm run package:store
 ```
+
+Chrome Web Store listing and release operations are documented in
+`../docs/chrome-web-store-release.md` and
+`../docs/chrome-web-store-listing.md`.
 
 Scanner fixtures under `test/fixtures/` are sanitized snapshots derived from public Greenhouse, Lever, and Ashby application pages. Keep new fixtures free of applicant data and raw third-party secrets.
 
