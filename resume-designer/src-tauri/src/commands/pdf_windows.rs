@@ -95,7 +95,9 @@ async fn run_script(target_window: &WebviewWindow, js: String) -> Result<(), Str
 
             let js_hstring = HSTRING::from(&js);
             let handler = ExecuteScriptCompletedHandler::create(Box::new(
-                move |result: windows::core::Result<()>, _json: String| -> windows::core::Result<()> {
+                move |result: windows::core::Result<()>,
+                      _json: String|
+                      -> windows::core::Result<()> {
                     let out = result.map_err(|e| format!("ExecuteScript failed: {}", e.message()));
                     send_once(&slot_handler, out);
                     Ok(())
