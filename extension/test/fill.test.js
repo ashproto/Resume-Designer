@@ -228,6 +228,77 @@ describe('fillForm', () => {
     expect(events.map(({ type }) => type)).toEqual(['input', 'change', 'input', 'change']);
   });
 
+  it('fills a Greenhouse Yes/No checkbox pair as one exclusive choice', () => {
+    const document = loadFixture('greenhouse');
+    const workAuthorization = fieldByLabel(document, 'Work authorization');
+    const yes = document.querySelector('#authorized-yes');
+    const no = document.querySelector('#authorized-no');
+    const events = eventLog(document.querySelector('form'));
+
+    expect(workAuthorization).toMatchObject({
+      type: 'radio',
+      options: [
+        { value: 'yes', label: 'Yes' },
+        { value: 'no', label: 'No' },
+      ],
+    });
+
+    expect(fillForm([
+      { field_id: workAuthorization.field_id, value: 'yes' },
+    ], { root: document })).toEqual({
+      filled: [workAuthorization.field_id],
+      unfilled: [],
+    });
+    expect([yes.checked, no.checked]).toEqual([true, false]);
+    expect(events.map(({ type, target }) => [type, target.id])).toEqual([
+      ['input', 'authorized-yes'],
+      ['change', 'authorized-yes'],
+    ]);
+
+    events.length = 0;
+    expect(fillForm([
+      { field_id: workAuthorization.field_id, value: 'NO' },
+    ], { root: document })).toEqual({
+      filled: [workAuthorization.field_id],
+      unfilled: [],
+    });
+    expect([yes.checked, no.checked]).toEqual([false, true]);
+    expect(events.map(({ type, target }) => [type, target.id])).toEqual([
+      ['input', 'authorized-yes'],
+      ['change', 'authorized-yes'],
+      ['input', 'authorized-no'],
+      ['change', 'authorized-no'],
+    ]);
+
+    events.length = 0;
+    expect(fillForm([
+      { field_id: workAuthorization.field_id, value: 'Yes' },
+    ], { root: document })).toEqual({
+      filled: [workAuthorization.field_id],
+      unfilled: [],
+    });
+    expect([yes.checked, no.checked]).toEqual([true, false]);
+    expect(events.map(({ type, target }) => [type, target.id])).toEqual([
+      ['input', 'authorized-no'],
+      ['change', 'authorized-no'],
+      ['input', 'authorized-yes'],
+      ['change', 'authorized-yes'],
+    ]);
+
+    events.length = 0;
+    expect(fillForm([
+      { field_id: workAuthorization.field_id, value: 'unknown' },
+    ], { root: document })).toEqual({
+      filled: [],
+      unfilled: [{
+        field_id: workAuthorization.field_id,
+        reason: expect.stringMatching(/match|option/i),
+      }],
+    });
+    expect([yes.checked, no.checked]).toEqual([true, false]);
+    expect(events).toEqual([]);
+  });
+
   it('fills checkboxes only from case-insensitive true or false strings', () => {
     const document = loadFixture('lever');
     const checkboxField = scanForm(document).find(({ type }) => type === 'checkbox');
@@ -334,6 +405,28 @@ describe('fillForm', () => {
     ]);
   });
 
+  it('refuses to fill a password even if a stale marker targets it', () => {
+    const document = new JSDOM(`
+      <form>
+        <label>Password <input type="password" value="original" data-resume-designer-field-id="stale-password"></label>
+      </form>
+    `).window.document;
+    const password = document.querySelector('input');
+    const events = eventLog(document.querySelector('form'));
+
+    expect(fillForm([
+      { field_id: 'stale-password', value: 'replacement' },
+    ], { root: document })).toEqual({
+      filled: [],
+      unfilled: [{
+        field_id: 'stale-password',
+        reason: expect.stringMatching(/password.*unsupported|unsupported.*password/i),
+      }],
+    });
+    expect(password.value).toBe('original');
+    expect(events).toEqual([]);
+  });
+
   it('leaves Ashby backing checkboxes for sibling Yes/No buttons unfilled', () => {
     const document = loadFixture('ashby');
     const travel = fieldByLabel(document, 'Are you willing to travel?');
@@ -348,6 +441,31 @@ describe('fillForm', () => {
       { field_id: travel.field_id, reason: expect.stringMatching(/custom|manual/i) },
     ]);
     expect(checkbox.checked).toBe(false);
+  });
+
+  it('fills an ordinary checkbox despite unrelated Yes/No buttons in a broader wrapper', () => {
+    const document = new JSDOM(`
+      <form>
+        <div class="application-section">
+          <span>Send me updates</span>
+          <input type="checkbox" name="updates" tabindex="-1">
+          <div class="unrelated-actions">
+            <button type="button">Yes</button>
+            <button type="button">No</button>
+          </div>
+        </div>
+      </form>
+    `).window.document;
+    const field = fieldByLabel(document, 'Send me updates');
+    const checkbox = document.querySelector('input[type="checkbox"]');
+
+    expect(fillForm([
+      { field_id: field.field_id, value: 'true' },
+    ], { root: document })).toEqual({
+      filled: [field.field_id],
+      unfilled: [],
+    });
+    expect(checkbox.checked).toBe(true);
   });
 
   it('continues filling later fields after a field-level failure', () => {

@@ -121,6 +121,48 @@ describe('buildReviewItems', () => {
       question: 'Please complete this field manually.',
     });
   });
+
+  it('marks mapped and needs-human custom controls as manual while preserving internal values', () => {
+    const items = buildReviewItems([
+      descriptor('country', { label: 'Country', type: 'custom' }),
+      descriptor('location', { label: 'Location', type: 'custom' }),
+    ], {
+      fields: [mapped('country', 'USA', 1, 'learned')],
+      needs_human: [{
+        field_id: 'location',
+        question: 'What location should be listed?',
+      }],
+    });
+
+    expect(items[0]).toMatchObject({
+      field_id: 'country',
+      type: 'custom',
+      value: 'USA',
+      needsHuman: false,
+      manualCustom: true,
+    });
+    expect(items[1]).toMatchObject({
+      field_id: 'location',
+      type: 'custom',
+      value: '',
+      needsHuman: true,
+      manualCustom: true,
+    });
+
+    items[1] = { ...items[1], value: 'Canada' };
+    expect(buildFillPayload(items)).toEqual({
+      fields: [],
+      warnings: [{
+        field_id: 'country',
+        label: 'Country',
+        reason: 'This custom control must be completed manually.',
+      }, {
+        field_id: 'location',
+        label: 'Location',
+        reason: 'This custom control must be completed manually.',
+      }],
+    });
+  });
 });
 
 describe('buildFillPayload', () => {

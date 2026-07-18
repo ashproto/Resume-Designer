@@ -22,6 +22,7 @@ export function buildReviewItems(descriptors = [], mapping = {}) {
     const type = String(descriptor.type ?? 'text');
     const value = mapped ? String(mapped.value ?? '') : '';
     const manualFile = type === 'file' && value !== '__resume_pdf__';
+    const manualCustom = type === 'custom';
 
     return {
       field_id: fieldId,
@@ -39,6 +40,7 @@ export function buildReviewItems(descriptors = [], mapping = {}) {
       needsHuman,
       lowConfidence: typeof mapped?.confidence === 'number' && mapped.confidence < 0.7,
       manualFile,
+      manualCustom,
     };
   });
 }
@@ -47,7 +49,9 @@ function warningFor(item) {
   return {
     field_id: item.field_id,
     label: item.label,
-    reason: item.question || 'Please complete this field manually.',
+    reason: item.manualCustom
+      ? 'This custom control must be completed manually.'
+      : item.question || 'Please complete this field manually.',
   };
 }
 
@@ -56,7 +60,7 @@ export function buildFillPayload(items = []) {
   const warnings = [];
 
   for (const item of items) {
-    if (item.manualFile) {
+    if (item.manualFile || item.manualCustom) {
       warnings.push(warningFor(item));
       continue;
     }

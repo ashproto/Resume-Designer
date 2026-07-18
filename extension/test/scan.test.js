@@ -69,8 +69,7 @@ describe('scanForm', () => {
       ['Country', 'custom'],
       ['Favorite office', 'select'],
       ['Resume/CV', 'file'],
-      ['Work authorization: Yes', 'checkbox'],
-      ['Work authorization: No', 'checkbox'],
+      ['Work authorization', 'radio'],
     ]);
     expect(descriptors.find(({ label }) => label === 'Favorite office')?.options).toEqual([
       { value: '', label: 'Select an office' },
@@ -79,6 +78,21 @@ describe('scanForm', () => {
     ]);
     expect(descriptors.find(({ label }) => label === 'Country')?.required).toBe(true);
     expect(descriptors.find(({ label }) => label === 'Resume/CV')?.required).toBe(true);
+    const workAuthorization = descriptors.find(({ label }) => label === 'Work authorization');
+    const authorizationControls = [...document.querySelectorAll('input[name="work_authorization"]')];
+    expect(workAuthorization).toMatchObject({
+      type: 'radio',
+      options: [
+        { value: 'yes', label: 'Yes' },
+        { value: 'no', label: 'No' },
+      ],
+    });
+    expect(authorizationControls.map((element) => (
+      element.getAttribute(FIELD_ID_ATTRIBUTE)
+    ))).toEqual([
+      workAuthorization.field_id,
+      workAuthorization.field_id,
+    ]);
     expect(document.querySelector('#country-required-helper').hasAttribute(FIELD_ID_ATTRIBUTE)).toBe(false);
     expect(document.querySelector('#disabled-helper').hasAttribute(FIELD_ID_ATTRIBUTE)).toBe(false);
     expect(document.querySelector('#fieldset-disabled-helper').hasAttribute(FIELD_ID_ATTRIBUTE)).toBe(false);
@@ -112,6 +126,27 @@ describe('scanForm', () => {
     ]);
     expect(new Set(checkboxes.map(({ field_id }) => field_id)).size).toBe(2);
     expect(checkboxes.every(({ options }) => options.length === 0)).toBe(true);
+  });
+
+  it('does not merge Yes/No checkboxes owned by different forms', () => {
+    const document = new JSDOM(`
+      <form id="first"></form>
+      <form id="second"></form>
+      <fieldset>
+        <legend>Work authorization</legend>
+        <label><input form="first" type="checkbox" name="authorized" value="yes"> Yes</label>
+        <label><input form="second" type="checkbox" name="authorized" value="no"> No</label>
+      </fieldset>
+    `).window.document;
+
+    const descriptors = scanForm(document);
+
+    expect(descriptors).toHaveLength(2);
+    expect(descriptors.map(({ label, type }) => [label, type])).toEqual([
+      ['Work authorization: Yes', 'checkbox'],
+      ['Work authorization: No', 'checkbox'],
+    ]);
+    expect(new Set(descriptors.map(({ field_id }) => field_id)).size).toBe(2);
   });
 
   it('scopes named radio groups to form owners while keeping unnamed radios independent', () => {
@@ -155,7 +190,7 @@ describe('scanForm', () => {
     expect(new Set(descriptors.map(({ field_id }) => field_id)).size).toBe(4);
   });
 
-  it('skips Ashby helper controls while retaining its labelled resume and descriptor-only custom field', () => {
+  it('skips Ashby helper controls while retaining its labelled resume and custom fields', () => {
     const document = loadFixture('ashby');
     const helperFile = document.querySelector('input[type="file"]:not([id])');
 
@@ -171,10 +206,47 @@ describe('scanForm', () => {
     }));
     expect(descriptors).toContainEqual(expect.objectContaining({
       label: 'Are you willing to travel?',
-      type: 'checkbox',
+      type: 'custom',
     }));
     expect(helperFile.hasAttribute(FIELD_ID_ATTRIBUTE)).toBe(false);
     expect(descriptors.some(({ label }) => label === 'Yes' || label === 'No')).toBe(false);
+  });
+
+  it('does not treat an ordinary checkbox as button-backed due to unrelated Yes/No buttons', () => {
+    const document = new JSDOM(`
+      <form>
+        <div class="application-section">
+          <span>Send me updates</span>
+          <input type="checkbox" name="updates" tabindex="-1">
+          <div class="unrelated-actions">
+            <button type="button">Yes</button>
+            <button type="button">No</button>
+          </div>
+        </div>
+      </form>
+    `).window.document;
+
+    expect(scanForm(document)).toEqual([
+      expect.objectContaining({
+        label: 'Send me updates',
+        type: 'checkbox',
+      }),
+    ]);
+  });
+
+  it('never scans or marks password inputs', () => {
+    const document = new JSDOM(`
+      <form>
+        <label>Email <input type="email" name="email"></label>
+        <label>Password <input type="password" name="password" value="never expose this"></label>
+      </form>
+    `).window.document;
+    const password = document.querySelector('input[type="password"]');
+
+    expect(scanForm(document)).toEqual([
+      expect.objectContaining({ label: 'Email', type: 'text' }),
+    ]);
+    expect(password.hasAttribute(FIELD_ID_ATTRIBUTE)).toBe(false);
   });
 
   it('reuses opaque field markers on an unchanged DOM', () => {
@@ -212,13 +284,28 @@ describe('scanForm', () => {
 
 describe('scrapePageContext', () => {
   it('prefers valid JobPosting JSON-LD metadata', () => {
-    const document = loadFixture('greenhouse');
+    const document = new JSDOM(`
+      <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+          "title": "Staff Product Engineer",
+          "hiringOrganization": { "name": "Example Greenhouse Company" },
+          "description": "<p>Lead the <strong>product platform</strong>.</p><p>Ship accessible tools.</p>"
+        }
+      </script>
+      <form><label>Secret answer <input value="never include this"></label></form>
+    `, { url: fixtureUrls.greenhouse }).window.document;
 
     expect(scrapePageContext(document, fixtureUrls.greenhouse)).toEqual({
       company: 'Example Greenhouse Company',
       title: 'Staff Product Engineer',
       url: fixtureUrls.greenhouse,
+      description: 'Lead the product platform. Ship accessible tools.',
+      fingerprint: expect.any(String),
     });
+    expect(scrapePageContext(document, fixtureUrls.greenhouse).description)
+      .not.toContain('never include this');
   });
 
   it('ignores invalid JSON-LD and falls back conservatively to the heading and host', () => {
@@ -232,6 +319,58 @@ describe('scrapePageContext', () => {
       company: 'jobs.lever.co',
       title: 'Platform Engineer',
       url: fixtureUrls.lever,
+      description: '',
+      fingerprint: expect.any(String),
     });
+  });
+
+  it('retains only origin and path in the locally stored page URL and fingerprint', () => {
+    const privateUrl = 'https://user:secret@jobs.example.com:8443/apply/role?token=private#step-two';
+    const sanitizedUrl = 'https://jobs.example.com:8443/apply/role';
+    const document = new JSDOM('<main><h1>Security Engineer</h1></main>', {
+      url: privateUrl,
+    }).window.document;
+
+    const page = scrapePageContext(document, privateUrl);
+    const sanitizedPage = scrapePageContext(document, sanitizedUrl);
+
+    expect(page.url).toBe(sanitizedUrl);
+    expect(page.url).not.toContain('user');
+    expect(page.url).not.toContain('secret');
+    expect(page.url).not.toContain('token');
+    expect(page.fingerprint).toBe(sanitizedPage.fingerprint);
+  });
+
+  it('extracts plain text only from a known job-description container', () => {
+    const document = new JSDOM(`
+      <h1>Frontend Engineer</h1>
+      <section data-testid="job-description-content">
+        <h2>About the role</h2>
+        <p>Build thoughtful interfaces.</p>
+        <script>privateFormAnswer = 'do not send'</script>
+      </section>
+      <form><textarea>private application answer</textarea></form>
+    `, { url: fixtureUrls.ashby }).window.document;
+
+    const page = scrapePageContext(document, fixtureUrls.ashby);
+
+    expect(page.description).toBe('About the role Build thoughtful interfaces.');
+    expect(page.description).not.toContain('private');
+    expect(page.fingerprint).toMatch(/^job-/);
+  });
+
+  it('bounds extracted job text without falling back to arbitrary page or form contents', () => {
+    const longDescription = `Role ${'x'.repeat(70_000)}`;
+    const document = new JSDOM(`
+      <h1>Engineer</h1>
+      <div id="job-description">${longDescription}</div>
+      <form><input value="private-answer"></form>
+    `, { url: fixtureUrls.lever }).window.document;
+
+    const page = scrapePageContext(document, fixtureUrls.lever);
+
+    expect(page.description.length).toBeLessThanOrEqual(65_536);
+    expect(page.description.startsWith('Role ')).toBe(true);
+    expect(page.description).not.toContain('private-answer');
   });
 });

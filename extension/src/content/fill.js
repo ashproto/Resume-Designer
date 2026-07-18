@@ -1,4 +1,7 @@
-import { FIELD_ID_ATTRIBUTE } from './scan.js';
+import {
+  FIELD_ID_ATTRIBUTE,
+  isButtonBackedYesNoCheckbox,
+} from './scan.js';
 
 const TEXT_INPUT_TYPES = new Set([
   'date',
@@ -6,7 +9,6 @@ const TEXT_INPUT_TYPES = new Set([
   'email',
   'month',
   'number',
-  'password',
   'search',
   'tel',
   'text',
@@ -79,21 +81,6 @@ function matchingOption(options, value, labelFor) {
   return options.find((option) => labelFor(option).toLowerCase() === requestedLabel);
 }
 
-function isButtonBackedCheckbox(element) {
-  if (element.getAttribute('tabindex') !== '-1' || radioLabel(element)) return false;
-
-  let container = element.parentElement;
-  while (container && !['FORM', 'BODY', 'HTML'].includes(container.tagName)) {
-    const buttonLabels = [...container.querySelectorAll('button')]
-      .map((button) => normalize(button.textContent).toLowerCase());
-
-    if (buttonLabels.includes('yes') && buttonLabels.includes('no')) return true;
-    container = container.parentElement;
-  }
-
-  return false;
-}
-
 function fillText(element, value) {
   const prototypeName = element.tagName === 'TEXTAREA'
     ? 'HTMLTextAreaElement'
@@ -128,7 +115,7 @@ function fillRadio(elements, value) {
 }
 
 function fillCheckbox(element, value) {
-  if (isButtonBackedCheckbox(element)) {
+  if (isButtonBackedYesNoCheckbox(element)) {
     throw new Error('This custom Yes/No control must be filled manually');
   }
 
@@ -138,6 +125,19 @@ function fillCheckbox(element, value) {
 
   nativeSetter(element, 'HTMLInputElement', 'checked', value.toLowerCase() === 'true');
   dispatchFillEvents(element);
+}
+
+function fillCheckboxChoiceGroup(elements, value) {
+  const selected = matchingOption(elements, value, radioLabel);
+  if (!selected) throw new Error(`No checkbox option matches "${String(value ?? '')}"`);
+
+  const checkedPeers = elements.filter((element) => element !== selected && element.checked);
+  const changes = selected.checked ? checkedPeers : [...checkedPeers, selected];
+
+  for (const element of changes) {
+    nativeSetter(element, 'HTMLInputElement', 'checked', element === selected);
+    dispatchFillEvents(element);
+  }
 }
 
 function pdfFile(element, pdf) {
@@ -178,6 +178,7 @@ function fillReviewedField(elements, value, options) {
   const type = inputType(first);
   if (TEXT_INPUT_TYPES.has(type)) return fillText(first, value);
   if (type === 'radio') return fillRadio(elements, value);
+  if (type === 'checkbox' && elements.length > 1) return fillCheckboxChoiceGroup(elements, value);
   if (type === 'checkbox') return fillCheckbox(first, value);
   if (type === 'file') return fillFile(first, options.pdf, options.dataTransferFactory);
 

@@ -263,6 +263,10 @@ function isFileDescriptor(descriptor) {
   return String(descriptor?.type ?? '').toLowerCase() === 'file';
 }
 
+function isCustomDescriptor(descriptor) {
+  return String(descriptor?.type ?? '').toLowerCase() === 'custom';
+}
+
 function normalizedFileLabel(label) {
   return String(label ?? '')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -318,10 +322,20 @@ function deterministicFileMapping(fileDescriptors) {
   return { fields, needs_human: needsHuman };
 }
 
-function mergeFileMapping(mapping, fileMapping) {
+function deterministicCustomMapping(customDescriptors) {
   return {
-    fields: [...mapping.fields, ...fileMapping.fields],
-    needs_human: [...mapping.needs_human, ...fileMapping.needs_human],
+    fields: [],
+    needs_human: customDescriptors.map((descriptor) => ({
+      field_id: descriptor.field_id,
+      question: degradedQuestion(descriptor),
+    })),
+  };
+}
+
+function mergeDeterministicMapping(mapping, deterministicMapping) {
+  return {
+    fields: [...mapping.fields, ...deterministicMapping.fields],
+    needs_human: [...mapping.needs_human, ...deterministicMapping.needs_human],
   };
 }
 
@@ -338,15 +352,15 @@ function repairMessage(error, previousText, descriptors) {
   };
 }
 
-function degradedMapping(nonFileDescriptors, fileMapping) {
+function degradedMapping(modelDescriptors, deterministicMapping) {
   return {
-    fields: fileMapping.fields,
+    fields: deterministicMapping.fields,
     needs_human: [
-      ...nonFileDescriptors.map((descriptor) => ({
+      ...modelDescriptors.map((descriptor) => ({
         field_id: descriptor.field_id,
         question: degradedQuestion(descriptor),
       })),
-      ...fileMapping.needs_human,
+      ...deterministicMapping.needs_human,
     ],
     degraded: true,
   };
@@ -354,12 +368,18 @@ function degradedMapping(nonFileDescriptors, fileMapping) {
 
 export async function requestMapping({ descriptors = [], resume, complete } = {}) {
   const fileDescriptors = descriptors.filter(isFileDescriptor);
-  const nonFileDescriptors = descriptors.filter((descriptor) => !isFileDescriptor(descriptor));
-  const fileMapping = deterministicFileMapping(fileDescriptors);
+  const customDescriptors = descriptors.filter(isCustomDescriptor);
+  const modelDescriptors = descriptors.filter((descriptor) => (
+    !isFileDescriptor(descriptor) && !isCustomDescriptor(descriptor)
+  ));
+  const deterministicMapping = mergeDeterministicMapping(
+    deterministicFileMapping(fileDescriptors),
+    deterministicCustomMapping(customDescriptors),
+  );
 
-  if (nonFileDescriptors.length === 0) return fileMapping;
+  if (modelDescriptors.length === 0) return deterministicMapping;
 
-  const messages = buildMappingMessages({ descriptors: nonFileDescriptors, resume });
+  const messages = buildMappingMessages({ descriptors: modelDescriptors, resume });
   const firstResponse = await complete({
     messages,
     systemPrompt: MAPPING_SYSTEM_PROMPT,
@@ -367,9 +387,9 @@ export async function requestMapping({ descriptors = [], resume, complete } = {}
 
   let firstError;
   try {
-    return mergeFileMapping(
-      parseMappingResponse(firstResponse?.text, nonFileDescriptors),
-      fileMapping,
+    return mergeDeterministicMapping(
+      parseMappingResponse(firstResponse?.text, modelDescriptors),
+      deterministicMapping,
     );
   } catch (error) {
     firstError = error;
@@ -377,7 +397,7 @@ export async function requestMapping({ descriptors = [], resume, complete } = {}
 
   const repairMessages = [
     ...messages,
-    repairMessage(firstError, firstResponse?.text, nonFileDescriptors),
+    repairMessage(firstError, firstResponse?.text, modelDescriptors),
   ];
   const secondResponse = await complete({
     messages: repairMessages,
@@ -385,11 +405,11 @@ export async function requestMapping({ descriptors = [], resume, complete } = {}
   });
 
   try {
-    return mergeFileMapping(
-      parseMappingResponse(secondResponse?.text, nonFileDescriptors),
-      fileMapping,
+    return mergeDeterministicMapping(
+      parseMappingResponse(secondResponse?.text, modelDescriptors),
+      deterministicMapping,
     );
   } catch {
-    return degradedMapping(nonFileDescriptors, fileMapping);
+    return degradedMapping(modelDescriptors, deterministicMapping);
   }
 }

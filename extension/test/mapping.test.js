@@ -505,4 +505,80 @@ describe('requestMapping', () => {
       }],
     });
   });
+
+  it('keeps custom descriptors out of both AI attempts while preserving exact validation for supported fields', async () => {
+    const nameField = descriptor('name', { label: 'Full name' });
+    const countryField = descriptor('country-control', {
+      label: 'Country custom control',
+      type: 'custom',
+    });
+    const consentField = descriptor('consent', {
+      label: 'Accept terms',
+      type: 'checkbox',
+    });
+    const complete = vi.fn()
+      .mockResolvedValueOnce({
+        text: responseText({ fields: [mappedField('name')] }),
+      })
+      .mockResolvedValueOnce({
+        text: responseText({
+          fields: [
+            mappedField('name'),
+            mappedField('consent', { value: 'true', source: 'learned' }),
+          ],
+        }),
+      });
+
+    const result = await requestMapping({
+      descriptors: [nameField, countryField, consentField],
+      resume,
+      complete,
+    });
+
+    expect(complete).toHaveBeenCalledTimes(2);
+    for (const [payload] of complete.mock.calls) {
+      const serialized = JSON.stringify(payload.messages);
+      expect(serialized).not.toContain('country-control');
+      expect(serialized).not.toContain('Country custom control');
+    }
+    expect(JSON.parse(complete.mock.calls[0][0].messages[0].content).descriptors).toEqual([
+      nameField,
+      consentField,
+    ]);
+    expect(complete.mock.calls[1][0].messages.at(-1).content).toContain('consent');
+    expect(result).toEqual({
+      fields: [
+        mappedField('name'),
+        mappedField('consent', { value: 'true', source: 'learned' }),
+      ],
+      needs_human: [{
+        field_id: 'country-control',
+        question: expect.stringMatching(/complete|manual/i),
+      }],
+    });
+  });
+
+  it('returns deterministic needs-human entries without calling AI for all-custom forms', async () => {
+    const customDescriptors = [
+      descriptor('country', { label: 'Country', type: 'custom' }),
+      descriptor('travel', { label: 'Willing to travel?', type: 'custom' }),
+    ];
+    const complete = vi.fn();
+
+    const result = await requestMapping({
+      descriptors: customDescriptors,
+      resume,
+      complete,
+    });
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(result.fields).toEqual([]);
+    expect(result.needs_human.map(({ field_id }) => field_id)).toEqual([
+      'country',
+      'travel',
+    ]);
+    expect(result.needs_human.every(({ question }) => (
+      typeof question === 'string' && question.trim().length > 0
+    ))).toBe(true);
+  });
 });

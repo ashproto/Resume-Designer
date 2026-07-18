@@ -56,9 +56,10 @@ describe('content relay', () => {
     const document = installDocument(`
       <main>
         <h1>Platform Engineer</h1>
+        <section id="job-description"><p>Build reliable local-first software.</p></section>
         <form><label>Full name <input name="name" required></label></form>
       </main>
-    `);
+    `, 'https://jobs.example.com/platform-engineer?candidate=private#application');
 
     const { returnValue, sendResponse, response } = relay({ type: 'content.scan' });
 
@@ -78,6 +79,8 @@ describe('content relay', () => {
         company: 'jobs.example.com',
         title: 'Platform Engineer',
         url: 'https://jobs.example.com/platform-engineer',
+        description: 'Build reliable local-first software.',
+        fingerprint: expect.any(String),
       },
     });
     expect(document.querySelector('input').dataset.resumeDesignerFieldId).toBe(
