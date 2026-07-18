@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist/', 'node_modules/'] },
+  { ignores: ['artifacts/', 'dist/', 'node_modules/'] },
   js.configs.recommended,
   {
     files: ['src/**/*.{js,jsx}'],
@@ -34,7 +34,7 @@ export default [
     },
   },
   {
-    files: ['test/**/*.js', '*.config.js'],
+    files: ['scripts/**/*.mjs', 'test/**/*.js', '*.config.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',

@@ -40,3 +40,9 @@ Icon
 # Stray root-level dependency/cache dirs (the app's real node_modules lives in
 # resume-designer/ and is ignored there; tooling occasionally writes a cache here)
 /node_modules/
+
+# Generated Chrome Web Store packages
+/extension/artifacts/
+
+# Temporary credentials created by google-github-actions/auth if its defaults change
+gha-creds-*.json

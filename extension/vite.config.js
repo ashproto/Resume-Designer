@@ -7,15 +7,22 @@ import { build as viteBuild, defineConfig } from 'vite';
 const root = fileURLToPath(new URL('.', import.meta.url));
 const outDir = fileURLToPath(new URL('./dist', import.meta.url));
 
-function copyManifest() {
+function copyStoreFiles() {
   return {
-    name: 'copy-extension-manifest',
+    name: 'copy-extension-store-files',
     async generateBundle() {
       this.emitFile({
         type: 'asset',
         fileName: 'manifest.json',
         source: await readFile(new URL('./manifest.json', import.meta.url), 'utf8'),
       });
+      for (const size of [16, 32, 48, 128]) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `icons/${size}.png`,
+          source: await readFile(new URL(`./icons/${size}.png`, import.meta.url)),
+        });
+      }
     },
   };
 }
@@ -58,7 +65,7 @@ export default defineConfig({
   root,
   base: './',
   publicDir: false,
-  plugins: [react(), copyManifest(), buildClassicEntries()],
+  plugins: [react(), copyStoreFiles(), buildClassicEntries()],
   build: {
     outDir,
     emptyOutDir: true,

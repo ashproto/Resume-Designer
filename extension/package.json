@@ -9,6 +9,7 @@
   "scripts": {
     "build": "vite build",
     "lint": "eslint .",
+    "package:store": "npm run build && node scripts/store-package.mjs",
     "test": "vitest run"
   },
   "dependencies": {
