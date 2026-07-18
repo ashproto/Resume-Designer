@@ -58,6 +58,7 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
 
   return {
     checkConnection: () => request({ type: 'connection.check' }),
+    openApp: () => request({ type: 'app.open' }),
     savePairing: (token) => request({ type: 'pairing.save', token }),
     listResumes: () => request({ type: 'resumes.list' }),
     scanPage: () => request({ type: 'page.scan' }),
@@ -82,6 +83,12 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
       }
       return request(message);
     },
+    analyzeJobFit: ({ profileContextId, resumeId, job }) => request({
+      type: 'job.fit.analyze', profileContextId, resumeId, job,
+    }),
+    createTailoredResume: ({ profileContextId, resumeId, requestId, job }) => request({
+      type: 'resume.tailor', profileContextId, resumeId, requestId, job,
+    }),
   };
 }
 

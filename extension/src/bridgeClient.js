@@ -1,4 +1,17 @@
 export const BRIDGE_BASE_URL = 'http://127.0.0.1:17872';
+export const BRIDGE_APP_ID = 'resume-designer';
+export const COMPANION_PROTOCOL_VERSION = 2;
+export const REQUIRED_CAPABILITIES = Object.freeze([
+  'app.launch',
+  'pairing.challenge',
+  'profile.context',
+  'resume.pdf',
+  'ai.complete',
+  'ai.job-fit',
+  'ai.tailored-resume',
+  'profile.answers',
+  'applications.log',
+]);
 
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const MAX_AI_RESPONSE_BYTES = 1024 * 1024;
@@ -14,6 +27,27 @@ export class BridgeError extends Error {
 }
 
 function classifyHttpError(status, message, data) {
+  if (typeof data?.code === 'string' && data.code) {
+    const retryableByCode = {
+      pairing_pending: true,
+      pairing_rejected: false,
+      pairing_not_found: false,
+      pairing_unavailable: true,
+      storage_full: false,
+      profile_changed: true,
+      bridge_busy: true,
+      idempotency_conflict: false,
+      invalid_job: false,
+      invalid_request_id: false,
+      invalid_ai_response: false,
+      resume_not_found: false,
+      ai_failed: true,
+    };
+    if (Object.hasOwn(retryableByCode, data.code)) {
+      return { code: data.code, retryable: retryableByCode[data.code] };
+    }
+  }
+
   if (status === 401) {
     return { code: 'unauthorized', retryable: false };
   }
@@ -41,11 +75,34 @@ function classifyHttpError(status, message, data) {
 }
 
 function responseTooLargeError() {
-  return new BridgeError('AI completion response exceeds 1 MiB', {
+  return new BridgeError('Bridge response exceeds 1 MiB', {
     status: 413,
     code: 'response_too_large',
     retryable: false,
   });
+}
+
+function validateHealth(data) {
+  if (data?.ok !== true || data?.app !== BRIDGE_APP_ID) {
+    throw new BridgeError(
+      'Another service is using the Resume Designer companion port',
+      { code: 'port_conflict', retryable: false },
+    );
+  }
+
+  const capabilities = Array.isArray(data.capabilities) ? new Set(data.capabilities) : null;
+  if (
+    data.protocolVersion !== COMPANION_PROTOCOL_VERSION
+    || !capabilities
+    || REQUIRED_CAPABILITIES.some((capability) => !capabilities.has(capability))
+  ) {
+    throw new BridgeError(
+      'Resume Designer must be updated to work with this companion extension',
+      { code: 'app_update_required', retryable: false },
+    );
+  }
+
+  return data;
 }
 
 function declaredContentLength(response) {
@@ -200,7 +257,10 @@ export function createBridgeClient({
   const resumePath = (id) => `/resumes/${encodeURIComponent(String(id))}`;
 
   return {
-    health: () => request('/health', { authenticated: false }),
+    health: async () => validateHealth(await request('/health', { authenticated: false })),
+    claimPairing: (payload) => request('/pairing/claim', {
+      method: 'POST', payload, authenticated: false,
+    }),
     listResumes: () => request('/resumes'),
     getResume: (id) => request(resumePath(id)),
     getPdf: (id) => request(`${resumePath(id)}/pdf`),
@@ -208,6 +268,12 @@ export function createBridgeClient({
       method: 'POST',
       payload,
       maxResponseBytes: MAX_AI_RESPONSE_BYTES,
+    }),
+    analyzeJobFit: (payload) => request('/ai/job-fit', {
+      method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
+    }),
+    createTailoredResume: (payload) => request('/ai/tailored-resume', {
+      method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
     }),
     logApplication: (payload) => request('/applications', { method: 'POST', payload }),
     saveAnswer: (payload) => request('/profile/answers', { method: 'POST', payload }),

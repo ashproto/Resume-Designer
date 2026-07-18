@@ -5,6 +5,7 @@ const STORAGE_KEY = 'bridgeToken';
 
 const SUPPORTED_MESSAGES = new Set([
   'connection.check',
+  'app.open',
   'pairing.save',
   'resumes.list',
   'page.scan',
@@ -12,7 +13,16 @@ const SUPPORTED_MESSAGES = new Set([
   'page.fill',
   'answer.save',
   'application.log',
+  'job.fit.analyze',
+  'resume.tailor',
 ]);
+
+const APP_OPEN_URL = 'resume-designer://companion/open?protocolVersion=2';
+const DEFAULT_HEALTH_POLL_ATTEMPTS = 80;
+const DEFAULT_HEALTH_POLL_INTERVAL_MS = 250;
+const DEFAULT_PAIRING_POLL_ATTEMPTS = 120;
+const DEFAULT_PAIRING_POLL_INTERVAL_MS = 500;
+const HTTP_LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
 function serializeError(error) {
   if (error instanceof BridgeError) {
@@ -41,9 +51,19 @@ function lostActiveTabError() {
 
 function restrictedPageError() {
   return new BridgeError(
-    'This browser page is restricted. Open an HTTP(S) application page instead.',
+    'This browser page is restricted. Open an HTTPS application page instead. Local test fixtures may use HTTP on localhost.',
     { code: 'restricted_page', retryable: false },
   );
+}
+
+function isAllowedApplicationUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      || (url.protocol === 'http:' && HTTP_LOOPBACK_HOSTS.has(url.hostname));
+  } catch {
+    return false;
+  }
 }
 
 function profileChangedError() {
@@ -53,19 +73,82 @@ function profileChangedError() {
   );
 }
 
+function base64Url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function launchFailedError(error) {
+  return new BridgeError(
+    'Could not open Resume Designer. Make sure the desktop app is installed.',
+    {
+      code: 'launch_failed',
+      retryable: true,
+      cause: error,
+    },
+  );
+}
+
 export function createBackgroundService({
   chromeApi = globalThis.chrome,
   fetchImpl = globalThis.fetch,
+  cryptoImpl = globalThis.crypto,
+  randomBytesImpl = (length) => cryptoImpl.getRandomValues(new Uint8Array(length)),
+  waitImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  pollAttempts,
+  pollIntervalMs,
+  healthPollAttempts = pollAttempts ?? DEFAULT_HEALTH_POLL_ATTEMPTS,
+  healthPollIntervalMs = pollIntervalMs ?? DEFAULT_HEALTH_POLL_INTERVAL_MS,
+  pairingPollAttempts = pollAttempts ?? DEFAULT_PAIRING_POLL_ATTEMPTS,
+  pairingPollIntervalMs = pollIntervalMs ?? DEFAULT_PAIRING_POLL_INTERVAL_MS,
 } = {}) {
   let installed = false;
   let pdfQueue = Promise.resolve();
 
   async function getStoredToken() {
-    const stored = await chromeApi.storage.local.get(STORAGE_KEY);
+    const stored = await chromeApi.storage.session.get(STORAGE_KEY);
     return stored[STORAGE_KEY] ?? '';
   }
 
   const bridge = createBridgeClient({ fetchImpl, getToken: getStoredToken });
+
+  function bridgeForToken(token) {
+    return createBridgeClient({ fetchImpl, getToken: async () => token });
+  }
+
+  async function connectionForToken(token, health) {
+    const candidate = bridgeForToken(token);
+    const checkedHealth = health ?? await candidate.health();
+    const {
+      profileId = null, profileContextId = null, resumes = [],
+    } = await candidate.listResumes();
+    if (
+      typeof profileId !== 'string'
+      || !profileId.trim()
+      || typeof profileContextId !== 'string'
+      || !profileContextId.trim()
+      || !Array.isArray(resumes)
+      || resumes.some((resume) => (
+        !resume
+        || typeof resume !== 'object'
+        || typeof resume.id !== 'string'
+        || !resume.id.trim()
+      ))
+    ) {
+      throw new BridgeError('Resume Designer returned an invalid profile context', {
+        code: 'invalid_response',
+        retryable: true,
+      });
+    }
+    return {
+      connected: true,
+      health: checkedHealth,
+      profileId,
+      profileContextId,
+      resumes,
+    };
+  }
 
   async function probeConnection() {
     const health = await bridge.health();
@@ -77,12 +160,7 @@ export function createBackgroundService({
       };
     }
 
-    const {
-      profileId = null, profileContextId = null, resumes = [],
-    } = await bridge.listResumes();
-    return {
-      connected: true, health, profileId, profileContextId, resumes,
-    };
+    return connectionForToken(token, health);
   }
 
   function assertResponseContext(expectedContextId, response) {
@@ -143,8 +221,106 @@ export function createBackgroundService({
       });
     }
 
-    await chromeApi.storage.local.set({ [STORAGE_KEY]: token });
-    return probeConnection();
+    const connection = await connectionForToken(token);
+    await chromeApi.storage.session.set({ [STORAGE_KEY]: token });
+    return connection;
+  }
+
+  async function launchUrl(url) {
+    try {
+      await chromeApi.tabs.create({ url, active: false });
+    } catch (error) {
+      throw launchFailedError(error);
+    }
+  }
+
+  async function pollForHealth() {
+    let lastError;
+    const attempts = Math.max(1, Number(healthPollAttempts) || 1);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await bridge.health();
+      } catch (error) {
+        if (error?.code === 'port_conflict' || error?.code === 'app_update_required') throw error;
+        lastError = error;
+      }
+      if (attempt + 1 < attempts) await waitImpl(healthPollIntervalMs);
+    }
+    throw launchFailedError(lastError);
+  }
+
+  async function pairingCredentials() {
+    const requestId = base64Url(randomBytesImpl(24));
+    const verifier = base64Url(randomBytesImpl(32));
+    const digest = await cryptoImpl.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(verifier),
+    );
+    return {
+      requestId,
+      verifier,
+      challenge: base64Url(new Uint8Array(digest)),
+    };
+  }
+
+  async function claimPairing(credentials) {
+    let lastError;
+    const attempts = Math.max(1, Number(pairingPollAttempts) || 1);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const result = await bridge.claimPairing({
+          requestId: credentials.requestId,
+          verifier: credentials.verifier,
+        });
+        const token = typeof result?.token === 'string' ? result.token.trim() : '';
+        if (!token) {
+          throw new BridgeError('Pairing claim returned no token', {
+            code: 'invalid_response', retryable: true,
+          });
+        }
+        return token;
+      } catch (error) {
+        if (error?.code === 'pairing_rejected') throw error;
+        if (!['network_error', 'pairing_pending', 'pairing_not_found'].includes(error?.code)) {
+          throw error;
+        }
+        lastError = error;
+      }
+      if (attempt + 1 < attempts) await waitImpl(pairingPollIntervalMs);
+    }
+    throw lastError ?? launchFailedError();
+  }
+
+  async function pairAutomatically() {
+    const credentials = await pairingCredentials();
+    const launch = new URL('resume-designer://companion/pair');
+    launch.searchParams.set('protocolVersion', '2');
+    launch.searchParams.set('requestId', credentials.requestId);
+    launch.searchParams.set('challenge', credentials.challenge);
+    launch.searchParams.set(
+      'clientId',
+      chromeApi.runtime?.id || 'resume-designer-companion-extension',
+    );
+    await launchUrl(launch.href);
+    const health = await pollForHealth();
+    const token = await claimPairing(credentials);
+    const connection = await connectionForToken(token, health);
+    await chromeApi.storage.session.set({ [STORAGE_KEY]: token });
+    return connection;
+  }
+
+  async function openApp() {
+    const token = String(await getStoredToken()).trim();
+    if (!token) return pairAutomatically();
+
+    await launchUrl(APP_OPEN_URL);
+    const health = await pollForHealth();
+    try {
+      return await connectionForToken(token, health);
+    } catch (error) {
+      if (error?.code !== 'unauthorized') throw error;
+      return pairAutomatically();
+    }
   }
 
   async function getActiveTab() {
@@ -160,7 +336,7 @@ export function createBackgroundService({
       throw lostActiveTabError();
     }
 
-    if (!/^https?:\/\//i.test(tab.url)) {
+    if (!isAllowedApplicationUrl(tab.url)) {
       throw restrictedPageError();
     }
 
@@ -192,10 +368,15 @@ export function createBackgroundService({
         fields,
         pdf: { filename: response.filename, pdfBase64: response.pdfBase64 },
       };
-      return relayToActiveTab(
+      const fillResult = await relayToActiveTab(
         { type: 'content.fill', payload },
         () => assertProfileContext(profileContextId),
       );
+      const filled = new Set(Array.isArray(fillResult?.filled) ? fillResult.filled : []);
+      const attachments = fields
+        .filter(({ field_id: fieldId, value }) => value === '__resume_pdf__' && filled.has(fieldId))
+        .map(({ field_id: fieldId }) => ({ field_id: fieldId, filename: response.filename }));
+      return { ...fillResult, attachments };
     });
     pdfQueue = result.catch(() => undefined);
     return result;
@@ -228,6 +409,8 @@ export function createBackgroundService({
     switch (message?.type) {
       case 'connection.check':
         return probeConnection();
+      case 'app.open':
+        return openApp();
       case 'pairing.save':
         return savePairing(message.token);
       case 'resumes.list':
@@ -273,6 +456,29 @@ export function createBackgroundService({
           () => bridge.logApplication(payload),
         );
       }
+      case 'job.fit.analyze':
+        return withinProfileContext(message.profileContextId, async () => (
+          assertResponseContext(
+            message.profileContextId,
+            await bridge.analyzeJobFit({
+              profileContextId: message.profileContextId,
+              resumeId: message.resumeId,
+              job: message.job,
+            }),
+          )
+        ));
+      case 'resume.tailor':
+        return withinProfileMutation(message.profileContextId, async () => (
+          assertResponseContext(
+            message.profileContextId,
+            await bridge.createTailoredResume({
+              profileContextId: message.profileContextId,
+              resumeId: message.resumeId,
+              requestId: message.requestId,
+              job: message.job,
+            }),
+          )
+        ));
       default:
         throw new BridgeError(`Unsupported message type: ${message?.type ?? 'unknown'}`, {
           code: 'unsupported_message',
@@ -305,6 +511,18 @@ export function createBackgroundService({
     if (installed) return;
     chromeApi.action.onClicked.addListener(actionListener);
     chromeApi.runtime.onMessage.addListener(runtimeListener);
+    try {
+      void chromeApi.storage.session?.setAccessLevel?.({
+        accessLevel: 'TRUSTED_CONTEXTS',
+      })?.catch?.(() => {});
+    } catch {
+      // Older Chromium builds may not expose storage access-level controls.
+    }
+    try {
+      void chromeApi.storage.local?.remove?.(STORAGE_KEY)?.catch?.(() => {});
+    } catch {
+      // Legacy local credentials are best-effort cleanup only and are never migrated.
+    }
     installed = true;
   }
 

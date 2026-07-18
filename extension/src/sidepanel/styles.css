@@ -16,13 +16,17 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+summary:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.28);
   outline-offset: 2px;
 }
@@ -92,6 +96,25 @@ h3 {
   background: #f0fdf4;
 }
 
+.job-actions-section {
+  border-color: #c8d4ef;
+  background: #f8faff;
+}
+
+.job-action-status,
+.fill-announcement {
+  margin-bottom: 0;
+}
+
+.fit-result {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.fit-result .field-label {
+  margin-top: 10px;
+}
+
 .supporting-copy,
 .field-question {
   margin-bottom: 2px;
@@ -114,7 +137,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
@@ -124,8 +148,14 @@ select {
   background: #fff;
 }
 
+textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
 input:disabled,
 select:disabled,
+textarea:disabled,
 button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
@@ -164,6 +194,39 @@ button {
 
 .secondary-button:hover:not(:disabled) {
   background: #eef2f7;
+}
+
+.download-link,
+.text-button {
+  justify-self: start;
+  color: #2256d8;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.text-button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.manual-pairing {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e5ed;
+}
+
+.manual-pairing summary {
+  color: #59657a;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manual-pairing[open] {
+  display: grid;
+  gap: 10px;
 }
 
 .fill-button {
@@ -257,6 +320,22 @@ button {
   color: #166534;
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+.workflow-status {
+  margin: 0;
+}
+
+.workflow-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 @media (max-width: 330px) {

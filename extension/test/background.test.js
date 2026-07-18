@@ -3,6 +3,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { BridgeError } from '../src/bridgeClient.js';
 import { createBackgroundService } from '../src/background.js';
 
+const HEALTH = {
+  ok: true,
+  app: 'resume-designer',
+  version: '1.0.0',
+  protocolVersion: 2,
+  capabilities: [
+    'app.launch',
+    'pairing.challenge',
+    'profile.context',
+    'resume.pdf',
+    'ai.complete',
+    'ai.job-fit',
+    'ai.tailored-resume',
+    'profile.answers',
+    'applications.log',
+  ],
+};
+
 function jsonResponse(body, { status = 200 } = {}) {
   return new Response(JSON.stringify(body), {
     status,
@@ -22,10 +40,12 @@ function deferred() {
 
 function createChrome({
   token = '',
+  legacyLocalToken = '',
   tab = { id: 17, windowId: 4, url: 'https://jobs.example.test/apply' },
   contentResponse,
 } = {}) {
   let storedToken = token;
+  let storedLegacyToken = legacyLocalToken;
   const listeners = {};
   const chromeApi = {
     action: {
@@ -50,13 +70,25 @@ function createChrome({
     },
     storage: {
       local: {
+        get: vi.fn(async () => ({ bridgeToken: storedLegacyToken })),
+        set: vi.fn(async (value) => {
+          storedLegacyToken = value.bridgeToken;
+        }),
+        setAccessLevel: vi.fn(async () => undefined),
+        remove: vi.fn(async (key) => {
+          if (key === 'bridgeToken') storedLegacyToken = '';
+        }),
+      },
+      session: {
         get: vi.fn(async () => ({ bridgeToken: storedToken })),
         set: vi.fn(async (value) => {
           storedToken = value.bridgeToken;
         }),
+        setAccessLevel: vi.fn(async () => undefined),
       },
     },
     tabs: {
+      create: vi.fn(async ({ url }) => ({ id: 99, url })),
       query: vi.fn(async () => (tab ? [tab] : [])),
       sendMessage: vi.fn(async (_tabId, message) => (
         typeof contentResponse === 'function' ? contentResponse(message) : contentResponse
@@ -64,7 +96,12 @@ function createChrome({
     },
   };
 
-  return { chromeApi, listeners, getStoredToken: () => storedToken };
+  return {
+    chromeApi,
+    listeners,
+    getStoredToken: () => storedToken,
+    getLegacyLocalToken: () => storedLegacyToken,
+  };
 }
 
 async function callRuntime(listener, message) {
@@ -77,8 +114,10 @@ async function callRuntime(listener, message) {
 const PDF_FIELD = [{ field_id: 'resume-file', value: '__resume_pdf__' }];
 
 describe('createBackgroundService', () => {
-  it('installs action and runtime listeners exactly once per service', async () => {
-    const { chromeApi, listeners } = createChrome();
+  it('installs once, restricts session storage, and purges legacy local tokens without migration', async () => {
+    const {
+      chromeApi, listeners, getStoredToken, getLegacyLocalToken,
+    } = createChrome({ legacyLocalToken: 'legacy-secret' });
     const service = createBackgroundService({ chromeApi, fetchImpl: vi.fn() });
 
     service.install();
@@ -86,6 +125,16 @@ describe('createBackgroundService', () => {
 
     expect(chromeApi.action.onClicked.addListener).toHaveBeenCalledOnce();
     expect(chromeApi.runtime.onMessage.addListener).toHaveBeenCalledOnce();
+    expect(chromeApi.storage.session.setAccessLevel).toHaveBeenCalledOnce();
+    expect(chromeApi.storage.session.setAccessLevel).toHaveBeenCalledWith({
+      accessLevel: 'TRUSTED_CONTEXTS',
+    });
+    expect(chromeApi.storage.local.remove).toHaveBeenCalledOnce();
+    expect(chromeApi.storage.local.remove).toHaveBeenCalledWith('bridgeToken');
+    expect(chromeApi.storage.local.get).not.toHaveBeenCalled();
+    expect(chromeApi.storage.local.set).not.toHaveBeenCalled();
+    expect(getLegacyLocalToken()).toBe('');
+    expect(getStoredToken()).toBe('');
     listeners.action({ windowId: 9 });
     await vi.waitFor(() => expect(chromeApi.sidePanel.open).toHaveBeenCalledWith({ windowId: 9 }));
   });
@@ -128,16 +177,12 @@ describe('createBackgroundService', () => {
 
   it('probes public health without auth and stays disconnected without a token', async () => {
     const { chromeApi } = createChrome();
-    const fetchImpl = vi.fn(async () => jsonResponse({
-      ok: true,
-      app: 'resume-designer',
-      version: '1.0.0',
-    }));
+    const fetchImpl = vi.fn(async () => jsonResponse(HEALTH));
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({ type: 'connection.check' })).resolves.toEqual({
       connected: false,
-      health: { ok: true, app: 'resume-designer', version: '1.0.0' },
+      health: HEALTH,
       profileId: null,
       profileContextId: null,
       resumes: [],
@@ -151,7 +196,7 @@ describe('createBackgroundService', () => {
   it('trims and stores a pairing token, then proves health and authenticated resume access', async () => {
     const { chromeApi, getStoredToken } = createChrome();
     const fetchImpl = vi.fn(async (url) => {
-      if (url.endsWith('/health')) return jsonResponse({ ok: true });
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
       if (url.endsWith('/resumes')) {
         return jsonResponse({
           profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1' }],
@@ -166,14 +211,14 @@ describe('createBackgroundService', () => {
       token: '  secret token  ',
     })).resolves.toEqual({
       connected: true,
-      health: { ok: true },
+      health: HEALTH,
       profileId: 'profile-1',
       profileContextId: 'context-1',
       resumes: [{ id: 'resume-1' }],
     });
 
     expect(getStoredToken()).toBe('secret token');
-    expect(chromeApi.storage.local.set).toHaveBeenCalledWith({ bridgeToken: 'secret token' });
+    expect(chromeApi.storage.session.set).toHaveBeenCalledWith({ bridgeToken: 'secret token' });
     const resumeOptions = fetchImpl.mock.calls.find(([url]) => url.endsWith('/resumes'))[1];
     expect(new Headers(resumeOptions.headers).get('Authorization')).toBe('Bearer secret token');
   });
@@ -185,8 +230,170 @@ describe('createBackgroundService', () => {
 
     await expect(service.handleMessage({ type: 'pairing.save', token: '   ' }))
       .rejects.toMatchObject({ code: 'not_paired', retryable: false });
-    expect(chromeApi.storage.local.set).not.toHaveBeenCalled();
+    expect(chromeApi.storage.session.set).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('validates a manual token before storage and preserves the previous token on rejection', async () => {
+    const { chromeApi, getStoredToken } = createChrome({ token: 'still-valid' });
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      expect(new Headers(options.headers).get('Authorization')).toBe('Bearer invalid-new-token');
+      return jsonResponse({ error: 'invalid token' }, { status: 401 });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'pairing.save', token: ' invalid-new-token ',
+    })).rejects.toMatchObject({ code: 'unauthorized' });
+
+    expect(getStoredToken()).toBe('still-valid');
+    expect(chromeApi.storage.session.set).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:17872/health',
+      'http://127.0.0.1:17872/resumes',
+    ]);
+  });
+
+  it('never reports connected or stores a token for a malformed authenticated context', async () => {
+    const { chromeApi } = createChrome();
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      return jsonResponse({ profileId: null, profileContextId: '', resumes: {} });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'pairing.save', token: 'candidate-token',
+    })).rejects.toMatchObject({ code: 'invalid_response', retryable: true });
+    expect(chromeApi.storage.session.set).not.toHaveBeenCalled();
+  });
+
+  it('opens an already-paired app without putting the token in the URL or requesting approval', async () => {
+    const { chromeApi } = createChrome({ token: 'stored-secret' });
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/health')) {
+        expect(new Headers(options.headers).has('Authorization')).toBe(false);
+        return jsonResponse(HEALTH);
+      }
+      expect(new Headers(options.headers).get('Authorization')).toBe('Bearer stored-secret');
+      return jsonResponse({
+        profileId: 'profile-1', profileContextId: 'context-1', resumes: [],
+      });
+    });
+    const service = createBackgroundService({
+      chromeApi,
+      fetchImpl,
+      waitImpl: vi.fn(async () => undefined),
+      pollAttempts: 2,
+    });
+
+    await expect(service.handleMessage({ type: 'app.open' })).resolves.toMatchObject({
+      connected: true,
+      profileContextId: 'context-1',
+    });
+
+    expect(chromeApi.tabs.create).toHaveBeenCalledOnce();
+    const launchUrl = chromeApi.tabs.create.mock.calls[0][0].url;
+    expect(launchUrl).toBe('resume-designer://companion/open?protocolVersion=2');
+    expect(launchUrl).not.toContain('stored-secret');
+    expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/pairing/claim'))).toBe(false);
+  });
+
+  it('pairs automatically with a verifier challenge, then verifies the claimed token before storage', async () => {
+    const { chromeApi, getStoredToken } = createChrome();
+    let claimCalls = 0;
+    const waitImpl = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/pairing/claim')) {
+        claimCalls += 1;
+        const claim = JSON.parse(options.body);
+        expect(claim.requestId).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+        expect(claim.verifier).toMatch(/^[A-Za-z0-9_-]{43,128}$/);
+        if (claimCalls === 1) {
+          return jsonResponse({ error: 'pending', code: 'pairing_pending' }, { status: 425 });
+        }
+        return jsonResponse({ token: 'claimed-secret' });
+      }
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      expect(new Headers(options.headers).get('Authorization')).toBe('Bearer claimed-secret');
+      return jsonResponse({
+        profileId: 'profile-1', profileContextId: 'context-1', resumes: [],
+      });
+    });
+    const service = createBackgroundService({
+      chromeApi,
+      fetchImpl,
+      waitImpl,
+      pollAttempts: 3,
+      randomBytesImpl: (length) => new Uint8Array(length).fill(7),
+    });
+
+    await expect(service.handleMessage({ type: 'app.open' })).resolves.toMatchObject({
+      connected: true,
+      profileId: 'profile-1',
+    });
+
+    const launchUrl = new URL(chromeApi.tabs.create.mock.calls[0][0].url);
+    expect(launchUrl.hostname).toBe('companion');
+    expect(launchUrl.pathname).toBe('/pair');
+    expect(launchUrl.searchParams.get('protocolVersion')).toBe('2');
+    expect(launchUrl.searchParams.get('challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(launchUrl.href).not.toContain('claimed-secret');
+    expect(getStoredToken()).toBe('claimed-secret');
+    expect(chromeApi.storage.session.set).toHaveBeenCalledTimes(1);
+    expect(waitImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('launches paired users first and starts challenge pairing only after a 401', async () => {
+    const { chromeApi, getStoredToken } = createChrome({ token: 'expired-secret' });
+    let resumeCalls = 0;
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/pairing/claim')) return jsonResponse({ token: 'replacement-secret' });
+      resumeCalls += 1;
+      const auth = new Headers(options.headers).get('Authorization');
+      if (resumeCalls === 1) {
+        expect(auth).toBe('Bearer expired-secret');
+        return jsonResponse({ error: 'expired' }, { status: 401 });
+      }
+      expect(auth).toBe('Bearer replacement-secret');
+      return jsonResponse({
+        profileId: 'profile-1', profileContextId: 'context-1', resumes: [],
+      });
+    });
+    const service = createBackgroundService({
+      chromeApi,
+      fetchImpl,
+      waitImpl: vi.fn(async () => undefined),
+      pollAttempts: 2,
+      randomBytesImpl: (length) => new Uint8Array(length).fill(9),
+    });
+
+    await service.handleMessage({ type: 'app.open' });
+
+    expect(chromeApi.tabs.create).toHaveBeenCalledTimes(2);
+    expect(chromeApi.tabs.create.mock.calls[0][0].url).toContain('/open?');
+    expect(chromeApi.tabs.create.mock.calls[1][0].url).toContain('/pair?');
+    expect(getStoredToken()).toBe('replacement-secret');
+  });
+
+  it('bounds app launch polling and surfaces a dedicated launch failure', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const waitImpl = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const service = createBackgroundService({
+      chromeApi, fetchImpl, waitImpl, pollAttempts: 3,
+    });
+
+    await expect(service.handleMessage({ type: 'app.open' })).rejects.toMatchObject({
+      code: 'launch_failed',
+      retryable: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(waitImpl).toHaveBeenCalledTimes(2);
   });
 
   it('returns the resumes bridge object unchanged', async () => {
@@ -245,7 +452,7 @@ describe('createBackgroundService', () => {
     expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('queries and injects the active HTTP(S) tab before an exact scan relay', async () => {
+  it('queries and injects the active HTTPS tab before an exact scan relay', async () => {
     const scanResult = {
       descriptors: [{ field_id: 'name' }],
       page: { company: 'Acme', title: 'Engineer' },
@@ -260,6 +467,37 @@ describe('createBackgroundService', () => {
       files: ['content.js'],
     });
     expect(chromeApi.tabs.sendMessage).toHaveBeenCalledWith(17, { type: 'content.scan' });
+  });
+
+  it.each([
+    'http://localhost:8765/greenhouse-form.html',
+    'http://127.0.0.1:8765/greenhouse-form.html',
+    'http://[::1]:8765/greenhouse-form.html',
+  ])('allows loopback HTTP fixtures at %s', async (url) => {
+    const scanResult = { descriptors: [], page: {} };
+    const { chromeApi } = createChrome({
+      tab: { id: 17, windowId: 4, url },
+      contentResponse: scanResult,
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl: vi.fn() });
+
+    await expect(service.handleMessage({ type: 'page.scan' })).resolves.toEqual(scanResult);
+    expect(chromeApi.scripting.executeScript).toHaveBeenCalledOnce();
+    expect(chromeApi.tabs.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it('rejects non-loopback HTTP application pages before attempting injection', async () => {
+    const { chromeApi } = createChrome({
+      tab: { id: 17, windowId: 4, url: 'http://jobs.example.test/apply' },
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl: vi.fn() });
+
+    await expect(service.handleMessage({ type: 'page.scan' })).rejects.toMatchObject({
+      code: 'restricted_page',
+      retryable: false,
+    });
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
   });
 
   it('rejects known restricted pages before attempting injection', async () => {
@@ -552,7 +790,14 @@ describe('createBackgroundService', () => {
       profileId: 'profile-1', profileContextId: 'context-1',
       filename: 'First.pdf', pdfBase64: 'UERGMSA=',
     }));
-    await Promise.all([first, second]);
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.attachments).toEqual([{
+      field_id: 'resume-file', filename: 'First.pdf',
+    }]);
+    expect(secondResult.attachments).toEqual([{
+      field_id: 'resume-file', filename: 'Second.pdf',
+    }]);
 
     expect(pdfCalls).toBe(2);
     expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/pdf'))[1][0])
@@ -573,6 +818,31 @@ describe('createBackgroundService', () => {
         },
       },
     ]);
+  });
+
+  it('reports no PDF attachment unless the content script confirms that exact file field', async () => {
+    const { chromeApi } = createChrome({
+      token: 'paired',
+      contentResponse: {
+        filled: ['name'],
+        unfilled: [{ field_id: 'resume-file', reason: 'Browser rejected the file' }],
+      },
+    });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
+      return jsonResponse({
+        profileId: 'profile-1', profileContextId: 'context-1',
+        filename: 'Resume.pdf', pdfBase64: 'UERG',
+      });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1',
+      fields: [{ field_id: 'name', value: 'Jane' }, ...PDF_FIELD],
+    })).resolves.toMatchObject({ attachments: [] });
   });
 
   it('rechecks queued PDF work and drops a stale fill when the profile changes in line', async () => {
@@ -776,5 +1046,77 @@ describe('createBackgroundService', () => {
       title: 'Engineer',
     })).resolves.toEqual({ application });
     expect(contextChecks).toBe(1);
+  });
+
+  it('proxies job-fit analysis with exact fields and rechecks the profile context', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const analysis = { score: 84, summary: 'Strong fit', strengths: [], gaps: [] };
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
+      if (url.endsWith('/ai/job-fit')) {
+        expect(JSON.parse(options.body)).toEqual({
+          profileContextId: 'context-1',
+          resumeId: 'resume-1',
+          job: { url: 'https://jobs.test/1', description: 'Build products' },
+        });
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-1', resumeId: 'resume-1', analysis,
+        });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'job.fit.analyze',
+      profileContextId: 'context-1',
+      resumeId: 'resume-1',
+      job: { url: 'https://jobs.test/1', description: 'Build products' },
+      ignored: 'do not send',
+    })).resolves.toMatchObject({ analysis });
+
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:17872/resumes',
+      'http://127.0.0.1:17872/ai/job-fit',
+      'http://127.0.0.1:17872/resumes',
+    ]);
+  });
+
+  it('proxies idempotent tailored-resume creation without retrying a committed mutation', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const resume = { id: 'companion-new', name: 'Tailored Resume' };
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/resumes')) {
+        return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+      }
+      if (url.endsWith('/ai/tailored-resume')) {
+        expect(JSON.parse(options.body)).toEqual({
+          profileContextId: 'context-1',
+          resumeId: 'resume-1',
+          requestId: 'request-uuid',
+          job: { description: 'Build products' },
+        });
+        return jsonResponse({
+          profileId: 'profile-1', profileContextId: 'context-1', created: true, resume,
+        }, { status: 201 });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+
+    await expect(service.handleMessage({
+      type: 'resume.tailor',
+      profileContextId: 'context-1',
+      resumeId: 'resume-1',
+      requestId: 'request-uuid',
+      job: { description: 'Build products' },
+    })).resolves.toMatchObject({ created: true, resume });
+
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:17872/resumes',
+      'http://127.0.0.1:17872/ai/tailored-resume',
+    ]);
   });
 });

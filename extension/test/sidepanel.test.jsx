@@ -56,12 +56,29 @@ function makeClient(overrides = {}) {
       profileContextId: 'context-1',
       resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
     })),
+    openApp: vi.fn(async () => ({ opened: true })),
     listResumes: vi.fn(),
     scanPage: vi.fn(async () => ({ descriptors: [], page: {} })),
     createMapping: vi.fn(async () => ({ fields: [], needs_human: [] })),
     fillPage: vi.fn(async () => ({ filled: [], unfilled: [] })),
     saveAnswer: vi.fn(async () => ({ answer: { id: 'answer-1' } })),
     logApplication: vi.fn(async () => ({ application: { id: 'application-1' } })),
+    analyzeJobFit: vi.fn(async () => ({
+      resumeId: 'resume-1',
+      analysis: {
+        matchScore: 82,
+        keywordMatches: ['product'],
+        missingKeywords: ['payments'],
+        evidence: [],
+        strengths: ['Relevant product experience'],
+        gaps: [],
+        recommendations: [],
+      },
+    })),
+    createTailoredResume: vi.fn(async () => ({
+      created: true,
+      resume: { id: 'resume-tailored', name: 'Tailored résumé' },
+    })),
     ...overrides,
   };
 }
@@ -71,7 +88,12 @@ let root;
 
 async function settle() {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (vi.isFakeTimers()) {
+      await Promise.resolve();
+      await Promise.resolve();
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   });
 }
 
@@ -89,9 +111,9 @@ async function waitFor(assertion) {
   throw lastError;
 }
 
-async function renderApp(client) {
+async function renderApp(client, props = {}) {
   await act(async () => {
-    root.render(<App client={client} />);
+    root.render(<App client={client} {...props} />);
   });
   await waitFor(() => expect(client.checkConnection).toHaveBeenCalledOnce());
   await settle();
@@ -127,7 +149,9 @@ async function change(control, value) {
   await act(async () => {
     const prototype = control instanceof HTMLSelectElement
       ? HTMLSelectElement.prototype
-      : HTMLInputElement.prototype;
+      : control instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(control, value);
     control.dispatchEvent(new Event(
       control instanceof HTMLSelectElement ? 'change' : 'input',
@@ -138,11 +162,10 @@ async function change(control, value) {
 }
 
 async function scanAndCreate(client) {
-  await click(button('Scan page'));
+  await click(button('Prepare autofill review'));
   expect(client.scanPage).toHaveBeenCalledOnce();
-  expect(client.createMapping).not.toHaveBeenCalled();
-  await click(button('Create review'));
   await waitFor(() => expect(client.createMapping).toHaveBeenCalledOnce());
+  await settle();
 }
 
 beforeEach(() => {
@@ -235,7 +258,7 @@ describe('runtimeClient', () => {
     expect(labelled('Résumé').value).toBe('resume-2');
     expect(labelled('Résumé').options[0].textContent).toBe('Frontend résumé');
     expect(container.textContent).not.toContain('Old Profile Name');
-    expect(container.textContent).not.toContain('Create review');
+    expect(button('Prepare autofill review').disabled).toBe(false);
     expect(container.querySelector('[role="alert"]').textContent)
       .toMatch(/reloaded or switched profiles/i);
   });
@@ -392,7 +415,7 @@ describe('runtimeClient', () => {
 });
 
 describe('App explicit workflow', () => {
-  it('automatically checks only connection and requires separate scan and mapping clicks', async () => {
+  it('automatically checks only connection and creates a review from one explicit click', async () => {
     const descriptors = [descriptor('name', { label: 'Full name' })];
     const client = makeClient({
       scanPage: vi.fn(async () => ({
@@ -414,13 +437,106 @@ describe('App explicit workflow', () => {
     expect(client.saveAnswer).not.toHaveBeenCalled();
     expect(client.logApplication).not.toHaveBeenCalled();
 
-    await click(button('Scan page'));
+    await click(button('Prepare autofill review'));
     expect(client.scanPage).toHaveBeenCalledOnce();
-    expect(client.createMapping).not.toHaveBeenCalled();
-
-    await click(button('Create review'));
     expect(client.createMapping).toHaveBeenCalledWith('context-1', 'resume-1', descriptors);
     expect(labelled('Full name').value).toBe('Jane');
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('Review ready — 1 field.');
+    expect(button('Start over')).toBeTruthy();
+  });
+
+  it('starts a fresh scan and mapping only after explicitly discarding a completed review', async () => {
+    const firstDescriptors = [descriptor('name', { label: 'Full name' })];
+    const secondDescriptors = [
+      descriptor('name', { label: 'Full name' }),
+      descriptor('email', { label: 'Email' }),
+    ];
+    const client = makeClient({
+      scanPage: vi.fn()
+        .mockResolvedValueOnce({ descriptors: firstDescriptors, page: {} })
+        .mockResolvedValueOnce({ descriptors: secondDescriptors, page: {} }),
+      createMapping: vi.fn()
+        .mockResolvedValueOnce({
+          fields: [mapped('name', 'Jane')],
+          needs_human: [],
+        })
+        .mockResolvedValueOnce({
+          fields: [mapped('name', 'Jane'), mapped('email', 'jane@example.com')],
+          needs_human: [],
+        }),
+    });
+    await renderApp(client);
+
+    await click(button('Prepare autofill review'));
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('Review ready — 1 field.');
+
+    await change(labelled('Full name'), 'Edited locally');
+    await click(button('Start over'));
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain('Review fields');
+    expect(button('Prepare autofill review')).toBeTruthy();
+
+    await click(button('Prepare autofill review'));
+    expect(client.scanPage).toHaveBeenCalledTimes(2);
+    expect(client.createMapping).toHaveBeenCalledTimes(2);
+    expect(client.createMapping.mock.calls.map((call) => call[2])).toEqual([
+      firstDescriptors,
+      secondDescriptors,
+    ]);
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('Review ready — 2 fields.');
+    expect(labelled('Email').value).toBe('jane@example.com');
+  });
+
+  it('reuses a successful scan when retrying after a mapping failure', async () => {
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn()
+        .mockRejectedValueOnce(new Error('The model request failed'))
+        .mockResolvedValueOnce({
+          fields: [mapped('name', 'Jane')],
+          needs_human: [],
+        }),
+    });
+    await renderApp(client);
+
+    await click(button('Prepare autofill review'));
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(container.querySelector('[role="alert"]')?.textContent)
+      .toContain('The model request failed');
+    expect(button('Retry preparing review').disabled).toBe(false);
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('Application fields scanned. Retry preparing the review.');
+
+    await click(button('Retry preparing review'));
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).toHaveBeenCalledTimes(2);
+    expect(client.createMapping.mock.calls.map((call) => call[2])).toEqual([
+      descriptors,
+      descriptors,
+    ]);
+    expect(labelled('Full name').value).toBe('Jane');
+    expect(button('Start over')).toBeTruthy();
+  });
+
+  it('announces an empty scan without requesting a mapping', async () => {
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors: [], page: {} })),
+    });
+    await renderApp(client);
+
+    await click(button('Prepare autofill review'));
+
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).not.toHaveBeenCalled();
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('No supported application fields were found on this page.');
+    expect(button('Prepare autofill review').disabled).toBe(false);
   });
 
   it('pairs only on click and keeps the running-app sentence plain and unlinked', async () => {
@@ -429,15 +545,12 @@ describe('App explicit workflow', () => {
     });
     await renderApp(client);
 
-    const runningCopy = [...container.querySelectorAll('p')]
-      .find((paragraph) => paragraph.textContent.trim() === 'Resume Designer must be running.');
-    expect(runningCopy).toBeTruthy();
-    expect(runningCopy.closest('a')).toBeNull();
+    expect(container.textContent).toMatch(/open the desktop app/i);
     expect(client.savePairing).not.toHaveBeenCalled();
 
     await change(labelled('Pairing token'), '  pasted-token  ');
     expect(client.savePairing).not.toHaveBeenCalled();
-    await click(button('Pair extension'));
+    await click(button('Pair with token'));
 
     expect(client.savePairing).toHaveBeenCalledWith('  pasted-token  ');
     await waitFor(() => expect(container.textContent).toContain('Connected'));
@@ -507,6 +620,77 @@ describe('App explicit workflow', () => {
     expect(container.textContent).toContain('Log application');
   });
 
+  it('shows mapped and needs-human custom controls as static manual fields and excludes them from fill', async () => {
+    const descriptors = [
+      descriptor('name', { label: 'Full name' }),
+      descriptor('country', { label: 'Country', type: 'custom' }),
+      descriptor('eligibility', { label: 'Work eligibility', type: 'custom' }),
+    ];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Jane')],
+        needs_human: [],
+      })),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+
+    expect(client.createMapping).toHaveBeenCalledWith(
+      'context-1', 'resume-1', [descriptors[0]],
+    );
+
+    const countryItem = [...container.querySelectorAll('.review-item')]
+      .find((item) => item.textContent.includes('Country'));
+    expect(countryItem).toBeTruthy();
+    expect(countryItem.querySelector('input, select, textarea')).toBeNull();
+    expect(countryItem.querySelector('[aria-label="Save answer for Country"]')).toBeNull();
+    expect(countryItem.querySelector('.field-question')?.textContent)
+      .toBe('Complete this field on the application page.');
+    expect(countryItem.querySelector('.manual-warning[role="note"]')?.textContent)
+      .toBe('This field can’t be autofilled. Complete it on the application page.');
+    const countryLabel = document.getElementById(countryItem.getAttribute('aria-labelledby'));
+    const countryDescriptions = countryItem.getAttribute('aria-describedby')
+      .split(' ')
+      .map((id) => document.getElementById(id)?.textContent)
+      .join(' ');
+    expect(countryLabel?.textContent).toBe('Country');
+    expect(countryDescriptions)
+      .toContain('This field can’t be autofilled. Complete it on the application page.');
+
+    const eligibilityItem = [...container.querySelectorAll('.review-item')]
+      .find((item) => item.textContent.includes('Work eligibility'));
+    expect(eligibilityItem.querySelector('input, select, textarea')).toBeNull();
+    expect(eligibilityItem.querySelector('[aria-label="Save answer for Work eligibility"]')).toBeNull();
+    expect(client.saveAnswer).not.toHaveBeenCalled();
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('Review ready — 3 fields; 2 require manual entry.');
+
+    await click(button('Fill reviewed fields'));
+    expect(client.fillPage).toHaveBeenCalledWith('context-1', 'resume-1', [
+      { field_id: 'name', value: 'Jane' },
+    ]);
+    expect(container.textContent).toContain('Country: This custom control must be completed manually.');
+    expect(container.textContent).toContain('Work eligibility: This custom control must be completed manually.');
+  });
+
+  it('omits the fill action when every reviewed field requires manual entry', async () => {
+    const descriptors = [descriptor('country', { label: 'Country', type: 'custom' })];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+    });
+    await renderApp(client);
+    await click(button('Prepare autofill review'));
+    await waitFor(() => expect(container.textContent).toContain('Review fields'));
+
+    expect(client.createMapping).not.toHaveBeenCalled();
+    expect([...container.querySelectorAll('button')]
+      .some((candidate) => candidate.textContent.trim() === 'Fill reviewed fields')).toBe(false);
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('Review ready — 1 field; 1 requires manual entry.');
+    expect(client.fillPage).not.toHaveBeenCalled();
+  });
+
   it('serializes scan and mapping actions synchronously and locks resume changes', async () => {
     const scanRequest = deferred();
     const mappingRequest = deferred();
@@ -528,10 +712,10 @@ describe('App explicit workflow', () => {
     await renderApp(client);
 
     const resumePicker = labelled('Résumé');
-    const scanButton = button('Scan page');
+    const reviewButton = button('Prepare autofill review');
     await act(async () => {
-      scanButton.click();
-      scanButton.click();
+      reviewButton.click();
+      reviewButton.click();
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
         .set.call(resumePicker, 'resume-2');
       resumePicker.dispatchEvent(new Event('change', { bubbles: true }));
@@ -539,26 +723,31 @@ describe('App explicit workflow', () => {
     });
 
     expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.createMapping).not.toHaveBeenCalled();
     expect(resumePicker.value).toBe('resume-1');
     expect(resumePicker.disabled).toBe(true);
+    expect(button('Scanning application form…').disabled).toBe(true);
 
     scanRequest.resolve({ descriptors, page: {} });
-    await settle();
-    const createButton = button('Create review');
+    await waitFor(() => expect(client.createMapping).toHaveBeenCalledOnce());
+    expect(button('Preparing field suggestions…').disabled).toBe(true);
+    expect(resumePicker.disabled).toBe(true);
     await act(async () => {
-      createButton.click();
-      createButton.click();
-      scanButton.click();
+      reviewButton.click();
+      reviewButton.click();
       await Promise.resolve();
     });
 
     expect(client.createMapping).toHaveBeenCalledOnce();
     expect(client.scanPage).toHaveBeenCalledOnce();
-    expect(scanButton.disabled).toBe(true);
+    expect(reviewButton.disabled).toBe(true);
 
     mappingRequest.resolve({ fields: [mapped('name', 'Jane')], needs_human: [] });
     await settle();
     expect(labelled('Full name').value).toBe('Jane');
+    expect(button('Start over')).toBeTruthy();
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toBe('Review ready — 1 field.');
   });
 
   it('keeps workflow controls locked while a fill request is pending', async () => {
@@ -575,13 +764,11 @@ describe('App explicit workflow', () => {
     await scanAndCreate(client);
 
     const fillButton = button('Fill reviewed fields');
-    const scanButton = button('Scan page');
-    const createButton = button('Create review');
+    const reviewButton = button('Start over');
     await act(async () => {
       fillButton.click();
       fillButton.click();
-      scanButton.click();
-      createButton.click();
+      reviewButton.click();
       await Promise.resolve();
     });
 
@@ -590,8 +777,7 @@ describe('App explicit workflow', () => {
     expect(client.createMapping).toHaveBeenCalledOnce();
     expect(labelled('Résumé').disabled).toBe(true);
     expect(labelled('Full name').disabled).toBe(true);
-    expect(scanButton.disabled).toBe(true);
-    expect(createButton.disabled).toBe(true);
+    expect(reviewButton.disabled).toBe(true);
 
     fillRequest.resolve({ filled: ['name'], unfilled: [] });
     await settle();
@@ -627,8 +813,7 @@ describe('App explicit workflow', () => {
 
     const editor = labelled('Work authorization?');
     const resumePicker = labelled('Résumé');
-    const scanButton = button('Scan page');
-    const createButton = button('Create review');
+    const reviewButton = button('Start over');
     await change(editor, 'Answer A');
     await act(async () => {
       button('Save answer').click();
@@ -638,8 +823,7 @@ describe('App explicit workflow', () => {
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
         .set.call(resumePicker, 'resume-2');
       resumePicker.dispatchEvent(new Event('change', { bubbles: true }));
-      scanButton.click();
-      createButton.click();
+      reviewButton.click();
       await Promise.resolve();
     });
 
@@ -654,7 +838,7 @@ describe('App explicit workflow', () => {
     expect(client.createMapping).toHaveBeenCalledOnce();
     expect(editor.disabled).toBe(true);
     expect(editor.value).toBe('Answer A');
-    expect(button('Scan page').disabled).toBe(true);
+    expect(reviewButton.disabled).toBe(true);
     expect(button('Fill reviewed fields').disabled).toBe(true);
 
     saveRequest.resolve({ answer: { id: 'answer-1' } });
@@ -792,11 +976,14 @@ describe('App explicit workflow', () => {
       createMapping: vi.fn(() => mappingRequest.promise),
     });
     await renderApp(client);
-    await click(button('Scan page'));
-    await click(button('Create review'));
+    await act(async () => {
+      button('Prepare autofill review').click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(client.createMapping).toHaveBeenCalledOnce();
-    expect(button('Scan page').disabled).toBe(true);
+    expect(button('Preparing field suggestions…').disabled).toBe(true);
 
     mappingRequest.resolve({ fields: [mapped('name', 'Jane')], needs_human: [] });
     await settle();
@@ -811,9 +998,11 @@ describe('App explicit workflow', () => {
     });
     const client = makeClient({ scanPage: vi.fn(async () => { throw activeTabError; }) });
     await renderApp(client);
-    await click(button('Scan page'));
+    await click(button('Prepare autofill review'));
+    expect(client.createMapping).not.toHaveBeenCalled();
     expect(container.querySelector('[role="alert"]').textContent)
       .toMatch(/click the extension toolbar button again/i);
+    expect(button('Prepare autofill review').disabled).toBe(false);
 
     const offlineClient = makeClient({
       checkConnection: vi.fn(async () => {
@@ -863,16 +1052,14 @@ describe('App explicit workflow', () => {
     await change(labelled('Role title'), 'Edited Role');
     const logButton = button('Log application');
     const resumePicker = labelled('Résumé');
-    const scanButton = button('Scan page');
-    const createButton = button('Create review');
+    const reviewButton = button('Start over');
     const fillButton = button('Fill reviewed fields');
     await act(async () => {
       logButton.click();
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
         .set.call(resumePicker, 'resume-2');
       resumePicker.dispatchEvent(new Event('change', { bubbles: true }));
-      scanButton.click();
-      createButton.click();
+      reviewButton.click();
       fillButton.click();
       logButton.click();
       await Promise.resolve();
@@ -898,6 +1085,326 @@ describe('App explicit workflow', () => {
     expect(button('Application logged').disabled).toBe(true);
     await click(button('Application logged'));
     expect(client.logApplication).toHaveBeenCalledOnce();
+  });
+
+  it('reports an unreachable app truthfully, never auto-launches, and opens it only on request', async () => {
+    const unavailable = new RuntimeMessageError({
+      message: 'Failed to fetch',
+      code: 'app_unavailable',
+      retryable: true,
+    });
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockRejectedValueOnce(unavailable)
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
+        }),
+    });
+
+    await renderApp(client);
+
+    expect(container.querySelector('[role="status"]')?.textContent).toMatch(/not connected/i);
+    expect(client.openApp).not.toHaveBeenCalled();
+    await click(button('Open Resume Designer'));
+
+    expect(client.openApp).toHaveBeenCalledOnce();
+    expect(client.checkConnection).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('Connected');
+  });
+
+  it('shows update and download guidance for an incompatible or missing desktop app', async () => {
+    const incompatible = new RuntimeMessageError({
+      message: 'Resume Designer must be updated',
+      code: 'app_update_required',
+      retryable: false,
+    });
+    const client = makeClient({
+      checkConnection: vi.fn(async () => { throw incompatible; }),
+    });
+    await renderApp(client);
+
+    expect(container.textContent).toContain('Update Resume Designer');
+    const download = [...container.querySelectorAll('a')]
+      .find((link) => link.textContent.trim() === 'Download Resume Designer');
+    expect(download?.href).toMatch(/github\.com\/ashproto\/Resume-Designer\/releases\/latest/);
+    expect(labelled.bind(null, 'Pairing token')).toThrow();
+    expect(client.openApp).not.toHaveBeenCalled();
+  });
+
+  it('marks a lost heartbeat offline, keeps the review visible, and rebuilds it after restart without filling', async () => {
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const unavailable = new RuntimeMessageError({
+      message: 'Resume Designer stopped',
+      code: 'app_unavailable',
+      retryable: true,
+    });
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
+        })
+        .mockRejectedValueOnce(unavailable)
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
+        }),
+      scanPage: vi.fn()
+        .mockResolvedValueOnce({ descriptors, page: { url: 'https://jobs.test/1', fingerprint: 'job-1' } })
+        .mockResolvedValueOnce({ descriptors, page: { url: 'https://jobs.test/1', fingerprint: 'job-1' } }),
+      createMapping: vi.fn()
+        .mockResolvedValueOnce({ fields: [mapped('name', 'Old value')], needs_human: [] })
+        .mockResolvedValueOnce({ fields: [mapped('name', 'Fresh value')], needs_human: [] }),
+    });
+    vi.useFakeTimers();
+    try {
+      await renderApp(client, { heartbeatMs: 25 });
+      await scanAndCreate(client);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25);
+      });
+      expect(container.querySelector('[role="status"]')?.textContent).toMatch(/not connected/i);
+      expect(labelled('Full name').value).toBe('Old value');
+
+      await act(async () => {
+        button('Reconnect and refresh review').click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(client.openApp).toHaveBeenCalledOnce();
+      expect(client.fillPage).not.toHaveBeenCalled();
+      expect(client.scanPage).toHaveBeenCalledTimes(2);
+      expect(client.createMapping).toHaveBeenCalledTimes(2);
+      expect(labelled('Full name').value).toBe('Fresh value');
+      expect(container.querySelector('.workflow-status')?.textContent).toMatch(/review refreshed/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears a stale review when a heartbeat observes a new profile context', async () => {
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
+        })
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-2',
+          profileContextId: 'context-2',
+          resumes: [{ id: 'resume-2', name: 'Product résumé' }],
+        }),
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Old profile value')], needs_human: [],
+      })),
+    });
+    vi.useFakeTimers();
+    try {
+      await renderApp(client, { heartbeatMs: 25 });
+      await scanAndCreate(client);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25);
+      });
+      expect(labelled('Résumé').value).toBe('resume-2');
+      expect(container.textContent).not.toContain('Old profile value');
+      expect(button('Prepare autofill review')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('announces the exact attached PDF filename and filled-field count', async () => {
+    const descriptors = [
+      descriptor('name', { label: 'Full name' }),
+      descriptor('resume-file', { label: 'Résumé PDF', type: 'file' }),
+    ];
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page: {} })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Jane'), mapped('resume-file', '__resume_pdf__', 1)],
+        needs_human: [],
+      })),
+      fillPage: vi.fn(async () => ({
+        filled: ['name', 'resume-file'],
+        unfilled: [],
+        attachments: [{ field_id: 'resume-file', filename: 'Jane-Product-Resume.pdf' }],
+      })),
+    });
+    await renderApp(client);
+    await scanAndCreate(client);
+    await click(button('Fill reviewed fields'));
+
+    expect(container.textContent)
+      .toContain('Attached Jane-Product-Resume.pdf. Filled 2 fields.');
+  });
+
+  it('offers a manual job-description fallback and renders app-backed fit analysis', async () => {
+    const page = {
+      company: 'Acme',
+      title: 'Staff Product Engineer',
+      url: 'https://jobs.test/staff',
+      description: '',
+      fingerprint: 'job-empty',
+    };
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors: [], page })),
+    });
+    await renderApp(client);
+
+    await click(button('Analyze fit'));
+    expect(client.analyzeJobFit).not.toHaveBeenCalled();
+    expect(labelled('Job description')).toBeTruthy();
+    await change(labelled('Job description'), 'Lead accessible product development.');
+    await click(button('Analyze fit'));
+
+    expect(client.analyzeJobFit).toHaveBeenCalledWith({
+      profileContextId: 'context-1',
+      resumeId: 'resume-1',
+      job: {
+        company: 'Acme',
+        title: 'Staff Product Engineer',
+        description: 'Lead accessible product development.',
+      },
+    });
+    expect(container.textContent).toContain('82% match');
+    expect(container.textContent).toContain('Relevant product experience');
+  });
+
+  it('reuses a tailoring request id, selects the new résumé, and rebuilds review only on the unchanged page', async () => {
+    const originalDescriptors = [descriptor('name', { label: 'Full name' })];
+    const tailoredDescriptors = [
+      descriptor('name', { label: 'Full name' }),
+      descriptor('country', { label: 'Country', type: 'custom' }),
+    ];
+    const page = {
+      company: 'Acme',
+      title: 'Staff Product Engineer',
+      url: 'https://jobs.test/staff',
+      description: 'Lead product development.',
+      fingerprint: 'job-123',
+    };
+    const failure = new RuntimeMessageError({
+      message: 'AI request timed out', code: 'ai_failed', retryable: true,
+    });
+    const tailoredId = 'companion-550e8400-e29b-41d4-a716-446655440000';
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Backend résumé' }],
+        })
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-2',
+          resumes: [{ id: tailoredId, name: 'Staff Product Engineer — Acme' }],
+        }),
+      scanPage: vi.fn()
+        .mockResolvedValueOnce({ descriptors: originalDescriptors, page })
+        .mockResolvedValueOnce({ descriptors: originalDescriptors, page })
+        .mockResolvedValueOnce({ descriptors: tailoredDescriptors, page })
+        .mockResolvedValueOnce({ descriptors: tailoredDescriptors, page }),
+      createMapping: vi.fn()
+        .mockResolvedValueOnce({ fields: [mapped('name', 'Jane')], needs_human: [] })
+        .mockResolvedValueOnce({ fields: [mapped('name', 'Tailored Jane')], needs_human: [] }),
+      createTailoredResume: vi.fn()
+        .mockRejectedValueOnce(failure)
+        .mockResolvedValueOnce({
+          created: true,
+          resume: { id: tailoredId, name: 'Staff Product Engineer — Acme' },
+        }),
+    });
+    await renderApp(client, {
+      createRequestId: () => '550e8400-e29b-41d4-a716-446655440000',
+    });
+    await scanAndCreate(client);
+
+    await click(button('Create tailored résumé'));
+    expect(client.createTailoredResume).toHaveBeenCalledTimes(1);
+    await click(button('Create tailored résumé'));
+    await waitFor(() => expect(client.createTailoredResume).toHaveBeenCalledTimes(2));
+
+    expect(client.createTailoredResume.mock.calls[0][0].requestId)
+      .toBe(client.createTailoredResume.mock.calls[1][0].requestId);
+    expect(client.createTailoredResume.mock.calls[0][0].job).toEqual({
+      company: 'Acme',
+      title: 'Staff Product Engineer',
+      description: 'Lead product development.',
+    });
+    expect(client.createTailoredResume.mock.calls[0][0].job).not.toHaveProperty('url');
+    expect(client.fillPage).not.toHaveBeenCalled();
+    expect(labelled('Résumé').value).toBe(tailoredId);
+    expect(client.createMapping).toHaveBeenLastCalledWith(
+      'context-2', tailoredId, [tailoredDescriptors[0]],
+    );
+    expect(labelled('Full name').value).toBe('Tailored Jane');
+    expect(container.textContent).toContain('Country');
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toMatch(/tailored résumé created.*review ready/i);
+  });
+
+  it('selects a tailored résumé but does not rebuild or fill when the page changes during generation', async () => {
+    const before = {
+      company: 'Acme', title: 'Engineer', description: 'Build products.',
+      url: 'https://jobs.test/one', fingerprint: 'job-one',
+    };
+    const after = {
+      company: 'Other', title: 'Designer', description: 'Design products.',
+      url: 'https://jobs.test/two', fingerprint: 'job-two',
+    };
+    const tailoredId = 'companion-550e8400-e29b-41d4-a716-446655440000';
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-1',
+          resumes: [{ id: 'resume-1', name: 'Base résumé' }],
+        })
+        .mockResolvedValueOnce({
+          connected: true,
+          profileId: 'profile-1',
+          profileContextId: 'context-2',
+          resumes: [{ id: tailoredId, name: 'Tailored résumé' }],
+        }),
+      scanPage: vi.fn()
+        .mockResolvedValueOnce({ descriptors: [], page: before })
+        .mockResolvedValueOnce({ descriptors: [descriptor('name')], page: after }),
+      createTailoredResume: vi.fn(async () => ({
+        created: true,
+        resume: { id: tailoredId, name: 'Tailored résumé' },
+      })),
+    });
+    await renderApp(client, {
+      createRequestId: () => '550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    await click(button('Create tailored résumé'));
+
+    expect(labelled('Résumé').value).toBe(tailoredId);
+    expect(client.createMapping).not.toHaveBeenCalled();
+    expect(client.fillPage).not.toHaveBeenCalled();
+    expect(container.querySelector('.workflow-status')?.textContent)
+      .toMatch(/page changed.*prepare a new autofill review/i);
   });
 
   it('contains no submit capability and uses explicit button types', async () => {

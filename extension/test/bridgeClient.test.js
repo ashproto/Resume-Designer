@@ -61,7 +61,22 @@ describe('createBridgeClient', () => {
   });
 
   it('calls health without reading or sending the bearer token', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }));
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      ok: true,
+      app: 'resume-designer',
+      protocolVersion: 2,
+      capabilities: [
+        'app.launch',
+        'pairing.challenge',
+        'profile.context',
+        'resume.pdf',
+        'ai.complete',
+        'ai.job-fit',
+        'ai.tailored-resume',
+        'profile.answers',
+        'applications.log',
+      ],
+    }));
     const getToken = vi.fn(async () => 'must-not-leak');
 
     await makeClient(fetchImpl, getToken).health();
@@ -75,12 +90,49 @@ describe('createBridgeClient', () => {
   });
 
   it.each([
+    [{ ok: true, app: 'something-else', protocolVersion: 2, capabilities: [] }, 'port_conflict'],
+    [{ ok: true, app: 'resume-designer', protocolVersion: 1, capabilities: [] }, 'app_update_required'],
+    [{
+      ok: true,
+      app: 'resume-designer',
+      protocolVersion: 2,
+      capabilities: ['profile.context'],
+    }, 'app_update_required'],
+  ])('rejects an invalid or incompatible health identity before auth (%s)', async (health, code) => {
+    const getToken = vi.fn(async () => 'must-not-send');
+    const fetchImpl = vi.fn(async () => jsonResponse(health));
+    const client = makeClient(fetchImpl, getToken);
+
+    await expect(client.health()).rejects.toMatchObject({ code, retryable: false });
+
+    expect(getToken).not.toHaveBeenCalled();
+    expect(new Headers(fetchImpl.mock.calls[0][1].headers).has('Authorization')).toBe(false);
+  });
+
+  it('claims a pairing grant without reading or sending the bearer token', async () => {
+    const getToken = vi.fn(async () => 'must-not-leak');
+    const fetchImpl = vi.fn(async () => jsonResponse({ token: 'claimed-token' }));
+    const client = makeClient(fetchImpl, getToken);
+
+    await expect(client.claimPairing({ requestId: 'request-id', verifier: 'verifier' }))
+      .resolves.toEqual({ token: 'claimed-token' });
+
+    expect(getToken).not.toHaveBeenCalled();
+    const [url, options] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${BRIDGE_BASE_URL}/pairing/claim`);
+    expect(options.method).toBe('POST');
+    expect(new Headers(options.headers).has('Authorization')).toBe(false);
+  });
+
+  it.each([
     ['listResumes', [], '/resumes'],
     ['getResume', ['variant-1'], '/resumes/variant-1'],
     ['getPdf', ['variant-1'], '/resumes/variant-1/pdf'],
     ['complete', [{ messages: [{ role: 'user', content: 'Hello' }] }], '/ai/complete'],
     ['logApplication', [{ variantId: 'variant-1' }], '/applications'],
     ['saveAnswer', [{ question: 'Notice?', answer: 'Two weeks' }], '/profile/answers'],
+    ['analyzeJobFit', [{ resumeId: 'variant-1', job: { description: 'Build things' } }], '/ai/job-fit'],
+    ['createTailoredResume', [{ resumeId: 'variant-1', requestId: 'request-1', job: { description: 'Build things' } }], '/ai/tailored-resume'],
   ])('sends a bearer token for %s', async (method, args, expectedPath) => {
     const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }));
     const getToken = vi.fn(async () => '  secret token  ');
@@ -96,6 +148,8 @@ describe('createBridgeClient', () => {
     ['complete', '/ai/complete', { messages: [{ role: 'user', content: 'Hello' }] }],
     ['logApplication', '/applications', { variantId: 'variant-1', company: 'Acme' }],
     ['saveAnswer', '/profile/answers', { question: 'Notice?', answer: 'Two weeks' }],
+    ['analyzeJobFit', '/ai/job-fit', { resumeId: 'variant-1', job: { description: 'Build things' } }],
+    ['createTailoredResume', '/ai/tailored-resume', { resumeId: 'variant-1', requestId: 'request-1', job: { description: 'Build things' } }],
   ])('sends JSON for %s', async (method, expectedPath, payload) => {
     const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }));
 
@@ -119,6 +173,18 @@ describe('createBridgeClient', () => {
     const result = await makeClient(fetchImpl).complete(payload);
 
     expect(result).toEqual({ text: 'Drafted answer' });
+  });
+
+  it.each(['analyzeJobFit', 'createTailoredResume'])('applies the 1 MiB cap to %s responses', async (method) => {
+    const fetchImpl = vi.fn(async () => jsonResponse(
+      { analysis: 'x'.repeat(ONE_MIB) },
+      { headers: { 'Content-Length': String(ONE_MIB + 100) } },
+    ));
+
+    await expect(makeClient(fetchImpl)[method]({})).rejects.toMatchObject({
+      code: 'response_too_large',
+      retryable: false,
+    });
   });
 
   it('rejects an AI completion whose Content-Length exceeds 1 MiB before reading it', async () => {
@@ -239,6 +305,28 @@ describe('createBridgeClient', () => {
       code: 'unauthorized',
       retryable: false,
     });
+  });
+
+  it.each([
+    [425, 'pairing_pending', true],
+    [403, 'pairing_rejected', false],
+    [404, 'pairing_not_found', false],
+    [507, 'storage_full', false],
+    [503, 'bridge_busy', true],
+    [409, 'idempotency_conflict', false],
+    [400, 'invalid_job', false],
+    [502, 'ai_failed', true],
+  ])('preserves typed bridge errors (%i %s)', async (status, code, retryable) => {
+    const fetchImpl = vi.fn(async () => jsonResponse(
+      { error: `typed ${code}`, code },
+      { status },
+    ));
+    const client = makeClient(fetchImpl);
+    const operation = code.startsWith('pairing_')
+      ? client.claimPairing({ requestId: 'request-id', verifier: 'verifier' })
+      : client.createTailoredResume({});
+
+    await expect(operation).rejects.toMatchObject({ status, code, retryable });
   });
 
   it('classifies an in-progress PDF export as retryable', async () => {
