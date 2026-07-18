@@ -18,9 +18,37 @@ function makeDeps(overrides = {}) {
     addApplication: vi.fn((fields) => ({ id: 'app-1', ...fields })),
     saveLearnedAnswer: vi.fn((q, a) => ({ id: 'ans-2', question: q, answer: a })),
     complete: vi.fn(async () => 'ai says hi'),
+    claimPairing: vi.fn(async () => ({ status: 200, body: { token: 'tok-123' } })),
+    analyzeJobFit: vi.fn(async ({ resumeId }) => ({
+      resumeId,
+      analysis: {
+        matchScore: 80,
+        keywordMatches: ['JavaScript'],
+        missingKeywords: [],
+        evidence: [],
+        strengths: ['Relevant experience'],
+        gaps: [],
+        recommendations: [],
+      },
+    })),
+    createTailoredResume: vi.fn(async () => ({
+      created: true,
+      resume: {
+        id: 'companion-550e8400-e29b-41d4-a716-446655440000',
+        name: 'Staff Engineer — Acme',
+        updatedAt: '2026-07-17T20:00:00.000Z',
+      },
+    })),
     exportVariantPdf: vi.fn(async () => 'JVBERi0base64=='),
+    writesSuspended: vi.fn(() => false),
     ...overrides,
   };
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
 }
 
 const AUTH = 'Bearer tok-123';
@@ -30,7 +58,37 @@ describe('auth', () => {
   it('health needs no token', async () => {
     const res = await route(makeDeps(), { method: 'GET', path: '/health', authorization: '', body: '' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, app: 'resume-designer', version: '1.0.0' });
+    expect(res.body).toEqual({
+      ok: true,
+      app: 'resume-designer',
+      version: '1.0.0',
+      protocolVersion: 2,
+      capabilities: expect.arrayContaining([
+        'app.launch',
+        'pairing.challenge',
+        'ai.job-fit',
+        'ai.tailored-resume',
+      ]),
+    });
+  });
+
+  it('allows a one-time pairing claim without a bearer token and preserves its status', async () => {
+    const deps = makeDeps({
+      claimPairing: vi.fn(async () => ({
+        status: 425,
+        body: { error: 'pairing approval is pending', code: 'pairing_pending' },
+      })),
+    });
+    const body = JSON.stringify({ requestId: 'request-id', verifier: 'verifier' });
+    const res = await route(deps, {
+      method: 'POST', path: '/pairing/claim', authorization: '', body,
+    });
+
+    expect(res).toEqual({
+      status: 425,
+      body: { error: 'pairing approval is pending', code: 'pairing_pending' },
+    });
+    expect(deps.claimPairing).toHaveBeenCalledWith({ requestId: 'request-id', verifier: 'verifier' });
   });
   it('rejects a missing or wrong token with 401', async () => {
     for (const authorization of ['', 'Bearer wrong', 'tok-123']) {
@@ -152,9 +210,118 @@ describe('POST /ai/complete', () => {
   });
 });
 
+describe('purpose-specific companion AI routes', () => {
+  const job = {
+    title: 'Staff Engineer',
+    company: 'Acme',
+    description: 'Build accessible products.',
+    url: 'https://jobs.example.test/staff-engineer',
+  };
+
+  it('POST /ai/job-fit delegates selected-resume analysis and labels the response context', async () => {
+    const deps = makeDeps();
+    const res = await route(deps, {
+      method: 'POST', path: '/ai/job-fit', authorization: AUTH,
+      body: JSON.stringify({ profileContextId: 'context-1', resumeId: 'v-2', job }),
+    });
+
+    expect(res).toEqual({
+      status: 200,
+      body: {
+        profileId: 'profile-1',
+        profileContextId: 'context-1',
+        resumeId: 'v-2',
+        analysis: expect.objectContaining({ matchScore: 80 }),
+      },
+    });
+    expect(deps.analyzeJobFit).toHaveBeenCalledWith({ resumeId: 'v-2', job });
+  });
+
+  it('POST /ai/tailored-resume returns 201 for creation and 200 for an idempotent replay', async () => {
+    const request = {
+      method: 'POST', path: '/ai/tailored-resume', authorization: AUTH,
+      body: JSON.stringify({
+        profileContextId: 'context-1',
+        resumeId: 'v-1',
+        requestId: '550e8400-e29b-41d4-a716-446655440000',
+        job,
+      }),
+    };
+    const deps = makeDeps();
+
+    let res = await route(deps, request);
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({
+      profileId: 'profile-1',
+      profileContextId: 'context-1',
+      created: true,
+      resume: expect.objectContaining({ id: expect.stringMatching(/^companion-/) }),
+    });
+
+    deps.createTailoredResume.mockResolvedValueOnce({
+      created: false,
+      resume: res.body.resume,
+    });
+    res = await route(deps, request);
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(false);
+    expect(deps.createTailoredResume).toHaveBeenLastCalledWith({
+      resumeId: 'v-1',
+      requestId: '550e8400-e29b-41d4-a716-446655440000',
+      job,
+    });
+  });
+
+  it.each(['/ai/job-fit', '/ai/tailored-resume'])('409s stale context before %s work', async (path) => {
+    const deps = makeDeps();
+    const res = await route(deps, {
+      method: 'POST', path, authorization: AUTH,
+      body: JSON.stringify({
+        profileContextId: 'context-old', resumeId: 'v-1',
+        requestId: '550e8400-e29b-41d4-a716-446655440000', job,
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('profile_changed');
+    expect(deps.analyzeJobFit).not.toHaveBeenCalled();
+    expect(deps.createTailoredResume).not.toHaveBeenCalled();
+  });
+
+  it('preserves typed validation, AI, and persistence errors from job actions', async () => {
+    const failures = [
+      ['/ai/job-fit', 'analyzeJobFit', { status: 400, code: 'invalid_job', message: 'job description is required' }],
+      ['/ai/job-fit', 'analyzeJobFit', { status: 502, code: 'invalid_ai_response', message: 'AI returned invalid analysis' }],
+      ['/ai/tailored-resume', 'createTailoredResume', { status: 507, code: 'storage_full', message: 'Could not save resume' }],
+    ];
+
+    for (const [path, method, failure] of failures) {
+      const error = Object.assign(new Error(failure.message), failure);
+      const deps = makeDeps({ [method]: vi.fn(async () => { throw error; }) });
+      const res = await route(deps, {
+        method: 'POST', path, authorization: AUTH,
+        body: JSON.stringify({
+          profileContextId: 'context-1', resumeId: 'v-1',
+          requestId: '550e8400-e29b-41d4-a716-446655440000', job,
+        }),
+      });
+      expect(res).toEqual({
+        status: failure.status,
+        body: { error: failure.message, code: failure.code },
+      });
+    }
+  });
+});
+
 describe('POST body shape', () => {
   it.each([null, [], 'text', 42])('400s non-object JSON %j on every POST route', async (value) => {
-    for (const path of ['/ai/complete', '/applications', '/profile/answers']) {
+    for (const path of [
+      '/ai/complete',
+      '/ai/job-fit',
+      '/ai/tailored-resume',
+      '/applications',
+      '/profile/answers',
+    ]) {
       const res = await route(makeDeps(), {
         method: 'POST', path, authorization: AUTH, body: JSON.stringify(value),
       });
@@ -308,6 +475,21 @@ describe('write suspension during a destructive import', () => {
           messages: [{ role: 'user', content: 'map these fields' }],
         }),
       },
+      {
+        method: 'POST', path: '/ai/job-fit', authorization: AUTH,
+        body: JSON.stringify({
+          profileContextId: 'context-1', resumeId: 'v-1',
+          job: { description: 'Build products' },
+        }),
+      },
+      {
+        method: 'POST', path: '/ai/tailored-resume', authorization: AUTH,
+        body: JSON.stringify({
+          profileContextId: 'context-1', resumeId: 'v-1',
+          requestId: '550e8400-e29b-41d4-a716-446655440000',
+          job: { description: 'Build products' },
+        }),
+      },
     ];
 
     for (const request of requests) {
@@ -317,6 +499,8 @@ describe('write suspension during a destructive import', () => {
     }
     expect(deps.exportVariantPdf).not.toHaveBeenCalled();
     expect(deps.complete).not.toHaveBeenCalled();
+    expect(deps.analyzeJobFit).not.toHaveBeenCalled();
+    expect(deps.createTailoredResume).not.toHaveBeenCalled();
 
     const health = await route(deps, {
       method: 'GET', path: '/health', authorization: '', body: '',
@@ -331,6 +515,76 @@ describe('write suspension during a destructive import', () => {
     });
     expect(res.status).toBe(201);
     expect(deps.addApplication).toHaveBeenCalled();
+  });
+
+  it('discards asynchronous PDF and AI results when an import starts while they are running', async () => {
+    const cases = [
+      {
+        path: '/resumes/v-1/pdf',
+        method: 'GET',
+        dep: 'exportVariantPdf',
+        body: '',
+        result: 'JVBERi0base64==',
+      },
+      {
+        path: '/ai/complete',
+        method: 'POST',
+        dep: 'complete',
+        body: JSON.stringify({
+          profileContextId: 'context-1',
+          messages: [{ role: 'user', content: 'map these fields' }],
+        }),
+        result: 'completion',
+      },
+      {
+        path: '/ai/job-fit',
+        method: 'POST',
+        dep: 'analyzeJobFit',
+        body: JSON.stringify({
+          profileContextId: 'context-1', resumeId: 'v-1',
+          job: { description: 'Build products' },
+        }),
+        result: { resumeId: 'v-1', analysis: { matchScore: 80 } },
+      },
+      {
+        path: '/ai/tailored-resume',
+        method: 'POST',
+        dep: 'createTailoredResume',
+        body: JSON.stringify({
+          profileContextId: 'context-1', resumeId: 'v-1',
+          requestId: '550e8400-e29b-41d4-a716-446655440000',
+          job: { description: 'Build products' },
+        }),
+        result: { created: true, resume: { id: 'companion-result' } },
+      },
+    ];
+
+    for (const testCase of cases) {
+      let suspended = false;
+      const operation = deferred();
+      const dependency = vi.fn(() => operation.promise);
+      const deps = makeDeps({
+        writesSuspended: () => suspended,
+        [testCase.dep]: dependency,
+      });
+      const response = route(deps, {
+        method: testCase.method,
+        path: testCase.path,
+        authorization: AUTH,
+        body: testCase.body,
+      });
+      await vi.waitFor(() => expect(dependency).toHaveBeenCalledOnce());
+      suspended = true;
+      operation.resolve(testCase.result);
+
+      await expect(response).resolves.toEqual({
+        status: 503,
+        body: {
+          error: 'a data import is in progress; retry after the app reloads',
+          code: 'profile_changed',
+        },
+      });
+    }
   });
 });
 

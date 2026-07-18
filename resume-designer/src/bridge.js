@@ -11,10 +11,24 @@
 import { appStorage } from './appStorage.js';
 import { store } from './store.js';
 import { createBridgeRouter } from './bridgeRoutes.js';
-import { getVariants, getUserProfile } from './persistence.js';
+import {
+  generateUniqueVariantName,
+  getSettings,
+  getVariants,
+  getUserProfile,
+  saveVariant,
+} from './persistence.js';
 import { addApplication } from './applications.js';
 import { getAllLearnedAnswers, saveLearnedAnswer } from './learnedAnswers.js';
-import { completeForBridge } from './aiService.js';
+import {
+  analyzeResumeDataAgainstJobs,
+  completeForBridge,
+  generateResumeChangesForData,
+  getDefaultModelId,
+} from './aiService.js';
+import { createCompanionJobActions } from './companionJobActions.js';
+import { createCompanionPairing } from './companionPairing.js';
+import { loadVariant } from './variantManager.js';
 
 const TOKEN_KEY = 'resume-designer-bridge-token';
 
@@ -46,12 +60,47 @@ export async function initBridge({ profileId = null } = {}) {
   // initiate a switch, so it stays aligned with this boot's storage mapping.
   const profileContextId = crypto.randomUUID();
 
-  const [{ listen }, { invoke }, { getVersion }] = await Promise.all([
+  const [
+    { listen },
+    { invoke },
+    { getVersion },
+    { getCurrent, onOpenUrl },
+    { confirm: confirmNative },
+  ] = await Promise.all([
     import('@tauri-apps/api/event'),
     import('@tauri-apps/api/core'),
     import('@tauri-apps/api/app'),
+    import('@tauri-apps/plugin-deep-link'),
+    import('@tauri-apps/plugin-dialog'),
   ]);
   const version = await getVersion();
+
+  const pairing = createCompanionPairing({
+    ensureToken: ensureBridgeToken,
+    flush: () => appStorage.flush(),
+    confirmPairing: () => confirmNative(
+      'Allow the Resume Designer Companion extension to read your local résumés, use your configured AI, and save tailored résumés, answers, and application records?',
+      {
+        title: 'Connect browser extension',
+        kind: 'info',
+        okLabel: 'Connect',
+        cancelLabel: 'Cancel',
+      },
+    ),
+  });
+
+  const jobActions = createCompanionJobActions({
+    getVariants,
+    getSettings,
+    getDefaultModelId,
+    analyzeResumeDataAgainstJobs,
+    generateResumeChangesForData,
+    generateUniqueVariantName,
+    saveVariant,
+    loadVariant,
+    flush: () => appStorage.flush(),
+    writesSuspended: () => store.areSavesSuspended(),
+  });
 
   // Defensive lookup of pdf.js's export: if the module fails to load or the
   // export is missing, the PDF route 500s cleanly instead of breaking init.
@@ -79,6 +128,9 @@ export async function initBridge({ profileId = null } = {}) {
     saveLearnedAnswer,
     complete: completeForBridge,
     exportVariantPdf,
+    claimPairing: pairing.claim,
+    analyzeJobFit: jobActions.analyzeJobFit,
+    createTailoredResume: jobActions.createTailoredResume,
     // Reject persisting writes while a destructive import is mid-flight — the
     // bridge's writers (addApplication / saveLearnedAnswer) bypass the store, so
     // store.suspendSaves() alone doesn't stop them serializing stale caches over
@@ -102,5 +154,19 @@ export async function initBridge({ profileId = null } = {}) {
       console.warn('[Bridge] respond failed:', err);
     }
   });
+
+  const registerDeepLinks = (urls) => {
+    for (const url of urls ?? []) {
+      void pairing.registerUrl(url).catch((error) => {
+        console.warn('[Bridge] companion link could not be handled:', error?.message || error);
+      });
+    }
+  };
+  await onOpenUrl(registerDeepLinks);
+  try {
+    registerDeepLinks(await getCurrent());
+  } catch (error) {
+    console.warn('[Bridge] initial companion link unavailable:', error?.message || error);
+  }
   console.log('[Bridge] ready on 127.0.0.1:17872');
 }

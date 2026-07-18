@@ -11,6 +11,19 @@
 
 const json = (status, body) => ({ status, body });
 
+export const COMPANION_PROTOCOL_VERSION = 2;
+export const COMPANION_CAPABILITIES = Object.freeze([
+  'app.launch',
+  'pairing.challenge',
+  'profile.context',
+  'resume.pdf',
+  'ai.complete',
+  'ai.job-fit',
+  'ai.tailored-resume',
+  'profile.answers',
+  'applications.log',
+]);
+
 const profileChanged = () => json(409, {
   error: 'profile context changed; refresh the companion extension',
   code: 'profile_changed',
@@ -25,7 +38,13 @@ const isProfileSensitiveRequest = (method, path) => (
   (method === 'GET' && /^\/resumes(?:\/|$)/.test(path))
   || (
     method === 'POST'
-    && ['/ai/complete', '/applications', '/profile/answers'].includes(path)
+    && [
+      '/ai/complete',
+      '/ai/job-fit',
+      '/ai/tailored-resume',
+      '/applications',
+      '/profile/answers',
+    ].includes(path)
   )
 );
 
@@ -49,7 +68,30 @@ function pdfFilename(name) {
 export function createBridgeRouter(deps) {
   return async function handleBridgeRequest({ method, path, authorization, body }) {
     if (method === 'GET' && path === '/health') {
-      return json(200, { ok: true, app: 'resume-designer', version: deps.version });
+      return json(200, {
+        ok: true,
+        app: 'resume-designer',
+        version: deps.version,
+        protocolVersion: COMPANION_PROTOCOL_VERSION,
+        capabilities: [...COMPANION_CAPABILITIES],
+      });
+    }
+
+    if (method === 'POST' && path === '/pairing/claim') {
+      let claim;
+      try {
+        claim = body ? JSON.parse(body) : {};
+      } catch {
+        return json(400, { error: 'invalid JSON body' });
+      }
+      if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
+        return json(400, { error: 'JSON body must be an object' });
+      }
+      try {
+        return await deps.claimPairing(claim);
+      } catch (error) {
+        return json(500, { error: error?.message || 'pairing failed' });
+      }
     }
 
     const token = deps.getToken();
@@ -110,6 +152,7 @@ export function createBridgeRouter(deps) {
         const variant = findVariant(deps.getVariants(), pdf[1]);
         if (!variant) return json(404, { error: `no resume with id ${pdf[1]}` });
         const pdfBase64 = await deps.exportVariantPdf(variant.id);
+        if (deps.writesSuspended?.()) return importInProgress();
         return json(200, {
           profileId: deps.profileId,
           profileContextId: deps.profileContextId,
@@ -131,10 +174,46 @@ export function createBridgeRouter(deps) {
             systemPrompt: parsed.systemPrompt,
             reasoningEffort: parsed.reasoningEffort,
           });
+          if (deps.writesSuspended?.()) return importInProgress();
           return json(200, { text });
         } catch (err) {
           return json(502, { error: err?.message || 'AI request failed' });
         }
+      }
+
+      if (method === 'POST' && path === '/ai/job-fit') {
+        if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) {
+          return profileChanged();
+        }
+        const result = await deps.analyzeJobFit({
+          resumeId: parsed.resumeId,
+          job: parsed.job,
+        });
+        if (deps.writesSuspended?.()) return importInProgress();
+        return json(200, {
+          profileId: deps.profileId,
+          profileContextId: deps.profileContextId,
+          resumeId: result.resumeId,
+          analysis: result.analysis,
+        });
+      }
+
+      if (method === 'POST' && path === '/ai/tailored-resume') {
+        if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) {
+          return profileChanged();
+        }
+        const result = await deps.createTailoredResume({
+          resumeId: parsed.resumeId,
+          requestId: parsed.requestId,
+          job: parsed.job,
+        });
+        if (deps.writesSuspended?.()) return importInProgress();
+        return json(result.created ? 201 : 200, {
+          profileId: deps.profileId,
+          profileContextId: deps.profileContextId,
+          created: result.created,
+          resume: result.resume,
+        });
       }
 
       if (method === 'POST' && path === '/applications') {
@@ -171,7 +250,10 @@ export function createBridgeRouter(deps) {
 
       return json(404, { error: `no route: ${method} ${path}` });
     } catch (err) {
-      return json(500, { error: err?.message || 'internal error' });
+      const status = Number.isInteger(err?.status) ? err.status : 500;
+      const response = { error: err?.message || 'internal error' };
+      if (typeof err?.code === 'string' && err.code) response.code = err.code;
+      return json(status, response);
     }
   };
 }

@@ -22,26 +22,38 @@ The server binds `127.0.0.1` only — it is never reachable off the machine. The
 port (`17872`) is fixed. If the port is already in use the bridge does not
 start (it logs and gives up); the app itself is unaffected.
 
-## Authentication
+## Authentication and pairing
 
-Every endpoint **except `GET /health`** requires a bearer token:
+Every endpoint except `GET /health` and `POST /pairing/claim` requires a bearer
+token:
 
 ```
 Authorization: Bearer <token>
 ```
 
-The token is a per-install random UUID. Find it in the app under **Settings →
-Data → Companion extension** (the address and token are shown there; the token
-is masked behind a show/hide toggle and has a copy button). Treat it like a
+The token is a per-install random UUID. Normal users do not copy it. When the
+user chooses **Open and connect**, the extension creates a
+one-time verifier and opens a `resume-designer://companion/pair` link containing
+only its SHA-256 challenge, a random request id, and the protocol version. The
+app asks the user to approve access. After approval, the extension exchanges
+the verifier at `POST /pairing/claim`, verifies the returned token against
+`GET /resumes`, and only then stores it in memory-backed
+`chrome.storage.session`. It is never persisted to Chrome local/sync storage
+and is cleared on extension reload/update/disable or browser restart. The token
+never appears in the deep link.
+
+The masked token remains available under **Settings → Data → Companion
+extension** as an advanced recovery/troubleshooting path. Treat it like a
 password — anyone with the token and local machine access can drive the app.
 
 The token is part of the backup-owned keyspace, so **full backups include it**:
-restoring a backup on the same machine keeps existing pairings working without
-re-pairing. That is safe to leave in the backup file — the server is
-loopback-only, so the token is useless off the machine. The flip side: after
-**replace-importing** a backup taken on a different install, the app's token is
-different from the one your extension paired with, so the extension must be
-re-paired (copy the new token from Settings).
+restoring a backup on the same machine preserves authentication for the current
+browser session. A later browser session repeats the approval flow, but never
+requires manual token copying. The server is loopback-only, so the token is
+useless without local access to the machine running Resume Designer. After
+**replace-importing** a backup taken on a different install, the old token may
+stop authenticating; the extension then returns to the same approval-based
+pairing flow. Manual copying is only the fallback.
 
 A missing or wrong token on any authenticated route returns:
 
@@ -64,12 +76,20 @@ HTTP 401
 - Request bodies are capped at **1 MiB**. A larger body returns
   `413 {"error":"request body too large"}` (enforced in Rust before the request
   reaches the router).
+- Requests are accepted only when the HTTP `Host` header is exactly
+  `127.0.0.1:17872`. Responses use `Cache-Control: no-store` and
+  `X-Content-Type-Options: nosniff`.
+- The native bridge accepts at most **16 in-flight requests**. Additional
+  requests fail immediately with
+  `503 {"error":"Resume Designer is handling too many companion requests","code":"bridge_busy"}`
+  rather than accumulating unbounded work inside the app.
 - Because every request round-trips through the running app's JavaScript (see
   [Design notes](#design-notes)), the app must be **running and unlocked**. If
   the webview does not answer in time the server returns
   `504 {"error":"the app did not answer in time — is On Paper running and unlocked?"}`.
-  Timeouts: **180 s** for `/ai/*` and any `…/pdf` path (model latency / PDF
-  render), **30 s** for everything else.
+  Timeouts: **2 s** for `/health` and `/pairing/claim`, **180 s** for `/ai/*`
+  and any `…/pdf` path (model latency / PDF render), **30 s** for everything
+  else.
 - If the app window is unavailable to receive the request at all, the server
   returns `502 {"error":"app window unavailable"}`.
 - If the server's internal request-tracking state is unusable (a poisoned lock
@@ -84,7 +104,7 @@ HTTP 401
   switching profiles does not require re-pairing.
 - While saves are suspended for a destructive backup import, every
   profile-sensitive route — `GET /resumes`, `GET /resumes/:id`,
-  `GET /resumes/:id/pdf`, `POST /ai/complete`, `POST /applications`, and
+  `GET /resumes/:id/pdf`, every `POST /ai/*` action, `POST /applications`, and
   `POST /profile/answers` — returns
   `503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
   until the app reloads. The public `GET /health` probe remains available
@@ -98,13 +118,16 @@ HTTP 401
 | `201`  | Created (`POST /applications`, `POST /profile/answers`) |
 | `400`  | Invalid JSON body, non-UTF-8 request body, or request-body validation failed |
 | `401`  | Missing/invalid bearer token |
-| `404`  | Unknown resume id, or unknown route |
-| `409`  | A profile-sensitive request supplied a stale or missing `profileContextId` |
+| `403`  | A one-time pairing request was rejected |
+| `404`  | Unknown resume id, pairing request, or route |
+| `409`  | Stale/missing `profileContextId`, or reuse of a tailoring idempotency key with a different request |
 | `413`  | Request body exceeds 1 MiB |
+| `425`  | Pairing approval is still pending |
 | `500`  | Unhandled error inside the router (e.g. PDF export failed), or the Rust-side bridge state lock is poisoned |
 | `502`  | AI upstream failed (`/ai/complete`), or app window unavailable |
-| `503`  | A destructive backup import has suspended all profile-sensitive routes until reload (`code: "profile_changed"`) |
+| `503`  | Bridge concurrency limit reached (`code: "bridge_busy"`), or a destructive import suspended profile-sensitive routes (`code: "profile_changed"`) |
 | `504`  | The app did not answer within the timeout |
+| `507`  | A tailored résumé could not be saved or loaded from local storage |
 
 ---
 
@@ -114,19 +137,72 @@ In the examples below, `$TOKEN` is the pairing token from Settings.
 
 ### `GET /health`
 
-Liveness probe. **Public** — the only route that does not require a token. Use
-it to confirm the bridge is up and to read the app version. It remains
+Liveness probe. **Public** — one of two routes that do not require a token (the
+other is the one-time pairing claim). Use it to confirm the bridge is up and
+to read the app version. It remains
 available while a destructive backup import suspends profile-sensitive routes.
 
 **Response** `200`
 
 ```json
-{"ok":true,"app":"resume-designer","version":"1.0.0"}
+{
+  "ok": true,
+  "app": "resume-designer",
+  "version": "1.0.0",
+  "protocolVersion": 2,
+  "capabilities": [
+    "app.launch",
+    "pairing.challenge",
+    "profile.context",
+    "resume.pdf",
+    "ai.complete",
+    "ai.job-fit",
+    "ai.tailored-resume",
+    "profile.answers",
+    "applications.log"
+  ]
+}
 ```
+
+Clients must validate `app`, `protocolVersion`, and their required capability
+set before sending a stored bearer token. A different response on the fixed
+port is not Resume Designer; an older protocol/capability set requires an app
+update.
 
 ```bash
 curl -s http://127.0.0.1:17872/health
 ```
+
+---
+
+### `POST /pairing/claim`
+
+One-time unauthenticated exchange used only after the app receives a valid
+`resume-designer://companion/pair` link and the user approves it. The verifier
+must be 43–128 base64url characters and hash to the challenge registered by the
+deep link. Grants expire after 60 seconds and are deleted after the first
+successful claim or a rejection.
+
+**Request**
+
+```json
+{
+  "requestId": "a-random-base64url-request-id",
+  "verifier": "the-extension-only-base64url-verifier"
+}
+```
+
+**Response** `200`
+
+```json
+{"token":"per-install-token"}
+```
+
+**Errors:** `400 {"code":"invalid_pairing_claim"}` for malformed input;
+`403 {"code":"pairing_rejected"}`; `404 {"code":"pairing_not_found"}` for
+unknown, expired, wrong-verifier, or replayed claims; `425
+{"code":"pairing_pending"}` while the confirmation is open; `503
+{"code":"pairing_unavailable"}` if the app cannot make the token durable.
 
 ---
 
@@ -296,6 +372,106 @@ model does not respond within 180 s.
 
 ---
 
+### `POST /ai/job-fit`
+
+Analyze one explicitly selected résumé against a normalized job description
+using the app's configured analysis model, reasoning setting, OpenRouter key,
+and usage tracking.
+
+**Request**
+
+```json
+{
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
+  "resumeId": "custom-1770251688327",
+  "job": {
+    "title": "Staff Product Engineer",
+    "company": "Example Co",
+    "url": "https://jobs.example.com/staff-product-engineer",
+    "description": "Job description text…"
+  }
+}
+```
+
+The description is required and capped at 64 KiB after normalization. Title
+and company are capped at 300 characters; URL is optional, capped at 2,048
+characters, and must be HTTP(S). AI output is recursively size- and
+shape-bounded before it is returned.
+
+**Response** `200`
+
+```json
+{
+  "profileId": "pmf2k8s9c1abc234",
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
+  "resumeId": "custom-1770251688327",
+  "analysis": {
+    "matchScore": 82,
+    "keywordMatches": ["product strategy"],
+    "missingKeywords": ["payments"],
+    "strengths": ["Relevant staff-level leadership"],
+    "gaps": [],
+    "recommendations": []
+  }
+}
+```
+
+**Errors:** `400 invalid_job`; `401`; `404 resume_not_found`; `409
+profile_changed`; `502 ai_failed` or `invalid_ai_response`; `503
+profile_changed`; `504`.
+
+---
+
+### `POST /ai/tailored-resume`
+
+Generate safe changes from one explicitly selected résumé, save them as a new
+variant, and select that new variant in the running app. It never changes or
+submits the application page.
+
+**Request**
+
+```json
+{
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
+  "resumeId": "custom-1770251688327",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "job": {
+    "title": "Staff Product Engineer",
+    "company": "Example Co",
+    "url": "https://jobs.example.com/staff-product-engineer",
+    "description": "Job description text…"
+  }
+}
+```
+
+`requestId` must be a UUIDv4 and is the idempotency key. Retrying it returns
+the already-created `companion-<requestId>` variant rather than generating a
+duplicate. Generated paths are allowlisted against the résumé schema;
+prototype keys, excessive nesting/arrays/text, unknown roots, and unsafe array
+indices are rejected before saving.
+
+**Response** `201` on first creation, `200` on replay
+
+```json
+{
+  "profileId": "pmf2k8s9c1abc234",
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
+  "created": true,
+  "resume": {
+    "id": "companion-550e8400-e29b-41d4-a716-446655440000",
+    "name": "Staff Product Engineer — Example Co",
+    "updatedAt": "2026-07-17T20:00:00.000Z"
+  }
+}
+```
+
+**Errors:** `400 invalid_job` or `invalid_request_id`; `401`; `404
+resume_not_found`; `409 profile_changed` or `idempotency_conflict` (the same
+`requestId` was already bound to different résumé/job input); `502 ai_failed` or
+`invalid_ai_response`; `503 profile_changed`; `504`; `507 storage_full`.
+
+---
+
 ### `POST /applications`
 
 Record a job application against a variant. Appears in the app's application
@@ -420,6 +596,17 @@ HTTP 404
 ---
 
 ## Design notes
+
+### Launching and reconnecting
+
+The installed desktop app registers the `resume-designer://` scheme. An
+`…/open?protocolVersion=2` link only launches/focuses the app; an `…/pair` link
+registers a short-lived challenge and triggers explicit consent. The desktop
+single-instance integration forwards deep links to the existing process on
+platforms that otherwise start a second one, then shows, unminimizes, and
+focuses the main window. The extension never launches the app merely because
+its side panel opened; launch happens after an explicit connect or app-backed
+action.
 
 ### Single writer — everything round-trips through the app's JS
 

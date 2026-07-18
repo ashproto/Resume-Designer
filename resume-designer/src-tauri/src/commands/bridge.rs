@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -19,11 +19,60 @@ use tauri::{AppHandle, Emitter, Manager, State};
 /// Fixed port. If it's taken, the bridge simply doesn't start (logged);
 /// the app itself is unaffected.
 pub const BRIDGE_PORT: u16 = 17872;
+const BRIDGE_HOST: &str = "127.0.0.1:17872";
 
 /// Cap request bodies well above any realistic payload (AI messages).
 const MAX_BODY_BYTES: usize = 1_048_576; // 1 MiB
 
+/// Bound request workers so a local client cannot retain an unbounded number
+/// of threads during the bridge's deliberately long AI/PDF timeout window.
+const MAX_IN_FLIGHT_REQUESTS: usize = 16;
+const BRIDGE_BUSY_BODY: &str =
+    r#"{"error":"Resume Designer is handling too many companion requests","code":"bridge_busy"}"#;
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+struct InFlightLimiter {
+    count: AtomicUsize,
+    limit: usize,
+}
+
+impl InFlightLimiter {
+    fn new(limit: usize) -> Self {
+        assert!(limit > 0, "bridge in-flight limit must be positive");
+        Self {
+            count: AtomicUsize::new(0),
+            limit,
+        }
+    }
+
+    fn try_acquire(self: &Arc<Self>) -> Option<InFlightPermit> {
+        self.count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < self.limit).then_some(current + 1)
+            })
+            .ok()?;
+        Some(InFlightPermit {
+            limiter: Arc::clone(self),
+        })
+    }
+
+    #[cfg(test)]
+    fn in_flight(&self) -> usize {
+        self.count.load(Ordering::Acquire)
+    }
+}
+
+struct InFlightPermit {
+    limiter: Arc<InFlightLimiter>,
+}
+
+impl Drop for InFlightPermit {
+    fn drop(&mut self) {
+        let previous = self.limiter.count.fetch_sub(1, Ordering::Release);
+        debug_assert!(previous > 0, "bridge in-flight permit underflow");
+    }
+}
 
 /// What JS hands back for one request.
 pub struct JsResponse {
@@ -36,13 +85,24 @@ pub struct JsResponse {
 pub struct BridgePending(pub Mutex<HashMap<u64, SyncSender<JsResponse>>>);
 
 /// AI completions and PDF exports are slow (model latency / hidden print
-/// window render + capture); everything else answers from memory.
+/// window render + capture). Health and one-time pairing claims are polled
+/// during a cold app launch, so they fail quickly if the webview has not
+/// installed its bridge listener yet instead of blocking a poll for 30s.
 fn timeout_for_path(path: &str) -> Duration {
-    if path.starts_with("/ai/") || path.ends_with("/pdf") {
+    if path == "/health" || path == "/pairing/claim" {
+        Duration::from_secs(2)
+    } else if path.starts_with("/ai/") || path.ends_with("/pdf") {
         Duration::from_secs(180)
     } else {
         Duration::from_secs(30)
     }
+}
+
+/// The bridge is intentionally reachable only through its literal loopback
+/// origin. Rejecting any other Host value prevents a DNS-rebinding origin from
+/// reading unauthenticated health or one-time pairing responses.
+fn is_allowed_host(host: Option<&str>) -> bool {
+    host == Some(BRIDGE_HOST)
 }
 
 /// Resolve one pending request. Returns Err if the id is unknown (JS answered
@@ -96,23 +156,59 @@ pub fn start(app: AppHandle) {
             }
         };
         println!("bridge: listening on 127.0.0.1:{BRIDGE_PORT}");
+        let limiter = Arc::new(InFlightLimiter::new(MAX_IN_FLIGHT_REQUESTS));
         for request in server.incoming_requests() {
+            let Some(permit) = limiter.try_acquire() else {
+                respond_json(request, 503, BRIDGE_BUSY_BODY);
+                continue;
+            };
             let app = app.clone();
-            std::thread::spawn(move || handle_request(app, request));
+            if let Err(e) = std::thread::Builder::new()
+                .name("companion-bridge-request".into())
+                .spawn(move || {
+                    let _permit = permit;
+                    handle_request(app, request);
+                })
+            {
+                // If spawning fails, dropping the closure releases its permit.
+                eprintln!("bridge: failed to start request worker: {e}");
+            }
         }
     });
 }
 
+fn json_response_headers() -> Vec<tiny_http::Header> {
+    [
+        ("Content-Type", "application/json"),
+        ("Cache-Control", "no-store"),
+        ("X-Content-Type-Options", "nosniff"),
+    ]
+    .into_iter()
+    .map(|(name, value)| {
+        tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("static header")
+    })
+    .collect()
+}
+
 fn respond_json(request: tiny_http::Request, status: u16, body: &str) {
-    let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-        .expect("static header");
-    let response = tiny_http::Response::from_string(body)
-        .with_status_code(status)
-        .with_header(header);
+    let mut response = tiny_http::Response::from_string(body).with_status_code(status);
+    for header in json_response_headers() {
+        response = response.with_header(header);
+    }
     let _ = request.respond(response);
 }
 
 fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
+    let host = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Host"))
+        .map(|header| header.value.as_str());
+    if !is_allowed_host(host) {
+        respond_json(request, 403, r#"{"error":"invalid bridge host"}"#);
+        return;
+    }
+
     // Read the body with a hard cap so a hostile local process can't OOM us.
     let mut body = String::new();
     {
@@ -148,7 +244,13 @@ fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
     }
 
     let timeout = timeout_for_path(&path);
-    let payload = BridgeRequestPayload { id, method, path, authorization, body };
+    let payload = BridgeRequestPayload {
+        id,
+        method,
+        path,
+        authorization,
+        body,
+    };
     if let Err(e) = app.emit_to("main", "bridge:request", payload) {
         let pending = app.state::<BridgePending>();
         if let Ok(mut map) = pending.0.lock() {
@@ -182,11 +284,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn timeout_is_long_for_ai_and_pdf_short_otherwise() {
+    fn timeout_is_long_for_ai_and_pdf_and_short_for_connection_polling() {
         assert_eq!(timeout_for_path("/ai/complete"), Duration::from_secs(180));
-        assert_eq!(timeout_for_path("/resumes/v-1/pdf"), Duration::from_secs(180));
+        assert_eq!(
+            timeout_for_path("/resumes/v-1/pdf"),
+            Duration::from_secs(180)
+        );
         assert_eq!(timeout_for_path("/resumes"), Duration::from_secs(30));
-        assert_eq!(timeout_for_path("/health"), Duration::from_secs(30));
+        assert_eq!(timeout_for_path("/health"), Duration::from_secs(2));
+        assert_eq!(timeout_for_path("/pairing/claim"), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn host_guard_accepts_only_the_fixed_loopback_origin() {
+        assert!(is_allowed_host(Some("127.0.0.1:17872")));
+        for host in [
+            None,
+            Some("localhost:17872"),
+            Some("127.0.0.1"),
+            Some("127.0.0.1:9999"),
+            Some("attacker.example:17872"),
+        ] {
+            assert!(!is_allowed_host(host), "unexpectedly allowed host {host:?}");
+        }
+    }
+
+    #[test]
+    fn json_responses_disable_caching_and_mime_sniffing() {
+        let headers = json_response_headers();
+        let value = |name| {
+            headers
+                .iter()
+                .find(|header| header.field.equiv(name))
+                .map(|header| header.value.as_str())
+        };
+
+        assert_eq!(value("Content-Type"), Some("application/json"));
+        assert_eq!(value("Cache-Control"), Some("no-store"));
+        assert_eq!(value("X-Content-Type-Options"), Some("nosniff"));
+    }
+
+    #[test]
+    fn in_flight_limit_rejects_excess_and_reopens_after_drop() {
+        let limiter = Arc::new(InFlightLimiter::new(2));
+        let first = limiter.try_acquire().expect("first request admitted");
+        let second = limiter.try_acquire().expect("second request admitted");
+
+        assert!(limiter.try_acquire().is_none(), "limit must reject excess");
+        drop(first);
+        let replacement = limiter
+            .try_acquire()
+            .expect("dropping a permit must reopen capacity");
+
+        drop(second);
+        drop(replacement);
+        assert_eq!(limiter.in_flight(), 0);
+    }
+
+    #[test]
+    fn busy_response_is_typed_and_retryable_by_callers() {
+        let parsed: serde_json::Value = serde_json::from_str(BRIDGE_BUSY_BODY).unwrap();
+        assert_eq!(parsed["code"], "bridge_busy");
+        assert_eq!(
+            parsed["error"],
+            "Resume Designer is handling too many companion requests"
+        );
     }
 
     #[test]
@@ -195,19 +357,42 @@ mod tests {
         let (tx, rx) = sync_channel::<JsResponse>(1);
         pending.0.lock().unwrap().insert(7, tx);
 
-        resolve_pending(&pending, 7, JsResponse { status: 200, body: "{}".into() }).unwrap();
+        resolve_pending(
+            &pending,
+            7,
+            JsResponse {
+                status: 200,
+                body: "{}".into(),
+            },
+        )
+        .unwrap();
         let got = rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(got.status, 200);
         assert_eq!(got.body, "{}");
         // Entry consumed: a second resolve for the same id must error.
-        assert!(resolve_pending(&pending, 7, JsResponse { status: 200, body: "{}".into() }).is_err());
+        assert!(resolve_pending(
+            &pending,
+            7,
+            JsResponse {
+                status: 200,
+                body: "{}".into()
+            }
+        )
+        .is_err());
     }
 
     #[test]
     fn resolve_pending_unknown_id_errors() {
         let pending = BridgePending::default();
-        let err = resolve_pending(&pending, 99, JsResponse { status: 200, body: "{}".into() })
-            .unwrap_err();
+        let err = resolve_pending(
+            &pending,
+            99,
+            JsResponse {
+                status: 200,
+                body: "{}".into(),
+            },
+        )
+        .unwrap_err();
         assert!(err.contains("no pending bridge request"));
     }
 }
