@@ -7,6 +7,8 @@ mod ios_view;
 // see the module docs and docs/ios/swiftui-lifecycle-spike.md.
 #[cfg(target_os = "ios")]
 mod ios_shell;
+#[cfg(target_os = "macos")]
+mod desktop_sync;
 
 // `Manager` is used by the desktop `app.manage(...)` call in `setup` and by the
 // macOS-only Reopen handler below. Gating to `desktop` keeps it out of mobile
