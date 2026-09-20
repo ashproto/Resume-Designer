@@ -49,6 +49,7 @@ import {
   nativeEditingBusy,
 } from './iosShell.js';
 import { registerNativeProfileEditing } from './userProfileHolder.js';
+import { initDesktopSync } from './desktopSync.js';
 import { registerNativeChatEditing } from './chatThreads.js';
 import {
   collectUnit, collectUnits, unitScopes, applyUnits, resolveConflicts,
@@ -920,6 +921,27 @@ export async function init() {
         localStorage.clear();
         location.reload();
       });
+
+  // The macOS desktop joins the same CloudKit mesh through the same transport,
+  // over the Tauri bridge rather than the WebKit one. Wired beside — never
+  // inside — initIOSShell: `window.__opShell` stays dormant here, and this is
+  // its own global. `getPlatform` is async, and this is the one place in init
+  // that needs the answer, so the await is local to it.
+  if (isTauri) {
+    getPlatform().then((platform) => {
+      if (platform !== 'darwin') return;
+      initDesktopSync({
+        collectUnit, unitScopes, applyUnits, resolveConflicts, getActiveProfileId,
+        // The page owns the registry; the transport is told every live profile.
+        listProfileIds: () => listProfiles().map((p) => p.id),
+        // A purge suspends sync — `setSyncEnabled(false)` writes SYNC_SUSPENDED_KEY —
+        // and `isSyncEnabled` reads it back, so the two are the same fact.
+        isSyncSuspended: () => !isSyncEnabled(),
+        setSyncSuspended: (suspended) => setSyncEnabled(!suspended),
+      });
+    });
+  }
+
     };
     console.log('[Main] Desktop build detected, resetForTesting() available');
   }
