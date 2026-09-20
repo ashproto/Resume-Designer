@@ -46,6 +46,18 @@ describe('initDesktopSync', () => {
     expect(calls[0][1]).toEqual({ profileId: 'p1', knownProfileIds: ['p1', 'p2'] });
   });
 
+  it("installs the page → transport notifier and hands dirty units to desktop_sync_dirty", async () => {
+    // The model has ONE notifier slot; iOS fills it with a no-op off iOS, and
+    // the desktop must take it or every Mac edit stays on the Mac.
+    let notifier = null;
+    await initDesktopSync(deps({ setSyncDirtyNotifier: (fn) => { notifier = fn; } }));
+    expect(typeof notifier).toBe('function');
+    const units = [{ id: 'resume:a', profileId: '' }, { id: 'key:k', profileId: 'p2' }];
+    notifier(units);
+    await Promise.resolve();
+    expect(invoke).toHaveBeenCalledWith('desktop_sync_dirty', { units });
+  });
+
   it('does not start the transport while sync is suspended', async () => {
     // A purge stopped this device on purpose; only a person turns it back on.
     await initDesktopSync(deps({ isSyncSuspended: () => true }));

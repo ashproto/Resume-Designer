@@ -952,6 +952,9 @@ export async function init() {
         // and `isSyncEnabled` reads it back, so the two are the same fact.
         isSyncSuspended: () => !isSyncEnabled(),
         setSyncSuspended: (suspended) => setSyncEnabled(!suspended),
+        // The page → transport edge: initIOSShell above installed a notifier
+        // that is a no-op off iOS; the desktop bridge replaces it with its own.
+        setSyncDirtyNotifier: setStorageDirtyNotifier,
       });
     }).catch((e) => {
       // A rejection here — the OS plugin missing, the bridge command absent —

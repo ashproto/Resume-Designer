@@ -18,6 +18,7 @@ extern "C" {
     fn op_sync_resume(id: u64, json: *const c_char);
     fn op_sync_start(profile_id: *const c_char, known_profile_ids_json: *const c_char);
     fn op_sync_stop();
+    fn op_sync_dirty(units_json: *const c_char);
 }
 
 static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
@@ -61,6 +62,17 @@ pub fn desktop_sync_report_profile(profile_id: String, known_profile_ids: Vec<St
     let k = CString::new(serde_json::to_string(&known_profile_ids).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     unsafe { op_sync_start(p.as_ptr(), k.as_ptr()) };
+    Ok(())
+}
+
+/// The page's dirty units — bytes that reached disk — each with the workspace
+/// it belongs to (`""` is the open one). The transport sends them per
+/// workspace, exactly as the iOS host does for the page's `syncDirty` message.
+#[tauri::command]
+pub fn desktop_sync_dirty(units: Vec<serde_json::Value>) -> Result<(), String> {
+    let json = serde_json::to_string(&units).map_err(|e| e.to_string())?;
+    let c = CString::new(json).map_err(|e| e.to_string())?;
+    unsafe { op_sync_dirty(c.as_ptr()) };
     Ok(())
 }
 
@@ -208,6 +220,7 @@ mod ledger_tests {
         fn op_sync_hoist_shared();
         fn op_sync_ledger_clear(prefix_suffix: *const c_char);
         fn op_sync_ledger_queues() -> *mut c_char;
+        fn op_sync_dirty_groups(units_json: *const c_char) -> *mut c_char;
     }
     fn queues() -> Vec<String> {
         let p = unsafe { op_sync_ledger_queues() };
@@ -275,5 +288,17 @@ mod ledger_tests {
         assert_eq!(deferred("t-hoist"), vec!["resume:x"], "the profile key keeps only its own");
         unsafe { op_sync_ledger_clear(c("t-hoist").as_ptr()); op_sync_ledger_clear(c("_shared").as_ptr()) };
     }
+    #[test]
+    fn dirty_units_are_grouped_per_workspace_with_the_open_one_as_empty() {
+        // The page names each dirty unit with the workspace it belongs to, ""
+        // for the open one. Sent ungrouped, a unit of another workspace would go
+        // into the open workspace's zone. No engine: this is the grouping only.
+        let json = c(r#"[{"id":"resume:a","profileId":""},{"id":"resume:b","profileId":"p2"},{"id":"key:k","profileId":""},{"id":"","profileId":"p2"}]"#);
+        let p = unsafe { op_sync_dirty_groups(json.as_ptr()) };
+        let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_owned();
+        unsafe { op_sync_free(p) };
+        assert_eq!(s, r#"{"":["key:k","resume:a"],"p2":["resume:b"]}"#);
+    }
+
 }
 

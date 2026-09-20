@@ -124,6 +124,8 @@ pub fn run() {
             desktop_sync::desktop_sync_report_profile,
             #[cfg(target_os = "macos")]
             desktop_sync::desktop_sync_note,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_dirty,
             #[cfg(desktop)]
             commands::updater::check_update_on_channel,
             #[cfg(desktop)]

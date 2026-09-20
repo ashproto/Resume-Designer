@@ -36,6 +36,7 @@ const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
  * @param {() => string[]} deps.listProfileIds  the registry's live ids — the page owns the registry
  * @param {() => boolean} deps.isSyncSuspended   a purge stopped this device; only a person restarts it
  * @param {(v: boolean) => void} [deps.setSyncSuspended]
+ * @param {(notify: Function) => void} [deps.setSyncDirtyNotifier]  the model's one notifier slot
  * @param {(message: string) => void} [deps.note]  a line onto the process's stderr; the
  *   webview console is invisible when the app is run by path, and "sync did not
  *   start" is exactly the failure that needs a trace
@@ -77,6 +78,18 @@ export function initDesktopSync(deps) {
     syncAccountChanged: () => {},
     syncState: () => {},
   };
+
+  // What the page TELLS Swift: units whose bytes reached disk, each with the
+  // workspace they belong to ('' is the open one). iOS posts `syncDirty` over
+  // its WebKit handler; here it is a command. The notifier slot holds one
+  // function and initIOSShell fills it first with one that is a no-op off iOS —
+  // this runs after it and takes the slot. Without this, the Mac never sent an
+  // edit: its only uploads were the one-time full ones.
+  deps.setSyncDirtyNotifier?.((units) => {
+    tauriInvoke('desktop_sync_dirty', { units }).catch((e) => {
+      console.warn('[desktopSync] dirty units not handed to the transport', e);
+    });
+  });
 
   window.__opDesktopSync = {
     async request(id, json) {

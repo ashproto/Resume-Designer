@@ -73,6 +73,10 @@ final class DesktopSyncHost {
   /// reaches `available`. See `installForegroundRefresh`.
   private var foregroundRefreshInstalled = false
   private var foregroundFetchCount = 0
+  /// A send that met an engine event in flight is re-drained shortly after,
+  /// once per episode; see `scheduleDrainRetry`.
+  private var drainRetryScheduled = false
+  private var drainRetries = 0
 
   func register(_ cb: @escaping OPSyncRustCallback) { callback = cb }
 
@@ -235,10 +239,12 @@ final class DesktopSyncHost {
     let owning = profileId ?? syncProfileId
     do {
       try await engine.send(unitIds: unitIds, inProfile: owning)
+      drainRetries = 0
       return true
     } catch {
       await deferSync(unitIds, inProfile: owning)
       NSLog("[OPDesktopSync] sync send postponed; \(unitIds.count) unit(s) held durably")
+      scheduleDrainRetry()
       return false
     }
   }
@@ -396,6 +402,49 @@ final class DesktopSyncHost {
     }
   }
 
+  /// `syncDirty`, the desktop way. The page names units whose bytes reached
+  /// disk, each with the workspace they belong to (`""` is the open one), and
+  /// they are sent PER WORKSPACE — the grouping OPShell's handler does, because
+  /// a unit routed to the open workspace's zone when it belongs to another is
+  /// one person's résumé in another's workspace. Without this path the Mac
+  /// never sent an edit: its only uploads were the one-time full ones.
+  func syncDirty(_ units: [[String: Any]]) {
+    let byProfile = Self.groupDirty(units)
+    guard !byProfile.isEmpty else { return }
+    Task { @MainActor in
+      for (profileId, unitIds) in byProfile {
+        let sent = await self.sendSync(unitIds: unitIds, inProfile: profileId.isEmpty ? nil : profileId)
+        NSLog("[OPDesktopSync] dirty: \(unitIds.count) unit(s) for \(profileId.isEmpty ? "the open workspace" : profileId) — \(sent ? "sent" : "held")")
+      }
+    }
+  }
+
+  static func groupDirty(_ units: [[String: Any]]) -> [String: [String]] {
+    var byProfile: [String: [String]] = [:]
+    for unit in units {
+      guard let id = unit["id"] as? String, !id.isEmpty else { continue }
+      byProfile[(unit["profileId"] as? String) ?? "", default: []].append(id)
+    }
+    return byProfile
+  }
+
+  /// A send that meets a delegate event in flight is held durably and its
+  /// bytes are queued in the engine — which sends them on its own schedule,
+  /// and on macOS that schedule is a discretionary system task that can wait
+  /// minutes. So the drain is retried shortly after, once per episode, up to
+  /// a minute; the ledger settles on the first success. Every start used to
+  /// log "postponed" for the same reason and never settle.
+  @MainActor private func scheduleDrainRetry() {
+    guard !drainRetryScheduled, drainRetries < 12 else { return }
+    drainRetryScheduled = true
+    drainRetries += 1
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 5_000_000_000)
+      drainRetryScheduled = false
+      await drainSyncDeferred()
+    }
+  }
+
   func stop() { Task { @MainActor in await engine?.stop() } }
 }
 
@@ -541,6 +590,21 @@ public func op_sync_start(_ profileId: UnsafePointer<CChar>, _ knownProfileIdsJs
 
 @_cdecl("op_sync_stop")
 public func op_sync_stop() { host.stop() }
+
+@_cdecl("op_sync_dirty")
+public func op_sync_dirty(_ unitsJson: UnsafePointer<CChar>) {
+  let units = (try? JSONSerialization.jsonObject(with: Data(String(cString: unitsJson).utf8))) as? [[String: Any]] ?? []
+  host.syncDirty(units)
+}
+
+// Test surface: the grouping `syncDirty` sends by, without an engine.
+@_cdecl("op_sync_dirty_groups")
+public func op_sync_dirty_groups(_ unitsJson: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar> {
+  let units = (try? JSONSerialization.jsonObject(with: Data(String(cString: unitsJson).utf8))) as? [[String: Any]] ?? []
+  let grouped = DesktopSyncHost.groupDirty(units).mapValues { $0.sorted() }
+  let data = (try? JSONSerialization.data(withJSONObject: grouped, options: [.sortedKeys])) ?? Data("{}".utf8)
+  return strdup(String(decoding: data, as: UTF8.self))
+}
 
 /// Test-only probe of the crossing, reachable without an engine and therefore
 /// without a container. Sends a `ping` request through the real path and, when
