@@ -17,6 +17,7 @@
 
 import Foundation
 import CloudKit
+import AppKit
 
 public typealias OPSyncRustCallback = @convention(c) (UInt64, UnsafePointer<CChar>) -> Void
 
@@ -327,6 +328,14 @@ final class DesktopSyncHost {
         return
       }
       notify("syncState", ["state": "available"])
+      // SILENT CloudKit pushes, the same single call OPShell makes on iOS: the
+      // engine discovers or creates its own CKDatabaseSubscription and schedules a
+      // fetch when a notification arrives, so there is no delegate to forward from
+      // (Tauri owns the app delegate anyway). Needs com.apple.developer.aps-environment
+      // in the signed entitlements; without it the call is a no-op and the engine
+      // fetches only on its own schedule. Idempotent, so every start may call it.
+      NSApplication.shared.registerForRemoteNotifications()
+      NSLog("[OPDesktopSync] registered for silent CloudKit pushes")
       // THE SAME ORDER AS iOS, and each step is why. The shared zone first: it
       // holds the registry, which is how a Mac that has just joined learns the
       // account's workspaces. Then the debt — anything this device still owes

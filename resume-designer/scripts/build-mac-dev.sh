@@ -27,6 +27,10 @@ security find-identity -v -p codesigning | grep -qF "$IDENTITY" || { echo "signi
 if ! security cms -D -i "$PROFILE" 2>/dev/null | grep -q "<string>Development</string>"; then
   echo "that profile does not permit the Development environment: $PROFILE" >&2; exit 1
 fi
+if ! security cms -D -i "$PROFILE" 2>/dev/null | grep -q "com.apple.developer.aps-environment"; then
+  echo "that profile does not carry the push entitlement (com.apple.developer.aps-environment): $PROFILE" >&2
+  echo "enable Push Notifications on the App ID in the Developer portal, regenerate the profile, download it again" >&2; exit 1
+fi
 
 cd "$ROOT"
 # codesign hands the entitlements to AMFI, which parses them as strict XML and

@@ -47,7 +47,7 @@ fn link_swift_sync() {
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
     // NOT swiftrt.o: it does not exist in this Xcode and dyld registers Swift
     // metadata itself. Adding it fails the link on a missing file.
-    for f in ["CloudKit", "Foundation"] {
+    for f in ["CloudKit", "Foundation", "AppKit"] {
         println!("cargo:rustc-link-lib=framework={f}");
     }
     for s in sources {

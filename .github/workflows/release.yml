@@ -208,6 +208,7 @@ jobs:
           security cms -D -i resume-designer/src-tauri/embedded.provisionprofile > /tmp/profile.plist
           grep -q '<string>Production</string>' /tmp/profile.plist || { echo '::error::the provisioning profile does not permit the Production environment'; exit 1; }
           grep -q 'com.resumedesigner.app' /tmp/profile.plist || { echo '::error::the provisioning profile is not for com.resumedesigner.app'; exit 1; }
+          grep -q 'com.apple.developer.aps-environment' /tmp/profile.plist || { echo '::error::the provisioning profile does not carry the push entitlement; enable Push Notifications on the App ID and regenerate it'; exit 1; }
           echo "profile embedded: $(plutil -extract Name raw /tmp/profile.plist)"
           # The entitlements go to AMFI as strict XML at the END of the build.
           # `plutil -lint` passes a file AMFI rejects (a `--` inside a comment),

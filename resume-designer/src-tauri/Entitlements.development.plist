@@ -30,6 +30,14 @@
          provisioning profile, which permits both. Development and
          Production are separate data stores, and the phone's data is in Development. Selected by
          scripts/build-mac-dev.sh through the CLI's config override; never used by CI. -->
+    <!-- Silent CloudKit pushes. CKSyncEngine creates its own database
+         subscription and fetches when the push arrives; the app only has to
+         register for remote notifications (DesktopSyncHost.start) and carry
+         this entitlement, which needs Push Notifications enabled on the App ID
+         and a provisioning profile regenerated after that. Nothing is ever shown
+         to the user; macOS does not prompt for silent pushes. -->
+    <key>com.apple.developer.aps-environment</key>
+    <string>development</string>
     <key>com.apple.developer.icloud-container-environment</key>
     <string>Development</string>
   </dict>
