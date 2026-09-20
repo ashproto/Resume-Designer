@@ -16,7 +16,7 @@ use tauri::{AppHandle, Manager};
 extern "C" {
     fn op_sync_register(cb: extern "C" fn(u64, *const c_char));
     fn op_sync_resume(id: u64, json: *const c_char);
-    fn op_sync_start(profile_id: *const c_char, known_profile_ids_json: *const c_char);
+    fn op_sync_start(profile_id: *const c_char, known_profile_ids_json: *const c_char, tombstoned_profile_ids_json: *const c_char);
     fn op_sync_stop();
     fn op_sync_dirty(units_json: *const c_char);
 }
@@ -56,12 +56,21 @@ pub fn desktop_sync_reply(id: u64, json: String) -> Result<(), String> {
 /// The page reports the active profile — and the registry's full list, which
 /// the page owns — and the transport starts against that zone.
 #[tauri::command]
-pub fn desktop_sync_report_profile(profile_id: String, known_profile_ids: Vec<String>) -> Result<(), String> {
-    eprintln!("desktop sync: page reported profile {profile_id} ({} known) — starting the transport", known_profile_ids.len());
+pub fn desktop_sync_report_profile(
+    profile_id: String,
+    known_profile_ids: Vec<String>,
+    tombstoned_profile_ids: Option<Vec<String>>,
+) -> Result<(), String> {
+    let dead = tombstoned_profile_ids.unwrap_or_default();
+    eprintln!(
+        "desktop sync: page reported profile {profile_id} ({} known, {} tombstoned) — starting the transport",
+        known_profile_ids.len(), dead.len()
+    );
     let p = CString::new(profile_id).map_err(|e| e.to_string())?;
     let k = CString::new(serde_json::to_string(&known_profile_ids).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    unsafe { op_sync_start(p.as_ptr(), k.as_ptr()) };
+    let d = CString::new(serde_json::to_string(&dead).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    unsafe { op_sync_start(p.as_ptr(), k.as_ptr(), d.as_ptr()) };
     Ok(())
 }
 
@@ -221,6 +230,7 @@ mod ledger_tests {
         fn op_sync_ledger_clear(prefix_suffix: *const c_char);
         fn op_sync_ledger_queues() -> *mut c_char;
         fn op_sync_dirty_groups(units_json: *const c_char) -> *mut c_char;
+        fn op_sync_settle_dead(profile_ids_json: *const c_char);
     }
     fn queues() -> Vec<String> {
         let p = unsafe { op_sync_ledger_queues() };
@@ -298,6 +308,22 @@ mod ledger_tests {
         let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_owned();
         unsafe { op_sync_free(p) };
         assert_eq!(s, r#"{"":["key:k","resume:a"],"p2":["resume:b"]}"#);
+    }
+
+    #[test]
+    fn a_tombstoned_workspaces_debt_is_settled_and_a_live_ones_kept() {
+        // The registry tombstoned "dead"; its deferred queue would otherwise be
+        // re-offered at every start and fail with notStarted forever. "live" is
+        // merely unknown to the transport and keeps its debt.
+        let _g = super::FFI_LOCK.lock().unwrap();
+        unsafe { op_sync_ledger_clear(c("dead").as_ptr()); op_sync_ledger_clear(c("live").as_ptr()); }
+        unsafe { op_sync_defer(c("dead").as_ptr(), c(r#"["resume:x","key:k"]"#).as_ptr()); }
+        unsafe { op_sync_defer(c("live").as_ptr(), c(r#"["resume:y"]"#).as_ptr()); }
+        assert_eq!(deferred("dead").len(), 2);
+        unsafe { op_sync_settle_dead(c(r#"["dead"]"#).as_ptr()); }
+        assert_eq!(deferred("dead"), Vec::<String>::new());
+        assert_eq!(deferred("live"), vec!["resume:y".to_string()]);
+        unsafe { op_sync_ledger_clear(c("live").as_ptr()); }
     }
 
 }

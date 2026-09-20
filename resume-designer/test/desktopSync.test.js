@@ -20,6 +20,7 @@ const deps = (over = {}) => ({
   resolveConflicts: vi.fn().mockResolvedValue({ resolved: [], parked: 0 }),
   getActiveProfileId: () => 'p1',
   listProfileIds: () => ['p1', 'p2'],
+  listTombstonedProfileIds: () => ['dead'],
   isSyncSuspended: () => false,
   ...over,
 });
@@ -43,7 +44,7 @@ describe('initDesktopSync', () => {
     await initDesktopSync(deps());
     const calls = invoke.mock.calls.filter(([cmd]) => cmd === 'desktop_sync_report_profile');
     expect(calls).toHaveLength(1);
-    expect(calls[0][1]).toEqual({ profileId: 'p1', knownProfileIds: ['p1', 'p2'] });
+    expect(calls[0][1]).toEqual({ profileId: 'p1', knownProfileIds: ['p1', 'p2'], tombstonedProfileIds: ['dead'] });
   });
 
   it("installs the page → transport notifier and hands dirty units to desktop_sync_dirty", async () => {
@@ -52,10 +53,14 @@ describe('initDesktopSync', () => {
     let notifier = null;
     await initDesktopSync(deps({ setSyncDirtyNotifier: (fn) => { notifier = fn; } }));
     expect(typeof notifier).toBe('function');
-    const units = [{ id: 'resume:a', profileId: '' }, { id: 'key:k', profileId: 'p2' }];
-    notifier(units);
+    // '' names the open workspace, and it is named HERE, on the page, from the
+    // profile this document was opened in — never resolved later across the
+    // bridge, where a workspace switch can already point at the next one.
+    notifier([{ id: 'resume:a', profileId: '' }, { id: 'key:k', profileId: 'p2' }]);
     await Promise.resolve();
-    expect(invoke).toHaveBeenCalledWith('desktop_sync_dirty', { units });
+    expect(invoke).toHaveBeenCalledWith('desktop_sync_dirty', {
+      units: [{ id: 'resume:a', profileId: 'p1' }, { id: 'key:k', profileId: 'p2' }],
+    });
   });
 
   it('does not start the transport while sync is suspended', async () => {

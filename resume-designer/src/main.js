@@ -948,6 +948,7 @@ export async function init() {
         collectUnit, collectUnits, unitScopes, applyUnits, resolveConflicts, getActiveProfileId,
         // The page owns the registry; the transport is told every live profile.
         listProfileIds: () => listProfiles().map((p) => p.id),
+        listTombstonedProfileIds: () => loadRegistry().filter((p) => p.deletedAt).map((p) => p.id),
         // A purge suspends sync — `setSyncEnabled(false)` writes SYNC_SUSPENDED_KEY —
         // and `isSyncEnabled` reads it back, so the two are the same fact.
         isSyncSuspended: () => !isSyncEnabled(),

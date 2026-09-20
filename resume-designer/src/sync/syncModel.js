@@ -1808,7 +1808,7 @@ export async function resolveConflicts(conflicts) {
   // save conflict was merged and durably flushed and then never acted on; worse
   // than a missed apply, because the transport keeps the SERVER's change tag on
   // this answer, so nothing re-delivers it.
-  if (durable) reconcileRemoteDeletions();
+  if (durable) await reconcileRemoteDeletions();
   // Same discard as `applyUnits`, and reached the same way: `accumulate` runs on
   // this path, so a tombstone can populate the reaction flags here too. Wired
   // into only the one caller the report named, a conflict-path tombstone that

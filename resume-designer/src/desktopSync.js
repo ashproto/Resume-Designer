@@ -34,6 +34,7 @@ const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
  * @param {Function} deps.resolveConflicts
  * @param {() => string} deps.getActiveProfileId
  * @param {() => string[]} deps.listProfileIds  the registry's live ids — the page owns the registry
+ * @param {() => string[]} [deps.listTombstonedProfileIds]  the registry's durably deleted ids
  * @param {() => boolean} deps.isSyncSuspended   a purge stopped this device; only a person restarts it
  * @param {(v: boolean) => void} [deps.setSyncSuspended]
  * @param {(notify: Function) => void} [deps.setSyncDirtyNotifier]  the model's one notifier slot
@@ -85,8 +86,14 @@ export function initDesktopSync(deps) {
   // function and initIOSShell fills it first with one that is a no-op off iOS —
   // this runs after it and takes the slot. Without this, the Mac never sent an
   // edit: its only uploads were the one-time full ones.
+  // The open workspace is named HERE, once, for this document: a switch on
+  // desktop reloads the page, so the active pointer can already name the next
+  // workspace while this page still holds the old document's writes. An empty
+  // id resolved later, on the other side of the bridge, would route them wrong.
+  const openProfileId = deps.getActiveProfileId() || '';
   deps.setSyncDirtyNotifier?.((units) => {
-    tauriInvoke('desktop_sync_dirty', { units }).catch((e) => {
+    const routed = units.map((u) => (u.profileId ? u : { ...u, profileId: openProfileId }));
+    tauriInvoke('desktop_sync_dirty', { units: routed }).catch((e) => {
       console.warn('[desktopSync] dirty units not handed to the transport', e);
     });
   });
@@ -124,6 +131,10 @@ export function initDesktopSync(deps) {
   const profileId = deps.getActiveProfileId();
   if (!profileId) { note('not starting: no active profile yet'); return Promise.resolve(); }
   const knownProfileIds = deps.listProfileIds();
-  note(`starting: profile ${profileId}, ${knownProfileIds.length} known`);
-  return tauriInvoke('desktop_sync_report_profile', { profileId, knownProfileIds });
+  // Durably tombstoned workspaces, read from the registry on disk: the transport
+  // settles their debt (a dead workspace has no zone to send into, and its
+  // deferred queue used to fail at every start, forever).
+  const tombstonedProfileIds = deps.listTombstonedProfileIds?.() ?? [];
+  note(`starting: profile ${profileId}, ${knownProfileIds.length} known, ${tombstonedProfileIds.length} tombstoned`);
+  return tauriInvoke('desktop_sync_report_profile', { profileId, knownProfileIds, tombstonedProfileIds });
 }

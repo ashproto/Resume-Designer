@@ -72,7 +72,6 @@ final class DesktopSyncHost {
   /// Foreground refresh, installed once per process by the first start that
   /// reaches `available`. See `installForegroundRefresh`.
   private var foregroundRefreshInstalled = false
-  private var foregroundFetchCount = 0
   /// A send that met an engine event in flight is re-drained shortly after,
   /// once per episode; see `scheduleDrainRetry`.
   private var drainRetryScheduled = false
@@ -235,16 +234,29 @@ final class DesktopSyncHost {
   /// throw defers the ids durably and is `false`.
   @MainActor private func sendSync(unitIds: [String], inProfile profileId: String? = nil) async -> Bool {
     guard !unitIds.isEmpty else { return true }
-    guard let engine else { return false }
     let owning = profileId ?? syncProfileId
+    // No engine — not started yet, stopped, or the account unavailable — is not
+    // a reason to lose the ids: held durably, the next start's drain sends them.
+    guard let engine else {
+      await deferSync(unitIds, inProfile: owning)
+      NSLog("[OPDesktopSync] sync send held; no engine (\(unitIds.count) unit(s))")
+      return false
+    }
     do {
       try await engine.send(unitIds: unitIds, inProfile: owning)
       drainRetries = 0
       return true
-    } catch {
+    } catch OPSyncError.eventInFlight {
+      // The bytes are already queued in the engine (`send` queues before it
+      // throws); the ledger keeps the debt, and a short retry settles it once
+      // the event is over — the one error a retry can do anything about.
       await deferSync(unitIds, inProfile: owning)
       NSLog("[OPDesktopSync] sync send postponed; \(unitIds.count) unit(s) held durably")
       scheduleDrainRetry()
+      return false
+    } catch {
+      await deferSync(unitIds, inProfile: owning)
+      NSLog("[OPDesktopSync] sync send failed (\(error)); \(unitIds.count) unit(s) held durably")
       return false
     }
   }
@@ -316,10 +328,11 @@ final class DesktopSyncHost {
   /// The engine is `@MainActor` (its iOS caller is a SwiftUI model), so every
   /// engine call is made from a main-actor task. In the app the AppKit loop
   /// pumps it; no test reaches this, so no test can hang on it.
-  func start(profileId: String, knownProfileIds: [String]) {
+  func start(profileId: String, knownProfileIds: [String], tombstonedProfileIds: [String] = []) {
     Task { @MainActor in
       self.syncProfileId = profileId
       self.knownProfileIds = knownProfileIds
+      settleDeadWorkspaces(tombstonedProfileIds)
       // A workspace this device has never started sync for owes the mesh a
       // full upload of everything held for it. Decided BEFORE start, from the
       // page's list — the page owns the registry.
@@ -365,10 +378,11 @@ final class DesktopSyncHost {
   /// Push is the background path, and on a Mac its silent pushes are low
   /// priority: on the day this was measured APNs held them for a background
   /// app anywhere from 8 s to about 4 min, while two iOS devices in front saw
-  /// each other in ~3 s. So the FOREGROUND is fetched directly: once when the
-  /// app becomes active, and every 30 s while it is the frontmost app. Nothing
-  /// runs while the app is in the background — push covers that — and a fetch
-  /// already in flight is never doubled. The start sequence above is untouched.
+  /// each other in ~3 s. So the foreground is fetched directly whenever the app
+  /// becomes active; that fetch reaches the server in one to two seconds. A
+  /// 30 s timer was tried and dropped: the engine answered its repeated requests
+  /// in 1 ms with no server operation, so it promised nothing it delivered.
+  /// Nothing runs while the app is in the background — push covers that.
   @MainActor private func installForegroundRefresh() {
     guard !foregroundRefreshInstalled else { return }
     foregroundRefreshInstalled = true
@@ -377,21 +391,16 @@ final class DesktopSyncHost {
     ) { [weak self] _ in
       Task { @MainActor in await self?.foregroundFetch(reason: "activation") }
     }
-    Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-      guard NSApplication.shared.isActive else { return }
-      Task { @MainActor in await self?.foregroundFetch(reason: nil) }
-    }
-    NSLog("[OPDesktopSync] foreground refresh installed: on activation, and every 30 s while frontmost")
+    NSLog("[OPDesktopSync] foreground refresh installed: a fetch on every activation")
   }
 
-  @MainActor private func foregroundFetch(reason: String?) async {
+  @MainActor private func foregroundFetch(reason: String) async {
     guard let engine else { return }
     // NOT gated on a fetch already in flight: an engine fetch that the system
     // defers can take minutes to return, and a gate would then drop every
-    // tick behind it in silence — which is exactly what the first cut did.
+    // request behind it in silence — which is exactly what the first cut did.
     // CKSyncEngine coalesces overlapping fetch requests itself.
-    foregroundFetchCount += 1
-    let label = reason ?? "timer #\(foregroundFetchCount)"
+    let label = reason
     let began = Date()
     NSLog("[OPDesktopSync] foreground fetch (\(label)) begin")
     do {
@@ -416,6 +425,36 @@ final class DesktopSyncHost {
         let sent = await self.sendSync(unitIds: unitIds, inProfile: profileId.isEmpty ? nil : profileId)
         NSLog("[OPDesktopSync] dirty: \(unitIds.count) unit(s) for \(profileId.isEmpty ? "the open workspace" : profileId) — \(sent ? "sent" : "held")")
       }
+    }
+  }
+
+  /// An answer that never came — encode failure, deadline, a reload mid-request
+  /// — is not silence: every unit it covered is held durably and re-offered at
+  /// the next drain, the way OPShell's outer wrappers do for every unsuccessful
+  /// answer. Without this, a fetched record whose change tag was forfeited
+  /// and a conflict the page never saw had no recovery driver at all.
+  private func holdUnaccounted(_ units: [SyncUnit]) async {
+    for (profileId, group) in Dictionary(grouping: units, by: \.profileId) {
+      await deferSync(group.map(\.id), inProfile: profileId.isEmpty ? nil : profileId)
+    }
+  }
+
+  /// A workspace the registry has durably tombstoned has no zone to send into:
+  /// its deferred queue would be re-offered at every start and fail with
+  /// `notStarted` forever (nine units of the first deleted workspace did exactly
+  /// that), and a full upload owed for it can never be paid. Both are settled.
+  /// Only ids the PAGE names, read from the registry on disk at init — an
+  /// unknown-but-live workspace, whose registry entry has not landed yet, keeps
+  /// its debt.
+  func settleDeadWorkspaces(_ profileIds: [String]) {
+    for profileId in profileIds where !profileId.isEmpty {
+      let key = OPSyncEngine.deferredKey(profileId)
+      let held = syncDeferred(key: key)
+      if !held.isEmpty {
+        setSyncDeferred([], key: key)
+        NSLog("[OPDesktopSync] settled \(held.count) unit(s) owed to the deleted workspace \(profileId)")
+      }
+      UserDefaults.standard.removeObject(forKey: Self.fullUploadKey(profileId))
     }
   }
 
@@ -479,11 +518,13 @@ extension DesktopSyncHost: OPSyncHost {
     guard let data = try? JSONEncoder().encode(units),
           let json = String(data: data, encoding: .utf8) else {
       NSLog("[OPDesktopSync] could not encode \(units.count) fetched unit(s)")
+      await holdUnaccounted(units)
       return []
     }
     guard let value = try? await request("syncApply", ["units": json]),
           let entries = (value as? [String: Any])?["accounted"] as? [[String: Any]] else {
       NSLog("[OPDesktopSync] no usable answer for \(units.count) fetched unit(s)")
+      await holdUnaccounted(units)
       return []
     }
     var accounted: Set<String> = []
@@ -509,6 +550,7 @@ extension DesktopSyncHost: OPSyncHost {
     guard let data = try? JSONEncoder().encode(conflicts),
           let json = String(data: data, encoding: .utf8) else {
       NSLog("[OPDesktopSync] could not encode \(conflicts.count) conflict(s)")
+      await holdUnaccounted(conflicts.map(\.server))
       return .unresolved
     }
     guard let value = try? await request("syncResolveConflicts", ["conflicts": json]),
@@ -516,6 +558,7 @@ extension DesktopSyncHost: OPSyncHost {
           let entries = object["resolved"] as? [[String: Any]],
           let parked = object["parked"] as? Int else {
       NSLog("[OPDesktopSync] no usable answer for \(conflicts.count) conflict(s)")
+      await holdUnaccounted(conflicts.map(\.server))
       return .unresolved
     }
     var resolved: [SyncResolution] = []
@@ -583,9 +626,17 @@ public func op_sync_resume(_ id: UInt64, _ json: UnsafePointer<CChar>) {
 }
 
 @_cdecl("op_sync_start")
-public func op_sync_start(_ profileId: UnsafePointer<CChar>, _ knownProfileIdsJson: UnsafePointer<CChar>) {
+public func op_sync_start(_ profileId: UnsafePointer<CChar>, _ knownProfileIdsJson: UnsafePointer<CChar>, _ tombstonedProfileIdsJson: UnsafePointer<CChar>) {
   let known = (try? JSONSerialization.jsonObject(with: Data(String(cString: knownProfileIdsJson).utf8))) as? [String] ?? []
-  host.start(profileId: String(cString: profileId), knownProfileIds: known)
+  let dead = (try? JSONSerialization.jsonObject(with: Data(String(cString: tombstonedProfileIdsJson).utf8))) as? [String] ?? []
+  host.start(profileId: String(cString: profileId), knownProfileIds: known, tombstonedProfileIds: dead)
+}
+
+// Test surface: settle a dead workspace's debt without an engine.
+@_cdecl("op_sync_settle_dead")
+public func op_sync_settle_dead(_ profileIdsJson: UnsafePointer<CChar>) {
+  let ids = (try? JSONSerialization.jsonObject(with: Data(String(cString: profileIdsJson).utf8))) as? [String] ?? []
+  host.settleDeadWorkspaces(ids)
 }
 
 @_cdecl("op_sync_stop")

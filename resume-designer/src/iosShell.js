@@ -1430,8 +1430,10 @@ export function initIOSShell(deps) {
   } = deps;
 
   // Persistence names the units whose bytes landed. The shell only carries
-  // those ids to CKSyncEngine, and stays silent on desktop/browser builds.
-  deps.setSyncDirtyNotifier?.((units) => {
+  // those ids to CKSyncEngine. Off iOS the slot is left EMPTY rather than
+  // filled with a no-op: the model deletes what it hands a notifier, so a no-op
+  // here dropped every unit flushed before the desktop installed its own.
+  if (isNativeShellAvailable()) deps.setSyncDirtyNotifier?.((units) => {
     if (!isNativeShellAvailable()) return;
     // Each entry carries the workspace it belongs to — '' for the open one.
     // Swift groups by it and sends each group into its own zone, because a
