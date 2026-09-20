@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
+    <!-- Identity. Xcode injects these two from the provisioning profile; Tauri
+         signs exactly this file, and without them CloudKit refuses to start
+         ("Trying to initialize a container without an application ID").
+         Both provisioning profiles permit exactly these values. -->
+    <key>com.apple.application-identifier</key>
+    <string>847VH25R7U.com.resumedesigner.app</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>847VH25R7U</string>
     <key>com.apple.security.network.client</key>
     <true/>
     <!-- Stays OFF. CloudKit does not require the App Sandbox, and the failure
