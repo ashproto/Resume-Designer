@@ -41,6 +41,34 @@ final class DesktopSyncHost {
   /// test ever does.
   private var engine: OPSyncEngine?
 
+  // ── THE TWO LEDGERS ─────────────────────────────────────────────────────
+  // Ported from the iOS host (OPShell.swift), and DUPLICATED there on purpose:
+  // hoisting them into OPSync.swift would edit shipped iOS code for a desktop
+  // feature. Same keys — the transport defines them — same carrier
+  // (UserDefaults, under the app's bundle domain), same behaviour. Suspension
+  // is the one deliberate difference: iOS keeps it in UserDefaults, desktop in
+  // the page's SYNC_SUSPENDED_KEY; each platform is self-consistent.
+  //
+  // Why they exist: CKSyncEngine treats a fetched record as delivered once the
+  // delegate returns. A unit the page refused (mid-edit) or a conflict it did
+  // not resolve would never come back on its own; the deferred ledger re-offers
+  // it at the next start. And a workspace the mesh has never seen owes a FULL
+  // upload of everything this device holds for it — the flag that makes a Mac
+  // with existing data upload it at all.
+  private static let sharedDeferredKey = OPSyncEngine.deferredKey("_\(opSharedScope)")
+  private static func fullUploadKey(_ profileId: String) -> String { "op-sync-full-upload-owed-\(profileId)" }
+  private var syncProfileId: String?
+  private var knownProfileIds: [String] = []
+  private var syncDraining = false
+  private var syncDrainAgain = false
+  /// The key being drained, while one is. `addSyncDeferred` consults it: an id
+  /// re-owed DURING a drain must not be settled by that drain's success.
+  private var syncDeferredDrainKey: String?
+  private var syncDeferredReowed: Set<String> = []
+  /// Bumped on every owe. A full upload settles only if this did not move
+  /// during its send — otherwise the debt was re-owed mid-flight and stays.
+  private var syncFullUploadOwe: [String: Int] = [:]
+
   func register(_ cb: @escaping OPSyncRustCallback) { callback = cb }
 
   // MARK: The crossing
@@ -84,6 +112,175 @@ final class DesktopSyncHost {
     json.withCString { callback?(0, $0) }
   }
 
+  /// Which zone each unit belongs in. Nonisolated on purpose: the hoist calls
+  /// it from a plain Task, and `cargo test` pumps no main loop — a hop to the
+  /// `@MainActor` witness would hang there. The witness calls this too.
+  func scopes(forUnitIds ids: [String]) async -> [String: String]? {
+    guard let idsData = try? JSONSerialization.data(withJSONObject: ids),
+          let idsJson = String(data: idsData, encoding: .utf8),
+          let value = try? await request("syncScopes", ["unitIds": idsJson]),
+          let scopes = value as? [String: String] else {
+      return nil
+    }
+    return scopes
+  }
+
+  // MARK: Deferred-send ledger (UserDefaults, transport-defined keys)
+
+  func syncDeferred(key: String) -> Set<String> {
+    Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+  }
+  private func setSyncDeferred(_ unitIds: Set<String>, key: String) {
+    UserDefaults.standard.set(Array(unitIds).sorted(), forKey: key)
+  }
+  func addSyncDeferred(_ unitIds: Set<String>, key: String) {
+    guard !unitIds.isEmpty else { return }
+    var deferred = syncDeferred(key: key)
+    deferred.formUnion(unitIds)
+    setSyncDeferred(deferred, key: key)
+    if syncDeferredDrainKey != nil {
+      syncDeferredReowed.formUnion(unitIds)
+    }
+  }
+  private func deferSync(_ unitIds: [String], inProfile requested: String? = nil) async {
+    guard let profileId = requested ?? syncProfileId else {
+      NSLog("[OPDesktopSync] no active profile for \(unitIds.count) deferred sync unit(s)")
+      return
+    }
+    let ids = Array(Set(unitIds)).sorted()
+    guard !ids.isEmpty else { return }
+    addSyncDeferred(Set(ids), key: OPSyncEngine.deferredKey(profileId))
+    guard let scopes = await scopes(forUnitIds: ids) else { return }
+    let shared = Set(ids.filter { scopes[$0] == opSharedScope })
+    addSyncDeferred(shared, key: Self.sharedDeferredKey)
+  }
+  /// Shared-zone ids that landed in a profile's queue (they were deferred before
+  /// their zone was known) move to the shared key, so the shared drain sends
+  /// them once rather than every profile's drain sending them again.
+  func hoistSharedSyncDeferred() async {
+    let prefix = OPSyncEngine.deferredKey("")
+    var profileQueues: [String: Set<String>] = [:]
+    var offered: Set<String> = []
+    for key in UserDefaults.standard.dictionaryRepresentation().keys
+    where key.hasPrefix(prefix) && key != Self.sharedDeferredKey {
+      let deferred = syncDeferred(key: key)
+      guard !deferred.isEmpty else { continue }
+      profileQueues[key] = deferred
+      offered.formUnion(deferred)
+    }
+    guard !offered.isEmpty,
+          let scopes = await scopes(forUnitIds: Array(offered).sorted()) else { return }
+    let shared = Set(offered.filter { scopes[$0] == opSharedScope })
+    guard !shared.isEmpty else { return }
+    addSyncDeferred(shared, key: Self.sharedDeferredKey)
+    for key in profileQueues.keys {
+      var deferred = syncDeferred(key: key)
+      deferred.subtract(shared)
+      setSyncDeferred(deferred, key: key)
+    }
+  }
+  func deferredProfileQueueIds() -> [String] { deferredProfileQueues().map(\.0) }
+  private func deferredProfileQueues() -> [(String, String)] {
+    let prefix = OPSyncEngine.deferredKey("")
+    return UserDefaults.standard.dictionaryRepresentation().keys
+      .filter { $0.hasPrefix(prefix) && $0 != Self.sharedDeferredKey }
+      .sorted()
+      .map { (String($0.dropFirst(prefix.count)), $0) }
+  }
+  /// Re-entrant by request, not by recursion: a drain asked for while one runs
+  /// sets a flag, and the running drain takes one more pass. Overlapping drains
+  /// would settle each other's offers.
+  @MainActor private func drainSyncDeferred() async {
+    guard !syncDraining else { syncDrainAgain = true; return }
+    syncDraining = true
+    var passes = 0
+    repeat {
+      syncDrainAgain = false
+      await hoistSharedSyncDeferred()
+      await drainSyncDeferred(key: Self.sharedDeferredKey)
+      for (queueProfileId, key) in deferredProfileQueues() {
+        await drainSyncDeferred(key: key, inProfile: queueProfileId)
+      }
+      passes += 1
+    } while syncDrainAgain && passes < 2
+    syncDraining = false
+  }
+  /// Settle only what a SUCCESSFUL send covered, minus anything re-owed while
+  /// it was in flight. A failed send leaves the debt exactly where it was —
+  /// `sendSync` has already re-deferred it.
+  @MainActor private func drainSyncDeferred(key: String, inProfile profileId: String? = nil) async {
+    let offered = syncDeferred(key: key)
+    guard !offered.isEmpty else { return }
+    syncDeferredDrainKey = key
+    syncDeferredReowed.removeAll()
+    let sent = await sendSync(unitIds: Array(offered), inProfile: profileId)
+    let reowed = syncDeferredReowed
+    syncDeferredDrainKey = nil
+    syncDeferredReowed.removeAll()
+    guard sent else { return }
+    var deferred = syncDeferred(key: key)
+    deferred.subtract(offered.subtracting(reowed))
+    setSyncDeferred(deferred, key: key)
+  }
+  /// `true` only when the engine accepted the send. Suspended is `false`; a
+  /// throw defers the ids durably and is `false`.
+  @MainActor private func sendSync(unitIds: [String], inProfile profileId: String? = nil) async -> Bool {
+    guard !unitIds.isEmpty else { return true }
+    guard let engine else { return false }
+    let owning = profileId ?? syncProfileId
+    do {
+      try await engine.send(unitIds: unitIds, inProfile: owning)
+      return true
+    } catch {
+      await deferSync(unitIds, inProfile: owning)
+      NSLog("[OPDesktopSync] sync send postponed; \(unitIds.count) unit(s) held durably")
+      return false
+    }
+  }
+
+  // MARK: Full-upload ledger
+
+  private func syncFullUploadOwed(profileId: String) -> Bool {
+    UserDefaults.standard.bool(forKey: Self.fullUploadKey(profileId))
+  }
+  private func syncFullUploadConsidered(profileId: String) -> Bool {
+    UserDefaults.standard.object(forKey: Self.fullUploadKey(profileId)) != nil
+  }
+  private func setSyncFullUploadOwed(_ owed: Bool, profileId: String) {
+    if owed { syncFullUploadOwe[profileId, default: 0] += 1 }
+    UserDefaults.standard.set(owed, forKey: Self.fullUploadKey(profileId))
+  }
+  private func oweFullUploadForEveryConsideredProfile() {
+    let prefix = Self.fullUploadKey("")
+    var ids = Set(UserDefaults.standard.dictionaryRepresentation().keys
+      .filter { $0.hasPrefix(prefix) }
+      .map { String($0.dropFirst(prefix.count)) })
+    ids.formUnion(knownProfileIds)
+    for id in ids { setSyncFullUploadOwed(true, profileId: id) }
+    NSLog("[OPDesktopSync] a full upload is owed again for \(ids.count) profile(s)")
+  }
+  /// Ask the page for everything it would push for the profile, offer it, and
+  /// settle the debt only if nothing re-owed it mid-send.
+  @MainActor private func performFullUpload(profileId: String) async {
+    guard syncFullUploadOwed(profileId: profileId) else { return }
+    guard let value = try? await request("syncCollect", ["profileId": profileId]),
+          let object = value as? [String: Any],
+          let entries = object["units"] as? [[String: Any]] else {
+      NSLog("[OPDesktopSync] no usable answer for \(profileId)'s full upload")
+      return
+    }
+    let unitIds = entries.compactMap { $0["id"] as? String }
+    NSLog("[OPDesktopSync] offering \(unitIds.count) unit(s) for \(profileId)'s full upload")
+    let owed = syncFullUploadOwe[profileId, default: 0]
+    let sent = await sendSync(unitIds: unitIds, inProfile: profileId)
+    guard sent else { return }
+    guard syncFullUploadOwe[profileId, default: 0] == owed else {
+      NSLog("[OPDesktopSync] \(profileId)'s full upload was re-owed mid-send; keeping the debt")
+      return
+    }
+    setSyncFullUploadOwed(false, profileId: profileId)
+  }
+
   func resume(_ id: UInt64, json: String) {
     guard let data = json.data(using: .utf8),
           let value = try? JSONSerialization.jsonObject(with: data) else {
@@ -110,6 +307,15 @@ final class DesktopSyncHost {
   /// pumps it; no test reaches this, so no test can hang on it.
   func start(profileId: String, knownProfileIds: [String]) {
     Task { @MainActor in
+      self.syncProfileId = profileId
+      self.knownProfileIds = knownProfileIds
+      // A workspace this device has never started sync for owes the mesh a
+      // full upload of everything held for it. Decided BEFORE start, from the
+      // page's list — the page owns the registry.
+      for known in knownProfileIds where !syncFullUploadConsidered(profileId: known) {
+        NSLog("[OPDesktopSync] first gated start seen for \(known) — a full upload is owed")
+        setSyncFullUploadOwed(true, profileId: known)
+      }
       let engine = self.engine ?? OPSyncEngine(host: self)
       self.engine = engine
       let state = await engine.start(profileId: profileId, knownProfileIds: knownProfileIds)
@@ -121,9 +327,17 @@ final class DesktopSyncHost {
         return
       }
       notify("syncState", ["state": "available"])
-      // THE SHARED ZONE FIRST: it holds the registry, which is how a Mac that
-      // has just joined learns the account's workspaces — same order as iOS.
+      // THE SAME ORDER AS iOS, and each step is why. The shared zone first: it
+      // holds the registry, which is how a Mac that has just joined learns the
+      // account's workspaces. Then the debt — anything this device still owes
+      // a send of goes up BEFORE the pull, so a unit changed on both sides
+      // meets the conflict path rather than being overwritten. Then the full
+      // uploads owed. Then the general fetch.
       try? await engine.fetchShared()
+      await drainSyncDeferred()
+      for owing in knownProfileIds where syncFullUploadOwed(profileId: owing) {
+        await performFullUpload(profileId: owing)
+      }
       try? await engine.fetch()
     }
   }
@@ -155,13 +369,7 @@ extension DesktopSyncHost: OPSyncHost {
   }
 
   func syncScopes(forUnitIds ids: [String]) async -> [String: String]? {
-    guard let idsData = try? JSONSerialization.data(withJSONObject: ids),
-          let idsJson = String(data: idsData, encoding: .utf8),
-          let value = try? await request("syncScopes", ["unitIds": idsJson]),
-          let scopes = value as? [String: String] else {
-      return nil
-    }
-    return scopes
+    await scopes(forUnitIds: ids)
   }
 
   func syncDidFetch(_ units: [SyncUnit]) async -> Set<String> {
@@ -181,16 +389,15 @@ extension DesktopSyncHost: OPSyncHost {
       let profileId = entry["profileId"] as? String ?? ""
       accounted.insert(SyncUnit(id: id, kind: "", payload: "", modifiedAt: nil, profileId: profileId).route)
     }
-    // The iOS host hands refused units to a durable ledger and re-offers them
-    // at the next start. Desktop does not have that ledger yet (plan, Task 3b);
-    // until it does the refusal is REPORTED to the page and logged, so the gap
-    // is visible rather than silent.
+    // Refused units go to the durable ledger and are offered again at the
+    // next start, exactly as on iOS. The page is told as well, for its log.
     let refused = units.filter { !accounted.contains($0.route) }
     if !refused.isEmpty {
       for (profileId, group) in Dictionary(grouping: refused, by: \.profileId) {
+        await deferSync(group.map(\.id), inProfile: profileId.isEmpty ? nil : profileId)
         notify("syncRefused", ["profileId": profileId, "unitIds": group.map(\.id)])
       }
-      NSLog("[OPDesktopSync] \(refused.count) of \(units.count) fetched unit(s) were refused")
+      NSLog("[OPDesktopSync] \(refused.count) of \(units.count) fetched unit(s) were refused; offered again at the next start")
     }
     return accounted
   }
@@ -221,9 +428,10 @@ extension DesktopSyncHost: OPSyncHost {
     let unresolved = conflicts.map(\.server).filter { !done.contains($0.route) }
     if !unresolved.isEmpty {
       for (profileId, group) in Dictionary(grouping: unresolved, by: \.profileId) {
+        await deferSync(group.map(\.id), inProfile: profileId.isEmpty ? nil : profileId)
         notify("syncRefused", ["profileId": profileId, "unitIds": group.map(\.id)])
       }
-      NSLog("[OPDesktopSync] \(unresolved.count) of \(conflicts.count) conflict(s) were not resolved")
+      NSLog("[OPDesktopSync] \(unresolved.count) of \(conflicts.count) conflict(s) were not resolved; offered again at the next start")
     }
     if parked > 0 { notify("syncParked", ["count": parked]) }
     return outcome
@@ -244,7 +452,8 @@ extension DesktopSyncHost: OPSyncHost {
   }
 
   func syncDidSwitchAccounts() {
-    NSLog("[OPDesktopSync] the iCloud account changed")
+    NSLog("[OPDesktopSync] the iCloud account changed — re-offering every profile's full upload")
+    oweFullUploadForEveryConsideredProfile()
     notify("syncAccountChanged")
   }
 
@@ -293,6 +502,42 @@ public func op_sync_ping() {
       host.notify("pong", ["error": "\(error)"])
     }
   }
+}
+
+// Test-only surface for the deferred ledger. Primitives only: `op_sync_defer`
+// is `addSyncDeferred` on the profile key, without the scope split, so a test
+// can read the key back synchronously; the hoist is the round trip that needs
+// a `syncScopes` answer, which the test supplies through `op_sync_resume`.
+@_cdecl("op_sync_defer")
+public func op_sync_defer(_ profileId: UnsafePointer<CChar>, _ unitIdsJson: UnsafePointer<CChar>) {
+  let ids = (try? JSONSerialization.jsonObject(with: Data(String(cString: unitIdsJson).utf8))) as? [String] ?? []
+  host.addSyncDeferred(Set(ids), key: OPSyncEngine.deferredKey(String(cString: profileId)))
+}
+
+@_cdecl("op_sync_deferred")
+public func op_sync_deferred(_ keySuffix: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar> {
+  let ids = Array(host.syncDeferred(key: OPSyncEngine.deferredKey(String(cString: keySuffix)))).sorted()
+  let data = (try? JSONSerialization.data(withJSONObject: ids)) ?? Data("[]".utf8)
+  return strdup(String(decoding: data, as: UTF8.self))
+}
+
+@_cdecl("op_sync_hoist_shared")
+public func op_sync_hoist_shared() {
+  Task { await host.hoistSharedSyncDeferred() }
+}
+
+/// Test probe: the profile queues the drain would see — the enumeration path,
+/// which is a different question from whether a key reads back directly.
+@_cdecl("op_sync_ledger_queues")
+public func op_sync_ledger_queues() -> UnsafeMutablePointer<CChar> {
+  let ids = host.deferredProfileQueueIds()
+  let data = (try? JSONSerialization.data(withJSONObject: ids)) ?? Data("[]".utf8)
+  return strdup(String(decoding: data, as: UTF8.self))
+}
+
+@_cdecl("op_sync_ledger_clear")
+public func op_sync_ledger_clear(_ keySuffix: UnsafePointer<CChar>) {
+  UserDefaults.standard.removeObject(forKey: OPSyncEngine.deferredKey(String(cString: keySuffix)))
 }
 
 @_cdecl("op_sync_link_check")

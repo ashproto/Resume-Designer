@@ -1788,7 +1788,11 @@ extension OPSyncEngine {
       unreadableRecords.map(Self.systemFieldsKey).sorted(), forKey: Self.unreadableKey
     )
   }
-  static func deferredKey(_ profileId: String) -> String { "op-sync-deferred-\(profileId)" }
+  /// `nonisolated`: a pure string function, and the ONE piece of this class the
+  /// macOS host reads from outside the main actor — its ledger keeps the same
+  /// keys, and defining the format twice is how the two hosts would drift.
+  /// The iOS host only ever calls it from the main actor; nothing changes there.
+  nonisolated static func deferredKey(_ profileId: String) -> String { "op-sync-deferred-\(profileId)" }
   /// NOT per profile: an iCloud account is a property of the device, and every
   /// profile's zone lives in whichever one is signed in.
   private static let accountKey = "op-sync-icloud-account"

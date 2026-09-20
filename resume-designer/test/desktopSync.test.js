@@ -14,6 +14,7 @@ import { initDesktopSync } from '../src/desktopSync.js';
 
 const deps = (over = {}) => ({
   collectUnit: vi.fn(() => ({ id: 'resume:a', kind: 'resume', payload: '{}', modifiedAt: null })),
+  collectUnits: vi.fn((profileId) => [{ id: 'resume:a', kind: 'resume', payload: '{}', modifiedAt: null, profileId }]),
   unitScopes: vi.fn(() => ({ 'resume:a': 'profile' })),
   applyUnits: vi.fn().mockResolvedValue({ applied: 1, accounted: [{ id: 'resume:a', profileId: 'p1' }] }),
   resolveConflicts: vi.fn().mockResolvedValue({ resolved: [], parked: 0 }),
@@ -62,6 +63,16 @@ describe('initDesktopSync', () => {
     const d = deps(); await initDesktopSync(d);
     await window.__opDesktopSync.request(8, JSON.stringify({ kind: 'syncApply', units: '[]' }));
     expect(lastReply()).toEqual({ id: 8, ok: true, value: { applied: 1, accounted: [{ id: 'resume:a', profileId: 'p1' }] } });
+  });
+
+  it("syncCollect answers a profile's full upload directly — a request, not the iOS message pair", async () => {
+    // iOS asks `syncCollect` fire-and-forget and the page posts `syncUnits`
+    // back; over this bridge the same question is a plain request with an
+    // answer. The units carry the profile they belong to.
+    const d = deps(); await initDesktopSync(d);
+    await window.__opDesktopSync.request(11, JSON.stringify({ kind: 'syncCollect', profileId: 'p2' }));
+    expect(d.collectUnits).toHaveBeenCalledWith('p2');
+    expect(lastReply()).toEqual({ id: 11, ok: true, value: { profileId: 'p2', units: [{ id: 'resume:a', kind: 'resume', payload: '{}', modifiedAt: null, profileId: 'p2' }] } });
   });
 
   it('answers an unknown kind with ok:false rather than throwing or staying silent', async () => {

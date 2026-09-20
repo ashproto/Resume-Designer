@@ -71,6 +71,14 @@ pub fn stop() {
     unsafe { op_sync_stop() }
 }
 
+/// Swift holds ONE callback slot, and `cargo test` runs tests in parallel.
+/// Two tests registering their own recorder race for that slot, and a request
+/// then lands in the other test's log and its wait times out — an intermittent
+/// failure with a 2s signature. Every test that registers a callback holds this
+/// for its whole body; the rest of the suite stays parallel.
+#[cfg(test)]
+static FFI_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod link_tests {
     use std::ffi::{c_char, CStr};
@@ -127,6 +135,7 @@ mod bridge_tests {
 
     #[test]
     fn a_request_crosses_to_rust_and_its_reply_resumes_swift() {
+        let _serial = super::FFI_LOCK.lock().unwrap();
         unsafe { op_sync_register(record) };
         // Swift → Rust: the request arrives synchronously, carrying the id it
         // parked its continuation under.
@@ -154,6 +163,96 @@ mod bridge_tests {
     fn a_reply_for_an_unknown_id_is_ignored_not_a_crash() {
         let reply = CString::new("{}").unwrap();
         unsafe { op_sync_resume(999_999, reply.as_ptr()) };
+    }
+}
+
+#[cfg(test)]
+mod ledger_tests {
+    //! The deferred-send ledger, ported from the iOS host. Lives in
+    //! `UserDefaults` under keys the TRANSPORT defines (`op-sync-deferred-*`),
+    //! so both platforms keep the debt in the same shape. No engine and no
+    //! container are involved: these exercise the ledger and the shared-zone
+    //! hoist, which needs a `syncScopes` answer — and that answer comes back
+    //! through the real bridge, so the test replies to it.
+    use std::ffi::{c_char, CStr, CString};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    extern "C" {
+        fn op_sync_register(cb: extern "C" fn(u64, *const c_char));
+        fn op_sync_resume(id: u64, json: *const c_char);
+        fn op_sync_free(p: *mut c_char);
+        fn op_sync_defer(profile_id: *const c_char, unit_ids_json: *const c_char);
+        fn op_sync_deferred(key_suffix: *const c_char) -> *mut c_char;
+        fn op_sync_hoist_shared();
+        fn op_sync_ledger_clear(prefix_suffix: *const c_char);
+        fn op_sync_ledger_queues() -> *mut c_char;
+    }
+    fn queues() -> Vec<String> {
+        let p = unsafe { op_sync_ledger_queues() };
+        let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_owned();
+        unsafe { op_sync_free(p) };
+        serde_json::from_str(&s).unwrap()
+    }
+
+    static SEEN: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
+    extern "C" fn record(id: u64, json: *const c_char) {
+        SEEN.lock().unwrap().push((id, unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned()));
+    }
+    fn c(s: &str) -> CString { CString::new(s).unwrap() }
+    fn deferred(suffix: &str) -> Vec<String> {
+        let p = unsafe { op_sync_deferred(c(suffix).as_ptr()) };
+        let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_owned();
+        unsafe { op_sync_free(p) };
+        serde_json::from_str(&s).unwrap()
+    }
+    fn wait_for_request(kind: &str) -> u64 {
+        let start = Instant::now();
+        loop {
+            if let Some((id, _)) = SEEN.lock().unwrap().iter().find(|(id, j)| *id != 0 && j.contains(&format!("\"kind\":\"{kind}\""))) {
+                return *id;
+            }
+            assert!(start.elapsed() < Duration::from_secs(2), "no {kind} request arrived: {:?}", SEEN.lock().unwrap());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    fn wait_until(what: &str, f: impl Fn() -> bool) {
+        let start = Instant::now();
+        while !f() {
+            assert!(start.elapsed() < Duration::from_secs(2), "timed out: {what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn defer_unions_into_the_profile_key_and_survives_a_second_defer() {
+        // Distinct profile ids per test: UserDefaults is one store per process.
+        unsafe { op_sync_ledger_clear(c("t-union").as_ptr()) };
+        unsafe { op_sync_defer(c("t-union").as_ptr(), c("[\"resume:b\",\"resume:a\"]").as_ptr()) };
+        assert_eq!(deferred("t-union"), vec!["resume:a", "resume:b"], "sorted, so the stored value is canonical");
+        unsafe { op_sync_defer(c("t-union").as_ptr(), c("[\"resume:a\",\"resume:c\"]").as_ptr()) };
+        assert_eq!(deferred("t-union"), vec!["resume:a", "resume:b", "resume:c"], "a union, never a replace");
+        unsafe { op_sync_ledger_clear(c("t-union").as_ptr()) };
+    }
+
+    #[test]
+    fn hoist_moves_shared_scoped_ids_to_the_shared_key_via_a_real_scopes_answer() {
+        let _serial = super::FFI_LOCK.lock().unwrap();
+        unsafe { op_sync_register(record) };
+        unsafe { op_sync_ledger_clear(c("t-hoist").as_ptr()); op_sync_ledger_clear(c("_shared").as_ptr()) };
+        unsafe { op_sync_defer(c("t-hoist").as_ptr(), c("[\"key:registry\",\"resume:x\"]").as_ptr()) };
+        // The hoist finds queues by ENUMERATING defaults, which is a different
+        // question from reading one key back. Assert it before relying on it.
+        assert!(queues().contains(&"t-hoist".to_string()), "enumeration does not see the seeded queue: {:?}", queues());
+        SEEN.lock().unwrap().clear();
+        unsafe { op_sync_hoist_shared() };
+        // The hoist asks the page which zone each id lives in. Answer it.
+        let id = wait_for_request("syncScopes");
+        let reply = c("{\"ok\":true,\"value\":{\"key:registry\":\"shared\",\"resume:x\":\"profile\"}}");
+        unsafe { op_sync_resume(id, reply.as_ptr()) };
+        wait_until("shared key populated", || deferred("_shared") == vec!["key:registry"]);
+        assert_eq!(deferred("t-hoist"), vec!["resume:x"], "the profile key keeps only its own");
+        unsafe { op_sync_ledger_clear(c("t-hoist").as_ptr()); op_sync_ledger_clear(c("_shared").as_ptr()) };
     }
 }
 

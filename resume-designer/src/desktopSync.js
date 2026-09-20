@@ -28,6 +28,7 @@ const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
 /**
  * @param {object} deps
  * @param {Function} deps.collectUnit
+ * @param {Function} deps.collectUnits   every unit this device would push for a profile
  * @param {Function} deps.unitScopes
  * @param {Function} deps.applyUnits
  * @param {Function} deps.resolveConflicts
@@ -41,7 +42,20 @@ const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
 export function initDesktopSync(deps) {
   // The desktop host has no native sheets to re-project, so `publish` is a
   // no-op — a constant one, so the thunk the iOS host needs is not needed here.
-  const routes = makeSyncHostRoutes(deps, { publish: () => {} });
+  const routes = {
+    ...makeSyncHostRoutes(deps, { publish: () => {} }),
+    // A profile's FULL upload — every unit this device would push for it —
+    // asked when the transport owes one (a workspace's first gated start, an
+    // account change). Desktop-only: over the WebKit bridge iOS asks this
+    // fire-and-forget and the page posts `syncUnits` back; over this bridge
+    // it is a request with an answer, so it does not belong in the shared
+    // table. Echoes the profile id, because the transport may owe more than
+    // one and the answer has to say which it is.
+    syncCollect: ({ profileId }) => {
+      const forProfile = String(profileId ?? '');
+      return { profileId: forProfile, units: deps.collectUnits(forProfile) };
+    },
+  };
 
   // Things Swift TELLS the page (id 0). Each is a fact about the transport,
   // and the page decides what to do with it; none of them destroys anything.

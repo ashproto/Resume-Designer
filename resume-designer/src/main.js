@@ -931,7 +931,7 @@ export async function init() {
     getPlatform().then((platform) => {
       if (platform !== 'darwin') return;
       initDesktopSync({
-        collectUnit, unitScopes, applyUnits, resolveConflicts, getActiveProfileId,
+        collectUnit, collectUnits, unitScopes, applyUnits, resolveConflicts, getActiveProfileId,
         // The page owns the registry; the transport is told every live profile.
         listProfileIds: () => listProfiles().map((p) => p.id),
         // A purge suspends sync — `setSyncEnabled(false)` writes SYNC_SUSPENDED_KEY —
