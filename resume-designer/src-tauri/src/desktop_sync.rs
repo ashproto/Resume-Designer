@@ -28,6 +28,9 @@ static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 /// into Swift — the reentrancy rule the iOS host learned the hard way.
 extern "C" fn on_request(id: u64, json: *const c_char) {
     let json = unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned();
+    // stderr, like the bridge's own startup line: the one channel that needs no
+    // log persistence and no devtools to read when the app is run by path.
+    eprintln!("desktop sync: swift asked {} — {}", if id == 0 { "(notice)".to_string() } else { format!("#{id}") }, json.chars().take(80).collect::<String>());
     let Some(app) = APP.get() else { return };
     let Some(window) = app.get_webview_window("main") else { return };
     // `window.__opDesktopSync` is installed by desktopSync.js under Tauri on
@@ -53,6 +56,7 @@ pub fn desktop_sync_reply(id: u64, json: String) -> Result<(), String> {
 /// the page owns — and the transport starts against that zone.
 #[tauri::command]
 pub fn desktop_sync_report_profile(profile_id: String, known_profile_ids: Vec<String>) -> Result<(), String> {
+    eprintln!("desktop sync: page reported profile {profile_id} ({} known) — starting the transport", known_profile_ids.len());
     let p = CString::new(profile_id).map_err(|e| e.to_string())?;
     let k = CString::new(serde_json::to_string(&known_profile_ids).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
@@ -60,11 +64,20 @@ pub fn desktop_sync_report_profile(profile_id: String, known_profile_ids: Vec<St
     Ok(())
 }
 
+/// A line from the page onto the process's stderr. The webview console is
+/// invisible when the app is run by path with stderr captured, and a sync that
+/// silently fails to start is exactly the failure that needs a trace.
+#[tauri::command]
+pub fn desktop_sync_note(message: String) {
+    eprintln!("desktop sync (page): {}", message.chars().take(300).collect::<String>());
+}
+
 /// Called once from setup: hands the app handle to the callback and registers
 /// the callback with Swift. Nothing starts until the page reports a profile.
 pub fn install(app: &AppHandle) {
     let _ = APP.set(app.clone());
     unsafe { op_sync_register(on_request) }
+    eprintln!("desktop sync: host installed; waiting for the page to report a profile");
 }
 
 pub fn stop() {
@@ -157,6 +170,14 @@ mod bridge_tests {
         assert_eq!(seen[1].0, 0);
         assert!(seen[1].1.contains("\"kind\":\"pong\""), "{}", seen[1].1);
         assert!(seen[1].1.contains("\"n\":42"), "the reply must round-trip intact: {}", seen[1].1);
+    }
+
+    #[test]
+    fn nslog_from_the_static_library_reaches_stderr() {
+        // Observed by the harness, not asserted: run with `-- --nocapture` and
+        // the line must appear. The app's every host message is an NSLog.
+        extern "C" { fn op_sync_log_probe(); }
+        unsafe { op_sync_log_probe() };
     }
 
     #[test]

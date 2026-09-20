@@ -540,6 +540,12 @@ public func op_sync_ledger_clear(_ keySuffix: UnsafePointer<CChar>) {
   UserDefaults.standard.removeObject(forKey: OPSyncEngine.deferredKey(String(cString: keySuffix)))
 }
 
+/// Test probe: does NSLog from this static library reach the process's stderr?
+/// The app is launched by path with stderr captured, and every host message
+/// is an NSLog — if these do not reach stderr, an empty capture means nothing.
+@_cdecl("op_sync_log_probe")
+public func op_sync_log_probe() { NSLog("[OPDesktopSync] log probe: NSLog reaches stderr") }
+
 @_cdecl("op_sync_link_check")
 public func op_sync_link_check() -> UnsafeMutablePointer<CChar> {
   _ = CKRecord.SystemFieldKey.recordID

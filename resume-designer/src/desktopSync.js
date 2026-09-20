@@ -36,6 +36,9 @@ const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
  * @param {() => string[]} deps.listProfileIds  the registry's live ids — the page owns the registry
  * @param {() => boolean} deps.isSyncSuspended   a purge stopped this device; only a person restarts it
  * @param {(v: boolean) => void} [deps.setSyncSuspended]
+ * @param {(message: string) => void} [deps.note]  a line onto the process's stderr; the
+ *   webview console is invisible when the app is run by path, and "sync did not
+ *   start" is exactly the failure that needs a trace
  * @returns {Promise<void>} resolves once the transport has been told to start
  *   (or once it has decided not to) — `invoke` is reached asynchronously.
  */
@@ -103,8 +106,11 @@ export function initDesktopSync(deps) {
   // The transport starts against the active profile's zone, and is told every
   // profile the registry names — the page owns the registry. Not while
   // suspended: a purge stopped this device on purpose.
-  if (deps.isSyncSuspended()) return Promise.resolve();
+  const note = deps.note ?? (() => {});
+  if (deps.isSyncSuspended()) { note('not starting: sync is suspended on this device'); return Promise.resolve(); }
   const profileId = deps.getActiveProfileId();
-  if (!profileId) return Promise.resolve();
-  return tauriInvoke('desktop_sync_report_profile', { profileId, knownProfileIds: deps.listProfileIds() });
+  if (!profileId) { note('not starting: no active profile yet'); return Promise.resolve(); }
+  const knownProfileIds = deps.listProfileIds();
+  note(`starting: profile ${profileId}, ${knownProfileIds.length} known`);
+  return tauriInvoke('desktop_sync_report_profile', { profileId, knownProfileIds });
 }

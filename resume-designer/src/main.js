@@ -544,6 +544,12 @@ function showMigrationToast(probe, result = null) {
 }
 
 // Initialize the application
+// A line onto the process's stderr, for the one failure that must never be
+// silent: desktop sync not starting. The webview console is invisible when the
+// app is run by path. Best-effort; never throws into the caller.
+const syncNote = (message) => import('@tauri-apps/api/core')
+  .then(({ invoke }) => invoke('desktop_sync_note', { message })).catch(() => {});
+
 export async function init() {
   // The full native shell is wired after the app services below, as it always
   // has been. This bootstrap-only command must exist earlier because profile
@@ -927,10 +933,15 @@ export async function init() {
   // inside — initIOSShell: `window.__opShell` stays dormant here, and this is
   // its own global. `getPlatform` is async, and this is the one place in init
   // that needs the answer, so the await is local to it.
+  // The trace below is OUTSIDE every gate on purpose: it reports the gate
+  // values themselves, so "sync did not start" is never silent about why.
+  syncNote(`wiring reached; isTauri=${isTauri}`);
   if (isTauri) {
     getPlatform().then((platform) => {
-      if (platform !== 'darwin') return;
-      initDesktopSync({
+      syncNote(`platform=${platform}`);
+      if (platform !== 'darwin') { syncNote(`not starting: platform is ${platform}, not darwin`); return; }
+      return initDesktopSync({
+        note: syncNote,
         collectUnit, collectUnits, unitScopes, applyUnits, resolveConflicts, getActiveProfileId,
         // The page owns the registry; the transport is told every live profile.
         listProfileIds: () => listProfiles().map((p) => p.id),
@@ -939,6 +950,13 @@ export async function init() {
         isSyncSuspended: () => !isSyncEnabled(),
         setSyncSuspended: (suspended) => setSyncEnabled(!suspended),
       });
+    }).catch((e) => {
+      // A rejection here — the OS plugin missing, the bridge command absent —
+      // used to vanish: no catch, so sync silently never started and nothing
+      // said so. Said now, and said on STDERR too: the console is invisible
+      // when the app is run by path, and this is the failure that needs a trace.
+      console.warn('[desktopSync] did not start:', e);
+      syncNote(`did not start: ${e?.message ?? e}`);
     });
   }
 
