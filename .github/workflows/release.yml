@@ -167,6 +167,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_PROVISIONING_PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE_B64 }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -178,6 +179,7 @@ jobs:
           [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] && missing+=("APPLE_APP_SPECIFIC_PASSWORD")
           [ -z "$APPLE_TEAM_ID" ] && missing+=("APPLE_TEAM_ID")
           [ -z "$APPLE_SIGNING_IDENTITY" ] && missing+=("APPLE_SIGNING_IDENTITY")
+          [ -z "$APPLE_PROVISIONING_PROFILE_B64" ] && missing+=("APPLE_PROVISIONING_PROFILE_B64")
           [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY")
           [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
 
@@ -188,6 +190,29 @@ jobs:
           fi
 
           echo "macOS signing/notarization secrets are configured."
+
+      # CloudKit under Developer ID requires an embedded provisioning profile
+      # (evaluated at install AND at every launch). The bundler copies it into
+      # Contents/ before signing via bundle.macOS.files; this step only has to
+      # put the file where that mapping points. The secret is the profile's
+      # base64 — a profile carries no private key.
+      - name: Embed the Developer ID provisioning profile
+        shell: bash
+        env:
+          APPLE_PROVISIONING_PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE_B64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_PROVISIONING_PROFILE_B64" | base64 --decode > resume-designer/src-tauri/embedded.provisionprofile
+          # Decoded and CHECKED: the release entitlements say Production, so the
+          # profile must permit it, and it must be for this App ID.
+          security cms -D -i resume-designer/src-tauri/embedded.provisionprofile > /tmp/profile.plist
+          grep -q '<string>Production</string>' /tmp/profile.plist || { echo '::error::the provisioning profile does not permit the Production environment'; exit 1; }
+          grep -q 'com.resumedesigner.app' /tmp/profile.plist || { echo '::error::the provisioning profile is not for com.resumedesigner.app'; exit 1; }
+          echo "profile embedded: $(plutil -extract Name raw /tmp/profile.plist)"
+          # The entitlements go to AMFI as strict XML at the END of the build.
+          # `plutil -lint` passes a file AMFI rejects (a `--` inside a comment),
+          # so the gate is xmllint; a bad edit fails here, in a second.
+          xmllint --noout resume-designer/src-tauri/Entitlements.plist || { echo '::error::Entitlements.plist is not well-formed XML; AMFI would reject it at signing'; exit 1; }
 
       - name: Build macOS artifacts (signed + notarized + updater bundle)
         uses: tauri-apps/tauri-action@v0.6.2

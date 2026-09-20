@@ -18,11 +18,11 @@
     <array><string>CloudKit</string></array>
     <key>com.apple.developer.icloud-container-identifiers</key>
     <array><string>iCloud.com.onpaper.app</string></array>
-    <!-- PRODUCTION: this file signs RELEASES, against the Developer ID
-         provisioning profile, which permits only Production. Development and
-         Production are separate data stores. Local builds against real data use
-         Entitlements.development.plist via scripts/build-mac-dev.sh. -->
+    <!-- DEVELOPMENT: this file signs LOCAL builds against the macOS App Development
+         provisioning profile, which permits both. Development and
+         Production are separate data stores, and the phone's data is in Development. Selected by
+         scripts/build-mac-dev.sh through the CLI's config override; never used by CI. -->
     <key>com.apple.developer.icloud-container-environment</key>
-    <string>Production</string>
+    <string>Development</string>
   </dict>
 </plist>
