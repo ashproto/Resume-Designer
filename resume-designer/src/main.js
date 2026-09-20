@@ -927,6 +927,9 @@ export async function init() {
         localStorage.clear();
         location.reload();
       });
+    };
+    console.log('[Main] Desktop build detected, resetForTesting() available');
+  }
 
   // The macOS desktop joins the same CloudKit mesh through the same transport,
   // over the Tauri bridge rather than the WebKit one. Wired beside — never
@@ -958,10 +961,6 @@ export async function init() {
       console.warn('[desktopSync] did not start:', e);
       syncNote(`did not start: ${e?.message ?? e}`);
     });
-  }
-
-    };
-    console.log('[Main] Desktop build detected, resetForTesting() available');
   }
 
   // Kick off the auto-update check (no-op in dev / web). Fire-and-forget;
