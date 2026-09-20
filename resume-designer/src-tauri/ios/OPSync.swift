@@ -770,6 +770,21 @@ final class OPSyncEngine {
     try await engine.fetchChanges()
   }
 
+  /// `fetch`, for a user who is waiting on it. The engine's own fetches run at
+  /// utility quality of service, and macOS treats that as deferrable: on the day
+  /// this was added, fetches asked for while the app was frontmost did not run
+  /// for minutes. User-initiated quality of service, carried by the operation
+  /// group, is the one knob the API offers for "now".
+  func fetchNow() async throws {
+    guard let engine else { throw OPSyncError.notStarted }
+    let group = CKOperationGroup()
+    group.name = "foreground-refresh"
+    let configuration = CKOperation.Configuration()
+    configuration.qualityOfService = .userInitiated
+    group.defaultConfiguration = configuration
+    try await engine.fetchChanges(CKSyncEngine.FetchChangesOptions(operationGroup: group))
+  }
+
   /// Pull the SHARED zone, and only it.
   ///
   /// It exists for order, not for scope. The registry has to come down before

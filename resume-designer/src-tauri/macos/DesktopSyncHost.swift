@@ -69,6 +69,10 @@ final class DesktopSyncHost {
   /// Bumped on every owe. A full upload settles only if this did not move
   /// during its send — otherwise the debt was re-owed mid-flight and stays.
   private var syncFullUploadOwe: [String: Int] = [:]
+  /// Foreground refresh, installed once per process by the first start that
+  /// reaches `available`. See `installForegroundRefresh`.
+  private var foregroundRefreshInstalled = false
+  private var foregroundFetchCount = 0
 
   func register(_ cb: @escaping OPSyncRustCallback) { callback = cb }
 
@@ -336,6 +340,7 @@ final class DesktopSyncHost {
       // fetches only on its own schedule. Idempotent, so every start may call it.
       NSApplication.shared.registerForRemoteNotifications()
       NSLog("[OPDesktopSync] registered for silent CloudKit pushes")
+      installForegroundRefresh()
       // THE SAME ORDER AS iOS, and each step is why. The shared zone first: it
       // holds the registry, which is how a Mac that has just joined learns the
       // account's workspaces. Then the debt — anything this device still owes
@@ -348,6 +353,46 @@ final class DesktopSyncHost {
         await performFullUpload(profileId: owing)
       }
       try? await engine.fetch()
+    }
+  }
+
+  /// Push is the background path, and on a Mac its silent pushes are low
+  /// priority: on the day this was measured APNs held them for a background
+  /// app anywhere from 8 s to about 4 min, while two iOS devices in front saw
+  /// each other in ~3 s. So the FOREGROUND is fetched directly: once when the
+  /// app becomes active, and every 30 s while it is the frontmost app. Nothing
+  /// runs while the app is in the background — push covers that — and a fetch
+  /// already in flight is never doubled. The start sequence above is untouched.
+  @MainActor private func installForegroundRefresh() {
+    guard !foregroundRefreshInstalled else { return }
+    foregroundRefreshInstalled = true
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in await self?.foregroundFetch(reason: "activation") }
+    }
+    Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+      guard NSApplication.shared.isActive else { return }
+      Task { @MainActor in await self?.foregroundFetch(reason: nil) }
+    }
+    NSLog("[OPDesktopSync] foreground refresh installed: on activation, and every 30 s while frontmost")
+  }
+
+  @MainActor private func foregroundFetch(reason: String?) async {
+    guard let engine else { return }
+    // NOT gated on a fetch already in flight: an engine fetch that the system
+    // defers can take minutes to return, and a gate would then drop every
+    // tick behind it in silence — which is exactly what the first cut did.
+    // CKSyncEngine coalesces overlapping fetch requests itself.
+    foregroundFetchCount += 1
+    let label = reason ?? "timer #\(foregroundFetchCount)"
+    let began = Date()
+    NSLog("[OPDesktopSync] foreground fetch (\(label)) begin")
+    do {
+      try await engine.fetchNow()
+      NSLog("[OPDesktopSync] foreground fetch (\(label)) done in \(Int(Date().timeIntervalSince(began) * 1000)) ms")
+    } catch {
+      NSLog("[OPDesktopSync] foreground fetch (\(label)) failed: \(error)")
     }
   }
 
