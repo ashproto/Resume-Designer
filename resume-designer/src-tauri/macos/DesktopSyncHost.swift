@@ -69,9 +69,13 @@ final class DesktopSyncHost {
   /// Bumped on every owe. A full upload settles only if this did not move
   /// during its send — otherwise the debt was re-owed mid-flight and stays.
   private var syncFullUploadOwe: [String: Int] = [:]
-  /// Foreground refresh, installed once per process by the first start that
-  /// reaches `available`. See `installForegroundRefresh`.
+  /// Foreground refresh, installed once per process before the account check.
+  /// See `installForegroundRefresh`.
   private var foregroundRefreshInstalled = false
+  /// An explicit stop disables timer work until another start enables it.
+  private var foregroundRefreshEnabled = false
+  /// Includes the time spent waiting behind earlier lifecycle work.
+  private var foregroundTimerPending = false
   /// A send that met an engine event in flight is re-drained shortly after,
   /// once per episode; see `scheduleDrainRetry`.
   private var drainRetries = 0
@@ -416,6 +420,7 @@ final class DesktopSyncHost {
     }
     let engine = self.engine ?? OPSyncEngine(host: self)
     self.engine = engine
+    foregroundRefreshEnabled = true
     installForegroundRefresh()
     let state = await engine.start(profileId: profileId, knownProfileIds: knownProfileIds)
     guard state == .available else {
@@ -451,7 +456,11 @@ final class DesktopSyncHost {
     }
     var settled = "ready"
     do {
-      try await engine.fetchNow()
+      if reason == "foreground-timer" {
+        try await engine.fetchForegroundChanges()
+      } else {
+        try await engine.fetchNow()
+      }
     } catch {
       settled = "unavailable"
       NSLog("[OPDesktopSync] the pull did not complete: \(error)")
@@ -462,17 +471,14 @@ final class DesktopSyncHost {
     NSLog("[OPDesktopSync] \(reason) pass done in \(Int(Date().timeIntervalSince(began) * 1000)) ms")
   }
 
-  /// Push is the background path, and on a Mac its silent pushes are low
-  /// priority: on the day this was measured APNs held them for a background
-  /// app anywhere from 8 s to about 4 min, while two iOS devices in front saw
-  /// each other in ~3 s. So an activation runs the FULL start pass on the
-  /// lifecycle chain, as OPShell's foreground resume does: the engine takes on
-  /// any zone the registry added, the debt goes up, the owed uploads go up, and
-  /// the pull runs at user-initiated quality of service — measured at one to
-  /// two seconds to a landing. A 30 s timer was tried and dropped: the engine
-  /// answered its repeated requests in 1 ms with no server operation.
+  /// Push remains the background path. While the app stays frontmost, a timer
+  /// drains outgoing debt, then asks CKDatabase for incoming changes directly.
+  /// On macOS, CKSyncEngine's manual fetch can return without discovering any
+  /// changed zones until a push or activation invalidates its internal state.
+  /// Repeating that call did not fetch edits during the focused-window test.
+  /// Thirty seconds bounds the cadence of attempts, not CloudKit's latency.
   /// Installed before the account check, so a Mac that is signed out at launch
-  /// and signs in later is picked up by its next activation.
+  /// and signs in later is picked up by a later foreground pass.
   @MainActor private func installForegroundRefresh() {
     guard !foregroundRefreshInstalled else { return }
     foregroundRefreshInstalled = true
@@ -481,7 +487,25 @@ final class DesktopSyncHost {
     ) { [weak self] _ in
       Task { @MainActor in self?.activate() }
     }
-    NSLog("[OPDesktopSync] foreground refresh installed: the full start pass on every activation")
+    let tick: @MainActor @Sendable () -> Void = { [weak self] in self?.foregroundTimerTick() }
+    Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+      Task.detached { @MainActor in tick() }
+    }
+    NSLog("[OPDesktopSync] foreground refresh installed: activation fetch and direct discovery every 30 s while frontmost")
+  }
+
+  @MainActor private func foregroundTimerTick() {
+    guard foregroundRefreshEnabled, NSApplication.shared.isActive, !syncSuspended, !foregroundTimerPending else { return }
+    foregroundTimerPending = true
+    enqueueLifecycle { [self] in
+      defer { foregroundTimerPending = false }
+      // Earlier queued work may have stopped sync, purged it, or switched the
+      // profile. Use the state now, so a stale tick cannot restart the old one.
+      guard foregroundRefreshEnabled, NSApplication.shared.isActive, !syncSuspended,
+            let profileId = syncProfileId else { return }
+      await runStart(profileId: profileId, knownProfileIds: knownProfileIds,
+                     tombstonedProfileIds: tombstonedProfileIds, reason: "foreground-timer")
+    }
   }
 
   @MainActor private func activate() {
@@ -595,6 +619,7 @@ final class DesktopSyncHost {
   }
 
   @MainActor private func stopEngine(forgettingServer: Bool) async {
+    foregroundRefreshEnabled = false
     drainRetryTask?.cancel()
     drainRetryTask = nil
     await engine?.stop()

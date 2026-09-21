@@ -48,3 +48,50 @@ describe('DesktopSyncHost: tasks that may await the engine start detached', () =
     expect(body.match(INHERITING_TASK) ?? []).toEqual([]);
   });
 });
+
+describe('DesktopSyncHost: bounded foreground refresh', () => {
+  it('uses direct change discovery for timer passes', () => {
+    const start = code(method('runStart'));
+    expect(start).toMatch(/if reason == "foreground-timer"\s*\{\s*try await engine\.fetchForegroundChanges\(\)/);
+    expect(start).toMatch(/else\s*\{\s*try await engine\.fetchNow\(\)/);
+  });
+
+  it('runs the full start pass on a repeating foreground timer as well as activation', () => {
+    const install = code(method('installForegroundRefresh'));
+    expect(install).toMatch(/Timer\.scheduledTimer\(withTimeInterval: 30, repeats: true\)/);
+    expect(install).toContain('foregroundTimerTick()');
+    expect(install).toContain('self?.activate()');
+    const tick = code(method('foregroundTimerTick'));
+    expect(tick).toContain('await runStart(');
+    expect(tick).toContain('reason: "foreground-timer"');
+    expect(tick).not.toContain('fetchNow(');
+  });
+
+  it('allows only one queued or running timer pass', () => {
+    const tick = code(method('foregroundTimerTick'));
+    expect(tick).toMatch(/guard[^\n]*!foregroundTimerPending[^\n]*else \{ return \}/);
+    const hold = tick.indexOf('foregroundTimerPending = true');
+    const enqueue = tick.indexOf('enqueueLifecycle');
+    expect(hold).toBeGreaterThan(-1);
+    expect(enqueue).toBeGreaterThan(hold);
+    expect(tick.slice(enqueue)).toContain('defer { foregroundTimerPending = false }');
+  });
+
+  it('rechecks the foreground, suspension, and current profile after earlier lifecycle work', () => {
+    const tick = code(method('foregroundTimerTick'));
+    const queued = tick.slice(tick.indexOf('enqueueLifecycle'));
+    expect(queued).toMatch(/guard foregroundRefreshEnabled, NSApplication\.shared\.isActive, !syncSuspended,/);
+    expect(queued).toMatch(/let profileId = syncProfileId else \{ return \}/);
+    expect(queued).toMatch(/runStart\(profileId: profileId, knownProfileIds: knownProfileIds,/);
+    expect(queued).toContain('tombstonedProfileIds: tombstonedProfileIds');
+    // An activation stays independent of the timer's coalescing guard.
+    expect(code(method('activate'))).not.toContain('foregroundTimerPending');
+  });
+
+  it('disables timer work when the host stops until another explicit start', () => {
+    expect(code(method('runStart'))).toContain('foregroundRefreshEnabled = true');
+    expect(code(method('stopEngine'))).toContain('foregroundRefreshEnabled = false');
+    const tick = code(method('foregroundTimerTick'));
+    expect(tick.match(/guard foregroundRefreshEnabled,/g)).toHaveLength(2);
+  });
+});
