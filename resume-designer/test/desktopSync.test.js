@@ -63,6 +63,35 @@ describe('initDesktopSync', () => {
     });
   });
 
+  it('re-reports the registry when the SHARED zone lands, and not for a workspace landing', async () => {
+    // A workspace created on another device becomes known here only through
+    // the shared zone; the running engine takes on its zone from this report.
+    await initDesktopSync(deps());
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncLanded', scopes: [{ profileId: 'p1', unitId: '' }] }));
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'desktop_sync_profiles')).toBe(false);
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncLanded', scopes: [{ profileId: '', unitId: '' }] }));
+    const report = invoke.mock.calls.find(([cmd]) => cmd === 'desktop_sync_profiles');
+    expect(report?.[1]).toEqual({ knownProfileIds: ['p1', 'p2'], tombstonedProfileIds: ['dead'] });
+  });
+
+  it('releases the deferred first-run work when the transport says the first pull settled', async () => {
+    const markInitialProfileFetchSettled = vi.fn();
+    await initDesktopSync(deps({ markInitialProfileFetchSettled }));
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncInitialProfileFetchSettled', status: 'ready' }));
+    expect(markInitialProfileFetchSettled).toHaveBeenCalledWith('ready');
+  });
+
+  it('exposes the explicit resume after a purge, and mirrors suspension both ways', async () => {
+    const setSyncSuspended = vi.fn();
+    await initDesktopSync(deps({ setSyncSuspended }));
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncPurged' }));
+    expect(setSyncSuspended).toHaveBeenLastCalledWith(true);
+    await window.__opDesktopSync.resumeAfterPurge();
+    expect(invoke).toHaveBeenCalledWith('desktop_sync_resume', undefined);
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncResumed' }));
+    expect(setSyncSuspended).toHaveBeenLastCalledWith(false);
+  });
+
   it('does not start the transport while sync is suspended', async () => {
     // A purge stopped this device on purpose; only a person turns it back on.
     await initDesktopSync(deps({ isSyncSuspended: () => true }));

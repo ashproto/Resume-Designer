@@ -19,6 +19,38 @@ extern "C" {
     fn op_sync_start(profile_id: *const c_char, known_profile_ids_json: *const c_char, tombstoned_profile_ids_json: *const c_char);
     fn op_sync_stop();
     fn op_sync_dirty(units_json: *const c_char);
+    fn op_sync_register_answer(cb: extern "C" fn(u64, *const c_char));
+    fn op_sync_profiles(known_profile_ids_json: *const c_char, tombstoned_profile_ids_json: *const c_char);
+    fn op_sync_resume_after_purge();
+    fn op_sync_account_profiles(id: u64);
+}
+
+/// Answers to the page's own questions, keyed by the id this side issued. The
+/// one question so far is a fresh Mac's account-profile probe: an async command
+/// parks a oneshot here, Swift answers on the second callback, the command
+/// resolves. Separate from `on_request` because that carries Swift asking.
+type Answers = std::sync::Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<String>>>;
+static ANSWERS: std::sync::OnceLock<Answers> = std::sync::OnceLock::new();
+static NEXT_ANSWER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn answers() -> &'static Answers {
+    ANSWERS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn park_answer() -> (u64, tokio::sync::oneshot::Receiver<String>) {
+    let id = NEXT_ANSWER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    answers().lock().unwrap().insert(id, tx);
+    (id, rx)
+}
+
+/// Swift → Rust, the answer to a parked question. An id nobody is waiting on
+/// is ignored, not a panic — the waiter may have given up on its own ceiling.
+extern "C" fn on_answer(id: u64, json: *const c_char) {
+    let json = unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned();
+    if let Some(tx) = answers().lock().unwrap().remove(&id) {
+        let _ = tx.send(json);
+    }
 }
 
 static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
@@ -31,7 +63,7 @@ extern "C" fn on_request(id: u64, json: *const c_char) {
     let json = unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned();
     // stderr, like the bridge's own startup line: the one channel that needs no
     // log persistence and no devtools to read when the app is run by path.
-    eprintln!("desktop sync: swift asked {} — {}", if id == 0 { "(notice)".to_string() } else { format!("#{id}") }, json.chars().take(80).collect::<String>());
+    eprintln!("desktop sync: swift asked {} — {}", if id == 0 { "(notice)".to_string() } else { format!("#{id}") }, json.chars().take(160).collect::<String>());
     let Some(app) = APP.get() else { return };
     let Some(window) = app.get_webview_window("main") else { return };
     // `window.__opDesktopSync` is installed by desktopSync.js under Tauri on
@@ -85,6 +117,37 @@ pub fn desktop_sync_dirty(units: Vec<serde_json::Value>) -> Result<(), String> {
     Ok(())
 }
 
+/// The registry changed on the page — a shared-zone landing added or deleted a
+/// workspace — and the running transport is told the live and tombstoned ids.
+/// Metadata only: no fetch and no send happen from this.
+#[tauri::command]
+pub fn desktop_sync_profiles(known_profile_ids: Vec<String>, tombstoned_profile_ids: Vec<String>) -> Result<(), String> {
+    let k = CString::new(serde_json::to_string(&known_profile_ids).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let d = CString::new(serde_json::to_string(&tombstoned_profile_ids).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    unsafe { op_sync_profiles(k.as_ptr(), d.as_ptr()) };
+    Ok(())
+}
+
+/// The explicit action after an iCloud purge: the transport re-owes every full
+/// upload, forgets the emptied server's bookkeeping, clears its suspension and
+/// starts again. Only a person calls this.
+#[tauri::command]
+pub fn desktop_sync_resume() {
+    unsafe { op_sync_resume_after_purge() }
+}
+
+/// A fresh Mac's first question: what does the account's shared zone hold? The
+/// answer is `{status: known, profiles}`, `{status: empty}` or
+/// `{status: unavailable}`, exactly what the iOS shell answers its page. Swift
+/// bounds the lookup itself; a Swift that never answers would leave this
+/// waiting, which is why the page keeps its own ceiling as well.
+#[tauri::command]
+pub async fn desktop_sync_account_profiles() -> Result<String, String> {
+    let (id, rx) = park_answer();
+    unsafe { op_sync_account_profiles(id) };
+    rx.await.map_err(|_| "the account profile answer was dropped".to_string())
+}
+
 /// A line from the page onto the process's stderr. The webview console is
 /// invisible when the app is run by path with stderr captured, and a sync that
 /// silently fails to start is exactly the failure that needs a trace.
@@ -98,6 +161,7 @@ pub fn desktop_sync_note(message: String) {
 pub fn install(app: &AppHandle) {
     let _ = APP.set(app.clone());
     unsafe { op_sync_register(on_request) }
+    unsafe { op_sync_register_answer(on_answer) }
     eprintln!("desktop sync: host installed; waiting for the page to report a profile");
 }
 
@@ -112,6 +176,28 @@ pub fn stop() {
 /// for its whole body; the rest of the suite stays parallel.
 #[cfg(test)]
 static FFI_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+mod answer_tests {
+    //! The parked-question plumbing, without Swift: a oneshot parked under an
+    //! issued id resolves when the answer callback names that id, and an
+    //! answer nobody waits on is dropped quietly.
+    use std::ffi::CString;
+
+    #[test]
+    fn an_answer_resolves_the_question_parked_under_its_id() {
+        let (id, rx) = super::park_answer();
+        let json = CString::new(r#"{"status":"empty"}"#).unwrap();
+        super::on_answer(id, json.as_ptr());
+        assert_eq!(rx.blocking_recv().unwrap(), r#"{"status":"empty"}"#);
+    }
+
+    #[test]
+    fn an_answer_for_an_unknown_id_is_ignored() {
+        let json = CString::new("{}").unwrap();
+        super::on_answer(u64::MAX, json.as_ptr());
+    }
+}
 
 #[cfg(test)]
 mod link_tests {

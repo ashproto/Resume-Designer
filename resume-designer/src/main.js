@@ -46,10 +46,10 @@ import { exportFullBackupWithFeedback, importBackupFromFile } from './backupFlow
 import {
   initIOSShell, buildDocumentOutline, buildLibrary, buildDesign, buildHistory,
   initIOSProfileBootstrap, askAccountProfiles, resolveAccountProfiles, reportProfilesResolved,
-  nativeEditingBusy,
+  nativeEditingBusy, parseAccountProfilesAnswer,
 } from './iosShell.js';
 import { registerNativeProfileEditing } from './userProfileHolder.js';
-import { initDesktopSync } from './desktopSync.js';
+import { initDesktopSync, askDesktopAccountProfiles } from './desktopSync.js';
 import { registerNativeChatEditing } from './chatThreads.js';
 import {
   collectUnit, collectUnits, unitScopes, applyUnits, resolveConflicts,
@@ -570,7 +570,12 @@ export async function init() {
   try {
     await initAppStorage();
     await maybeAutoMigrateLegacyData();
-    await ensureProfilesInitialized({ askAccount: askAccountProfiles });
+    // A fresh Mac asks the account for its registry through the desktop bridge,
+    // as a fresh iPhone asks its shell — before it mints a starter workspace.
+    const askAccount = (isTauri && (await getPlatform()) === 'darwin')
+      ? () => askDesktopAccountProfiles(parseAccountProfilesAnswer)
+      : askAccountProfiles;
+    await ensureProfilesInitialized({ askAccount });
     reportProfilesResolved();            // profiles resolve BEFORE the React gate opens
     // The workspace that was ACTIVE when its tombstone arrived. The purge in
     // the sync reconciliation skips it on purpose — it was still mapped and
@@ -956,6 +961,7 @@ export async function init() {
         // The page → transport edge: initIOSShell above installed a notifier
         // that is a no-op off iOS; the desktop bridge replaces it with its own.
         setSyncDirtyNotifier: setStorageDirtyNotifier,
+        markInitialProfileFetchSettled,
       });
     }).catch((e) => {
       // A rejection here — the OS plugin missing, the bridge command absent —

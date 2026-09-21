@@ -74,8 +74,30 @@ final class DesktopSyncHost {
   private var foregroundRefreshInstalled = false
   /// A send that met an engine event in flight is re-drained shortly after,
   /// once per episode; see `scheduleDrainRetry`.
-  private var drainRetryScheduled = false
   private var drainRetries = 0
+  /// The purge marker, set SYNCHRONOUSLY when the engine reports the purge and
+  /// cleared only by `resumeSyncing` — the same key and the same rule as OPShell.
+  private static let syncSuspendedKey = "resume-designer-sync-suspended"
+  private var syncSuspended = UserDefaults.standard.bool(forKey: DesktopSyncHost.syncSuspendedKey)
+  /// See `enqueueLifecycle`.
+  private var lifecycleTail: Task<Void, Never>?
+  private var tombstonedProfileIds: [String] = []
+  /// One recovery send per scope per session, as OPShell keeps it.
+  private var syncRecovered: Set<OPSyncScope> = []
+  private var drainRetryTask: Task<Void, Never>?
+  /// Answers to the page's own questions (the account-profile probe), keyed by
+  /// the id Rust issued — a second callback because the first is Swift asking.
+  private var answerCallback: OPSyncRustCallback?
+  /// Guards every read-modify-write of the durable ledgers and the drain's
+  /// bookkeeping: they run from main-actor callers AND nonisolated async ones.
+  private let ledger = NSLock()
+  /// Synchronous on purpose: the lock is taken and released inside one
+  /// non-async frame, never across an await, which is also what keeps the
+  /// compiler's async-context lock diagnostic quiet.
+  private func withLedger<T>(_ body: () -> T) -> T {
+    ledger.lock(); defer { ledger.unlock() }
+    return body()
+  }
 
   func register(_ cb: @escaping OPSyncRustCallback) { callback = cb }
 
@@ -136,18 +158,23 @@ final class DesktopSyncHost {
   // MARK: Deferred-send ledger (UserDefaults, transport-defined keys)
 
   func syncDeferred(key: String) -> Set<String> {
+    withLedger { readDeferred(key) }
+  }
+  /// Callers hold `ledger`. `UserDefaults` makes each call atomic; the lock is
+  /// what makes a read-union-write atomic, which two deferrals racing from a
+  /// main-actor drain and a nonisolated refusal used to lose.
+  private func readDeferred(_ key: String) -> Set<String> {
     Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
   }
-  private func setSyncDeferred(_ unitIds: Set<String>, key: String) {
+  private func writeDeferred(_ unitIds: Set<String>, key: String) {
     UserDefaults.standard.set(Array(unitIds).sorted(), forKey: key)
   }
   func addSyncDeferred(_ unitIds: Set<String>, key: String) {
     guard !unitIds.isEmpty else { return }
-    var deferred = syncDeferred(key: key)
-    deferred.formUnion(unitIds)
-    setSyncDeferred(deferred, key: key)
-    if syncDeferredDrainKey != nil {
-      syncDeferredReowed.formUnion(unitIds)
+    withLedger {
+      writeDeferred(readDeferred(key).union(unitIds), key: key)
+      // An id re-owed DURING a drain must not be settled by that drain's success.
+      if syncDeferredDrainKey != nil { syncDeferredReowed.formUnion(unitIds) }
     }
   }
   private func deferSync(_ unitIds: [String], inProfile requested: String? = nil) async {
@@ -162,29 +189,30 @@ final class DesktopSyncHost {
     let shared = Set(ids.filter { scopes[$0] == opSharedScope })
     addSyncDeferred(shared, key: Self.sharedDeferredKey)
   }
-  /// Shared-zone ids that landed in a profile's queue (they were deferred before
-  /// their zone was known) move to the shared key, so the shared drain sends
-  /// them once rather than every profile's drain sending them again.
+  /// Move shared-scoped ids out of every profile queue into the shared one; the
+  /// scope answer is a bridge round trip, so the ledger is read under the lock,
+  /// released for the ask, and taken again for the move.
   func hoistSharedSyncDeferred() async {
     let prefix = OPSyncEngine.deferredKey("")
-    var profileQueues: [String: Set<String>] = [:]
-    var offered: Set<String> = []
-    for key in UserDefaults.standard.dictionaryRepresentation().keys
-    where key.hasPrefix(prefix) && key != Self.sharedDeferredKey {
-      let deferred = syncDeferred(key: key)
-      guard !deferred.isEmpty else { continue }
-      profileQueues[key] = deferred
-      offered.formUnion(deferred)
+    let (queueKeys, offered): ([String], Set<String>) = withLedger {
+      let keys = UserDefaults.standard.dictionaryRepresentation().keys
+        .filter { $0.hasPrefix(prefix) && $0 != Self.sharedDeferredKey }
+      var all: Set<String> = []
+      for key in keys { all.formUnion(readDeferred(key)) }
+      return (Array(keys), all)
     }
     guard !offered.isEmpty,
           let scopes = await scopes(forUnitIds: Array(offered).sorted()) else { return }
     let shared = Set(offered.filter { scopes[$0] == opSharedScope })
     guard !shared.isEmpty else { return }
-    addSyncDeferred(shared, key: Self.sharedDeferredKey)
-    for key in profileQueues.keys {
-      var deferred = syncDeferred(key: key)
-      deferred.subtract(shared)
-      setSyncDeferred(deferred, key: key)
+    withLedger {
+      writeDeferred(readDeferred(Self.sharedDeferredKey).union(shared), key: Self.sharedDeferredKey)
+      if syncDeferredDrainKey != nil { syncDeferredReowed.formUnion(shared) }
+      for key in queueKeys {
+        let queue = readDeferred(key)
+        let remaining = queue.subtracting(shared)
+        if remaining != queue { writeDeferred(remaining, key: key) }
+      }
     }
   }
   func deferredProfileQueueIds() -> [String] { deferredProfileQueues().map(\.0) }
@@ -213,27 +241,35 @@ final class DesktopSyncHost {
     } while syncDrainAgain && passes < 2
     syncDraining = false
   }
-  /// Settle only what a SUCCESSFUL send covered, minus anything re-owed while
-  /// it was in flight. A failed send leaves the debt exactly where it was —
-  /// `sendSync` has already re-deferred it.
+  /// Settle-on-success with the re-owed set: an id re-owed DURING the send
+  /// (a landing refused mid-edit, a conflict) stays, everything else offered
+  /// is cleared. The bookkeeping lives under `ledger` because `addSyncDeferred`
+  /// writes the re-owed set from nonisolated callers while this runs.
   @MainActor private func drainSyncDeferred(key: String, inProfile profileId: String? = nil) async {
     let offered = syncDeferred(key: key)
     guard !offered.isEmpty else { return }
-    syncDeferredDrainKey = key
-    syncDeferredReowed.removeAll()
+    withLedger {
+      syncDeferredDrainKey = key
+      syncDeferredReowed.removeAll()
+    }
     let sent = await sendSync(unitIds: Array(offered), inProfile: profileId)
-    let reowed = syncDeferredReowed
-    syncDeferredDrainKey = nil
-    syncDeferredReowed.removeAll()
-    guard sent else { return }
-    var deferred = syncDeferred(key: key)
-    deferred.subtract(offered.subtracting(reowed))
-    setSyncDeferred(deferred, key: key)
+    withLedger {
+      let reowed = syncDeferredReowed
+      syncDeferredDrainKey = nil
+      syncDeferredReowed.removeAll()
+      guard sent else { return }
+      writeDeferred(readDeferred(key).subtracting(offered.subtracting(reowed)), key: key)
+    }
   }
-  /// `true` only when the engine accepted the send. Suspended is `false`; a
+  /// `true` only when the engine accepted the send. Suspended is `false` and
+  /// holds nothing — the resume re-owes every full upload, which covers it; a
   /// throw defers the ids durably and is `false`.
   @MainActor private func sendSync(unitIds: [String], inProfile profileId: String? = nil) async -> Bool {
     guard !unitIds.isEmpty else { return true }
+    guard !syncSuspended else {
+      NSLog("[OPDesktopSync] iCloud sync is suspended; \(unitIds.count) unit(s) not sent")
+      return false
+    }
     let owning = profileId ?? syncProfileId
     // No engine — not started yet, stopped, or the account unavailable — is not
     // a reason to lose the ids: held durably, the next start's drain sends them.
@@ -330,84 +366,131 @@ final class DesktopSyncHost {
   /// pumps it; no test reaches this, so no test can hang on it.
   func start(profileId: String, knownProfileIds: [String], tombstonedProfileIds: [String] = []) {
     Task { @MainActor in
-      self.syncProfileId = profileId
-      self.knownProfileIds = knownProfileIds
-      settleDeadWorkspaces(tombstonedProfileIds)
-      // A workspace this device has never started sync for owes the mesh a
-      // full upload of everything held for it. Decided BEFORE start, from the
-      // page's list — the page owns the registry.
-      for known in knownProfileIds where !syncFullUploadConsidered(profileId: known) {
-        NSLog("[OPDesktopSync] first gated start seen for \(known) — a full upload is owed")
-        setSyncFullUploadOwed(true, profileId: known)
+      self.enqueueLifecycle {
+        await self.runStart(profileId: profileId, knownProfileIds: knownProfileIds,
+                            tombstonedProfileIds: tombstonedProfileIds, reason: "start")
       }
-      let engine = self.engine ?? OPSyncEngine(host: self)
-      self.engine = engine
-      let state = await engine.start(profileId: profileId, knownProfileIds: knownProfileIds)
-      guard state == .available else {
-        // Signed out, restricted, or iCloud not reachable. All normal, none an
-        // error, and NOTHING local changes because of them.
-        NSLog("[OPDesktopSync] sync is not running: \(state)")
-        notify("syncState", ["state": "\(state)"])
-        return
-      }
-      notify("syncState", ["state": "available"])
-      // SILENT CloudKit pushes, the same single call OPShell makes on iOS: the
-      // engine discovers or creates its own CKDatabaseSubscription and schedules a
-      // fetch when a notification arrives, so there is no delegate to forward from
-      // (Tauri owns the app delegate anyway). Needs com.apple.developer.aps-environment
-      // in the signed entitlements; without it the call is a no-op and the engine
-      // fetches only on its own schedule. Idempotent, so every start may call it.
-      NSApplication.shared.registerForRemoteNotifications()
-      NSLog("[OPDesktopSync] registered for silent CloudKit pushes")
-      installForegroundRefresh()
-      // THE SAME ORDER AS iOS, and each step is why. The shared zone first: it
-      // holds the registry, which is how a Mac that has just joined learns the
-      // account's workspaces. Then the debt — anything this device still owes
-      // a send of goes up BEFORE the pull, so a unit changed on both sides
-      // meets the conflict path rather than being overwritten. Then the full
-      // uploads owed. Then the general fetch.
-      try? await engine.fetchShared()
-      await drainSyncDeferred()
-      for owing in knownProfileIds where syncFullUploadOwed(profileId: owing) {
-        await performFullUpload(profileId: owing)
-      }
-      try? await engine.fetch()
     }
+  }
+
+  @MainActor private func runStart(
+    profileId: String, knownProfileIds: [String], tombstonedProfileIds: [String], reason: String
+  ) async {
+    let began = Date()
+    // THE GATE, as OPShell has it: every way the transport comes up runs
+    // through here. A purge means the account's owner emptied this app's
+    // iCloud data; an automatic start would recreate the zone and put this
+    // device's workspaces back. Nothing clears the marker except `resumeSyncing`.
+    guard !syncSuspended else {
+      NSLog("[OPDesktopSync] this app's iCloud data was deleted by the account's owner — "
+            + "the transport stays down and nothing is re-sent")
+      notify("syncState", ["state": "suspended"])
+      notify("syncInitialProfileFetchSettled", ["status": "unavailable"])
+      return
+    }
+    guard !profileId.isEmpty else {
+      NSLog("[OPDesktopSync] no active profile — sync stays down")
+      notify("syncInitialProfileFetchSettled", ["status": "unavailable"])
+      return
+    }
+    if syncProfileId != profileId {
+      // A different profile is a different zone and a different engine session,
+      // so the previous session's process-local recovery does not carry over.
+      // Profile-scoped deferred ids stay under that profile's persisted key.
+      syncRecovered.removeAll()
+      withLedger {
+        syncDeferredDrainKey = nil
+        syncDeferredReowed.removeAll()
+      }
+      syncProfileId = profileId
+    }
+    self.knownProfileIds = knownProfileIds
+    self.tombstonedProfileIds = tombstonedProfileIds
+    settleDeadWorkspaces(tombstonedProfileIds)
+    // A workspace this device has never started sync for owes the mesh a full
+    // upload of everything held for it. Decided BEFORE start, from the page's
+    // list — the page owns the registry.
+    for known in knownProfileIds where !syncFullUploadConsidered(profileId: known) {
+      NSLog("[OPDesktopSync] first gated start seen for \(known) — a full upload is owed")
+      setSyncFullUploadOwed(true, profileId: known)
+    }
+    let engine = self.engine ?? OPSyncEngine(host: self)
+    self.engine = engine
+    installForegroundRefresh()
+    let state = await engine.start(profileId: profileId, knownProfileIds: knownProfileIds)
+    guard state == .available else {
+      // Signed out, restricted, or iCloud not reachable. All normal, none an
+      // error, and NOTHING local changes because of them. The next activation
+      // tries again.
+      NSLog("[OPDesktopSync] sync is not running: \(state)")
+      notify("syncState", ["state": "\(state)"])
+      notify("syncInitialProfileFetchSettled", ["status": "unavailable"])
+      return
+    }
+    notify("syncState", ["state": "available"])
+    // SILENT CloudKit pushes, the same single call OPShell makes on iOS: the
+    // engine discovers or creates its own CKDatabaseSubscription and schedules a
+    // fetch when a notification arrives, so there is no delegate to forward from
+    // (Tauri owns the app delegate anyway). Needs com.apple.developer.aps-environment
+    // in the signed entitlements. Idempotent, so every pass may call it.
+    NSApplication.shared.registerForRemoteNotifications()
+    if reason == "start" { NSLog("[OPDesktopSync] registered for silent CloudKit pushes") }
+    // THE ORDER, and each step is why. The shared zone first: it holds the
+    // registry, which is how a Mac that has just joined learns the account's
+    // workspaces. Then the debt — anything this device still owes a send of
+    // goes up BEFORE the pull, so a unit changed on both sides meets the
+    // conflict path rather than being overwritten. Then the full uploads owed,
+    // for the same reason; iOS asks for those after its pull only because there
+    // the collect is a fire-and-forget page message that must not race the
+    // launch splash, while here it is a request with an answer. Then the pull,
+    // at user-initiated quality of service: someone is waiting on it.
+    try? await engine.fetchShared()
+    await drainSyncDeferred()
+    for owing in knownProfileIds where syncFullUploadOwed(profileId: owing) {
+      await performFullUpload(profileId: owing)
+    }
+    var settled = "ready"
+    do {
+      try await engine.fetchNow()
+    } catch {
+      settled = "unavailable"
+      NSLog("[OPDesktopSync] the pull did not complete: \(error)")
+    }
+    // The page defers first-run work until the first pull has settled or
+    // become unavailable, so onboarding cannot race ahead of fetched content.
+    notify("syncInitialProfileFetchSettled", ["status": settled])
+    NSLog("[OPDesktopSync] \(reason) pass done in \(Int(Date().timeIntervalSince(began) * 1000)) ms")
   }
 
   /// Push is the background path, and on a Mac its silent pushes are low
   /// priority: on the day this was measured APNs held them for a background
   /// app anywhere from 8 s to about 4 min, while two iOS devices in front saw
-  /// each other in ~3 s. So the foreground is fetched directly whenever the app
-  /// becomes active; that fetch reaches the server in one to two seconds. A
-  /// 30 s timer was tried and dropped: the engine answered its repeated requests
-  /// in 1 ms with no server operation, so it promised nothing it delivered.
-  /// Nothing runs while the app is in the background — push covers that.
+  /// each other in ~3 s. So an activation runs the FULL start pass on the
+  /// lifecycle chain, as OPShell's foreground resume does: the engine takes on
+  /// any zone the registry added, the debt goes up, the owed uploads go up, and
+  /// the pull runs at user-initiated quality of service — measured at one to
+  /// two seconds to a landing. A 30 s timer was tried and dropped: the engine
+  /// answered its repeated requests in 1 ms with no server operation.
+  /// Installed before the account check, so a Mac that is signed out at launch
+  /// and signs in later is picked up by its next activation.
   @MainActor private func installForegroundRefresh() {
     guard !foregroundRefreshInstalled else { return }
     foregroundRefreshInstalled = true
     NotificationCenter.default.addObserver(
       forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
-      Task { @MainActor in await self?.foregroundFetch(reason: "activation") }
+      Task { @MainActor in self?.activate() }
     }
-    NSLog("[OPDesktopSync] foreground refresh installed: a fetch on every activation")
+    NSLog("[OPDesktopSync] foreground refresh installed: the full start pass on every activation")
   }
 
-  @MainActor private func foregroundFetch(reason: String) async {
-    guard let engine else { return }
-    // NOT gated on a fetch already in flight: an engine fetch that the system
-    // defers can take minutes to return, and a gate would then drop every
-    // request behind it in silence — which is exactly what the first cut did.
-    // CKSyncEngine coalesces overlapping fetch requests itself.
-    let label = reason
-    let began = Date()
-    NSLog("[OPDesktopSync] foreground fetch (\(label)) begin")
-    do {
-      try await engine.fetchNow()
-      NSLog("[OPDesktopSync] foreground fetch (\(label)) done in \(Int(Date().timeIntervalSince(began) * 1000)) ms")
-    } catch {
-      NSLog("[OPDesktopSync] foreground fetch (\(label)) failed: \(error)")
+  @MainActor private func activate() {
+    // No profile reported yet means no engine; the start that follows fetches
+    // for itself.
+    guard let profileId = syncProfileId else { return }
+    enqueueLifecycle { [self] in
+      await runStart(profileId: profileId, knownProfileIds: knownProfileIds,
+                     tombstonedProfileIds: tombstonedProfileIds, reason: "activation")
     }
   }
 
@@ -449,9 +532,12 @@ final class DesktopSyncHost {
   func settleDeadWorkspaces(_ profileIds: [String]) {
     for profileId in profileIds where !profileId.isEmpty {
       let key = OPSyncEngine.deferredKey(profileId)
-      let held = syncDeferred(key: key)
+      let held: Set<String> = withLedger {
+        let held = readDeferred(key)
+        UserDefaults.standard.removeObject(forKey: key)
+        return held
+      }
       if !held.isEmpty {
-        setSyncDeferred([], key: key)
         NSLog("[OPDesktopSync] settled \(held.count) unit(s) owed to the deleted workspace \(profileId)")
       }
       UserDefaults.standard.removeObject(forKey: Self.fullUploadKey(profileId))
@@ -474,17 +560,184 @@ final class DesktopSyncHost {
   /// a minute; the ledger settles on the first success. Every start used to
   /// log "postponed" for the same reason and never settle.
   @MainActor private func scheduleDrainRetry() {
-    guard !drainRetryScheduled, drainRetries < 12 else { return }
-    drainRetryScheduled = true
+    guard drainRetryTask == nil, drainRetries < 12 else { return }
     drainRetries += 1
-    Task { @MainActor in
+    drainRetryTask = Task { @MainActor [weak self] in
       try? await Task.sleep(nanoseconds: 5_000_000_000)
-      drainRetryScheduled = false
-      await drainSyncDeferred()
+      guard let self, !Task.isCancelled else { return }
+      self.drainRetryTask = nil
+      await self.drainSyncDeferred()
     }
   }
 
-  func stop() { Task { @MainActor in await engine?.stop() } }
+  // MARK: Lifecycle
+
+  /// Every way the transport comes up or goes down runs through here, in order:
+  /// a start, an activation, an account switch, a purge, a resume, the stop at
+  /// exit. Serialized rather than coalesced, as OPShell does it: `engine.start`
+  /// suspends while it checks the account, and a second caller landing in that
+  /// window would pass the same "already up?" check and build a second
+  /// `CKSyncEngine` over the first — the one object everything here is keyed to.
+  @MainActor private func enqueueLifecycle(_ work: @escaping @MainActor () async -> Void) {
+    let previous = lifecycleTail
+    lifecycleTail = Task { @MainActor in
+      await previous?.value
+      await work()
+    }
+  }
+
+  @MainActor private func stopEngine(forgettingServer: Bool) async {
+    drainRetryTask?.cancel()
+    drainRetryTask = nil
+    await engine?.stop()
+    if forgettingServer { OPSyncEngine.forgetEverythingAboutTheServer() }
+    withLedger {
+      syncDeferredDrainKey = nil
+      syncDeferredReowed.removeAll()
+    }
+    syncRecovered.removeAll()
+  }
+
+  /// The stop at exit. Nothing about the server is forgotten: the next launch
+  /// carries on from the same tokens.
+  func stop() {
+    Task { @MainActor in self.enqueueLifecycle { await self.stopEngine(forgettingServer: false) } }
+  }
+
+  private func setSyncSuspended(_ suspended: Bool) {
+    if suspended {
+      UserDefaults.standard.set(true, forKey: Self.syncSuspendedKey)
+    } else {
+      UserDefaults.standard.removeObject(forKey: Self.syncSuspendedKey)
+    }
+    syncSuspended = suspended
+  }
+
+  /// The only path that clears suspension, in OPShell's order: re-owe every
+  /// full upload and finish the purge cleanup BEFORE clearing, so a process
+  /// death at any later line cannot leave automatic sync running without the
+  /// uploads this explicit action requested.
+  @MainActor private func resumeSyncing() async {
+    guard syncSuspended else { return }
+    oweFullUploadForEveryConsideredProfile()
+    if let syncProfileId { setSyncFullUploadOwed(true, profileId: syncProfileId) }
+    await stopEngine(forgettingServer: true)
+    setSyncSuspended(false)
+    NSLog("[OPDesktopSync] iCloud sync resumed after a purge; full uploads are owed")
+    notify("syncResumed")
+    guard let syncProfileId else { return }
+    await runStart(profileId: syncProfileId, knownProfileIds: knownProfileIds,
+                   tombstonedProfileIds: tombstonedProfileIds, reason: "resume")
+  }
+  func resumeAfterPurge() {
+    Task { @MainActor in self.enqueueLifecycle { await self.resumeSyncing() } }
+  }
+
+  /// The registry changed on the page — a workspace created on another device
+  /// landed through the shared zone — and this is the ONLY moment Swift is told.
+  /// Metadata only, no fetch and no send: the running engine takes on the new
+  /// zone (`adoptProfileZones` reconciles the set) and pulls it on its next
+  /// push or activation. The dead-workspace settle is synchronous and
+  /// lock-protected so it can be exercised without a main loop.
+  func reportProfiles(known: [String], tombstoned: [String]) {
+    settleDeadWorkspaces(tombstoned)
+    Task { @MainActor in
+      self.knownProfileIds = known
+      self.tombstonedProfileIds = tombstoned
+      guard let engine = self.engine, let open = self.syncProfileId else { return }
+      let added = engine.adoptProfileZones(known + [open])
+      if !added.isEmpty {
+        NSLog("[OPDesktopSync] adopted \(added.count) workspace zone(s) the registry named: \(added)")
+      }
+    }
+  }
+
+  // MARK: The page's own question: what does the account's registry hold?
+
+  func registerAnswers(_ cb: @escaping OPSyncRustCallback) { answerCallback = cb }
+
+  /// Answered on the id Rust issued, through the second callback. Bounded: a
+  /// fresh Mac's first launch waits on this before it decides whether to adopt
+  /// the account's workspaces or mint a starter one, and the page waits at
+  /// most as long again.
+  func answerAccountProfiles(id: UInt64) {
+    Task {
+      let answer = await Self.fetchAccountProfiles(ceiling: 8)
+      answer.json.withCString { self.answerCallback?(id, $0) }
+    }
+  }
+
+  private enum AccountProfilesAnswer: Sendable {
+    case known(payload: String)
+    case empty
+    case unavailable
+    var json: String {
+      let object: [String: Any]
+      switch self {
+      case .known(let payload):
+        guard let data = payload.data(using: .utf8),
+              let profiles = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+          return #"{"status":"unavailable"}"#
+        }
+        object = ["status": "known", "profiles": profiles]
+      case .empty: object = ["status": "empty"]
+      case .unavailable: object = ["status": "unavailable"]
+      }
+      guard JSONSerialization.isValidJSONObject(object),
+            let data = try? JSONSerialization.data(withJSONObject: object) else {
+        return #"{"status":"unavailable"}"#
+      }
+      return String(decoding: data, as: UTF8.self)
+    }
+  }
+
+  private static func fetchAccountProfiles(ceiling: TimeInterval) async -> AccountProfilesAnswer {
+    await withTaskGroup(of: AccountProfilesAnswer.self) { group in
+      group.addTask { await Self.lookupAccountProfiles() }
+      group.addTask {
+        try? await Task.sleep(nanoseconds: UInt64(ceiling * 1_000_000_000))
+        return .unavailable
+      }
+      let first = await group.next() ?? .unavailable
+      group.cancelAll()
+      return first
+    }
+  }
+
+  /// OPShell's `fetchAccountProfiles`, verbatim in intent: read only the shared
+  /// registry record. Absence is a known-empty account; account, network,
+  /// decode and permission failures are unavailable.
+  private static func lookupAccountProfiles() async -> AccountProfilesAnswer {
+    let container = CKContainer(identifier: "iCloud.com.onpaper.app")
+    do {
+      guard try await container.accountStatus() == .available else { return .unavailable }
+      let zoneID = CKRecordZone.ID(zoneName: opSharedZoneName, ownerName: CKCurrentUserDefaultName)
+      let recordID = CKRecord.ID(recordName: "key:resume-designer-profiles", zoneID: zoneID)
+      let record = try await container.privateCloudDatabase.record(for: recordID)
+      guard record.recordType == "SyncUnit" else { return .unavailable }
+      let payload: String?
+      if let inline = record["payload"] as? String {
+        payload = inline
+      } else if let asset = record["asset"] as? CKAsset, let url = asset.fileURL,
+                let data = try? Data(contentsOf: url) {
+        payload = String(data: data, encoding: .utf8)
+      } else {
+        payload = nil
+      }
+      guard let payload, let data = payload.data(using: .utf8),
+            let profiles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+            profiles.allSatisfy({ $0["id"] is String && $0["name"] is String }) else {
+        return .unavailable
+      }
+      return profiles.isEmpty ? .empty : .known(payload: payload)
+    } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+      return .empty
+    } catch {
+      NSLog("[OPDesktopSync] account profile lookup unavailable: \(error)")
+      return .unavailable
+    }
+  }
+
 }
 
 // The conformance lives in an EXTENSION on purpose. `OPSyncHost` is a
@@ -584,13 +837,38 @@ extension DesktopSyncHost: OPSyncHost {
   }
 
   func syncDidFail(_ failures: [OPSyncFailure]) {
-    for f in failures {
-      NSLog("[OPDesktopSync] sync failure (unit \(f.unitId ?? "—") in "
-            + "\(f.profileId.isEmpty ? "the open workspace" : f.profileId), willRetry \(f.willRetry)): \(f.reason)")
+    // OPShell's shape. A retryable failure is the engine's to retry; a zone or
+    // fetch failure names no unit to re-queue. A refetch that failed transiently
+    // is the one retryable failure nothing holds (`needsDurableRetry`): it goes
+    // into that workspace's durable queue, which the next drain sends straight
+    // back into the path that refetches it. A unit's first TERMINAL failure gets
+    // one recovery send per scope per session; the second is where the loop
+    // would have been, so it stops there.
+    var recover: [String: [String]] = [:]
+    for failure in failures {
+      NSLog("[OPDesktopSync] sync failure (unit \(failure.unitId ?? "—") in "
+            + "\(failure.profileId.isEmpty ? "the open workspace" : failure.profileId), willRetry \(failure.willRetry)): \(failure.reason)")
+      if failure.needsDurableRetry, let unitId = failure.unitId {
+        let profileId = failure.profileId
+        Task { @MainActor [weak self] in
+          await self?.deferSync([unitId], inProfile: profileId.isEmpty ? nil : profileId)
+        }
+      }
+      guard let unitId = failure.unitId, !failure.willRetry else { continue }
+      guard syncRecovered.insert(failure.scope).inserted else { continue }
+      recover[failure.profileId, default: []].append(unitId)
     }
     notify("syncFailed", ["failures": failures.map {
       ["unitId": $0.unitId ?? "", "profileId": $0.profileId, "willRetry": $0.willRetry, "reason": $0.reason]
     }])
+    guard !recover.isEmpty else { return }
+    // Deferred, not inline: this runs inside the engine's event handling and
+    // `send` re-enters the engine. The task puts it on a later main-actor turn.
+    Task { @MainActor [weak self] in
+      for (profileId, unitIds) in recover {
+        await self?.sendSync(unitIds: unitIds, inProfile: profileId.isEmpty ? nil : profileId)
+      }
+    }
   }
 
   func syncDidLand(_ scopes: [OPSyncScope]) {
@@ -601,15 +879,28 @@ extension DesktopSyncHost: OPSyncHost {
     NSLog("[OPDesktopSync] the iCloud account changed — re-offering every profile's full upload")
     oweFullUploadForEveryConsideredProfile()
     notify("syncAccountChanged")
+    // Paid NOW, on the chain, not at the next launch: the re-owed uploads are
+    // exactly what the new account is missing.
+    guard let profileId = syncProfileId else { return }
+    enqueueLifecycle { [self] in
+      await runStart(profileId: profileId, knownProfileIds: knownProfileIds,
+                     tombstonedProfileIds: tombstonedProfileIds, reason: "account-switch")
+    }
   }
 
   func syncDidPurgeFromICloud() {
-    // Stop; delete nothing locally. The page sets SYNC_SUSPENDED_KEY, exactly as
-    // the iOS host does, and a person turns sync back on deliberately.
-    NSLog("[OPDesktopSync] iCloud data purged — stopping; nothing local is deleted")
+    // BEFORE the hop, exactly as OPShell writes it: a kill between the engine's
+    // event and the serialized turn below would otherwise leave no record of
+    // the purge, and the next launch would recreate the zone and put this
+    // device's workspaces back into an iCloud the account's owner emptied.
+    setSyncSuspended(true)
+    NSLog("[OPDesktopSync] iCloud data purged — the transport stays down, nothing local is deleted, nothing is re-sent")
     notify("syncPurged")
-    Task { @MainActor in await engine?.stop() }
+    // Stop and server-bookkeeping cleanup on the same serialized turn, so no
+    // start can slip between the engine going down and its state being forgotten.
+    enqueueLifecycle { [self] in await stopEngine(forgettingServer: true) }
   }
+
 
 }
 
@@ -641,6 +932,22 @@ public func op_sync_settle_dead(_ profileIdsJson: UnsafePointer<CChar>) {
 
 @_cdecl("op_sync_stop")
 public func op_sync_stop() { host.stop() }
+
+@_cdecl("op_sync_register_answer")
+public func op_sync_register_answer(_ cb: @escaping OPSyncRustCallback) { host.registerAnswers(cb) }
+
+@_cdecl("op_sync_profiles")
+public func op_sync_profiles(_ knownJson: UnsafePointer<CChar>, _ tombstonedJson: UnsafePointer<CChar>) {
+  let known = (try? JSONSerialization.jsonObject(with: Data(String(cString: knownJson).utf8))) as? [String] ?? []
+  let dead = (try? JSONSerialization.jsonObject(with: Data(String(cString: tombstonedJson).utf8))) as? [String] ?? []
+  host.reportProfiles(known: known, tombstoned: dead)
+}
+
+@_cdecl("op_sync_resume_after_purge")
+public func op_sync_resume_after_purge() { host.resumeAfterPurge() }
+
+@_cdecl("op_sync_account_profiles")
+public func op_sync_account_profiles(_ id: UInt64) { host.answerAccountProfiles(id: id) }
 
 @_cdecl("op_sync_dirty")
 public func op_sync_dirty(_ unitsJson: UnsafePointer<CChar>) {

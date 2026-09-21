@@ -15,6 +15,33 @@
 
 import { makeSyncHostRoutes } from './sync/syncHostRoutes.js';
 
+/** Fired on `window` when the transport suspends or resumes sync on this device. */
+export const SYNC_SUSPENSION_EVENT = 'rd:sync-suspension-changed';
+
+/**
+ * A fresh Mac's first question, before it has any registry of its own: what
+ * does the account's shared zone hold? iOS asks its native shell; here it is
+ * an async command Swift answers after reading the one registry record, with
+ * its own 8 s ceiling. Bounded here as well: an answer that never comes reads
+ * as unavailable, which mints a starter workspace — never as empty, which
+ * would claim the account has none.
+ */
+export async function askDesktopAccountProfiles(parse) {
+  const unavailable = { status: 'unavailable' };
+  let timer;
+  const ceiling = new Promise((resolve) => { timer = setTimeout(() => resolve(null), 9000); });
+  try {
+    const raw = await Promise.race([tauriInvoke('desktop_sync_account_profiles'), ceiling]);
+    if (raw == null) return unavailable;
+    return parse(raw);
+  } catch (e) {
+    console.warn('[desktopSync] account profiles unavailable', e);
+    return unavailable;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ONE import, shared by every call. Two concurrent first imports of the same
 // module — the start report and the first request racing — is exactly the
 // shape that handed the second caller a different module instance under
@@ -35,6 +62,7 @@ const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
  * @param {() => string} deps.getActiveProfileId
  * @param {() => string[]} deps.listProfileIds  the registry's live ids — the page owns the registry
  * @param {() => string[]} [deps.listTombstonedProfileIds]  the registry's durably deleted ids
+ * @param {(status: string) => void} [deps.markInitialProfileFetchSettled]  releases first-run work deferred until the first pull
  * @param {() => boolean} deps.isSyncSuspended   a purge stopped this device; only a person restarts it
  * @param {(v: boolean) => void} [deps.setSyncSuspended]
  * @param {(notify: Function) => void} [deps.setSyncDirtyNotifier]  the model's one notifier slot
@@ -62,19 +90,43 @@ export function initDesktopSync(deps) {
     },
   };
 
+  // The registry's live and durably deleted ids, as the page holds them. Told
+  // to the transport at start, and again whenever the SHARED zone lands: that
+  // is the only moment a workspace created on another device becomes known
+  // here, and the running engine takes on its zone from this report
+  // (metadata only — it fetches on its own next pass).
+  const profileReport = () => ({
+    knownProfileIds: deps.listProfileIds(),
+    tombstonedProfileIds: deps.listTombstonedProfileIds?.() ?? [],
+  });
+  const reportProfiles = () => tauriInvoke('desktop_sync_profiles', profileReport())
+    .catch((e) => console.warn('[desktopSync] registry report not handed to the transport', e));
+
+  // The Settings account section renders the paused state from the page's
+  // key; it is told to re-read whenever the transport changes it.
+  const announceSuspension = () => window.dispatchEvent(new CustomEvent(SYNC_SUSPENSION_EVENT));
+
   // Things Swift TELLS the page (id 0). Each is a fact about the transport,
   // and the page decides what to do with it; none of them destroys anything.
   const notices = {
-    // A purge is the account's owner deleting this app's iCloud data. This
-    // device stops, exactly as iOS does, and deletes nothing locally.
-    syncPurged: () => deps.setSyncSuspended?.(true),
-    // Refused or unresolved units, which iOS re-offers from a durable ledger.
-    // Desktop does not keep that ledger yet (plan, Task 3b); this is where it
-    // will be recorded. Logged so the gap is visible in the meantime.
+    // A purge is the account's owner deleting this app's iCloud data. The
+    // transport has already recorded its own durable suspension and stopped;
+    // this mirrors it into the page's key, which the UI reads. Nothing local
+    // is deleted, and only a person turns sync back on (`resumeAfterPurge`).
+    syncPurged: () => { deps.setSyncSuspended?.(true); announceSuspension(); },
+    syncResumed: () => { deps.setSyncSuspended?.(false); announceSuspension(); },
+    // Refused or unresolved units. The transport holds them in its durable
+    // ledger and re-offers them at the next drain; logged for the trace.
     syncRefused: ({ profileId, unitIds }) =>
-      console.warn(`[desktopSync] ${(unitIds ?? []).length} unit(s) refused in ${profileId || 'the shared zone'}; not yet re-offered on desktop`),
+      console.warn(`[desktopSync] ${(unitIds ?? []).length} unit(s) refused in ${profileId || 'the shared zone'}; held for the next drain`),
     syncFailed: ({ failures }) => console.warn('[desktopSync] sync failures', failures),
-    syncLanded: () => {},
+    syncLanded: ({ scopes }) => {
+      if ((scopes ?? []).some((scope) => !scope?.profileId)) reportProfiles();
+    },
+    // The first pull settled, or could not: first-run work the page deferred
+    // until fetched content could arrive is released either way.
+    syncInitialProfileFetchSettled: ({ status }) =>
+      deps.markInitialProfileFetchSettled?.(String(status ?? 'unavailable')),
     syncParked: () => {},
     syncAccountChanged: () => {},
     syncState: () => {},
@@ -99,6 +151,10 @@ export function initDesktopSync(deps) {
   });
 
   window.__opDesktopSync = {
+    // The explicit action after a purge: the transport re-owes every full
+    // upload, forgets the emptied server's bookkeeping, clears its suspension
+    // and starts again. The page's key is cleared by the `syncResumed` notice.
+    resumeAfterPurge: () => tauriInvoke('desktop_sync_resume'),
     async request(id, json) {
       let parsed;
       try { parsed = JSON.parse(json); } catch { parsed = {}; }

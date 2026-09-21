@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Download, MoreHorizontal, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { filePickBlockedReason } from '@/filePickGuard';
@@ -6,6 +6,7 @@ import { filePickBlockedReason } from '@/filePickGuard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { SyncSuspendedRow } from '@/components/settings/SyncSuspendedRow.jsx';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator,
@@ -14,6 +15,8 @@ import { confirmDestructive } from '@/components/ui/confirm';
 import { cn } from '@/lib/utils';
 
 import { appStorage } from '../../appStorage.js';
+import { isSyncEnabled } from '../../sync/syncModel.js';
+import { SYNC_SUSPENSION_EVENT } from '../../desktopSync.js';
 import {
   listProfiles, getActiveProfileId, activateProfileDurably, createProfile,
   renameProfileDurably, deleteProfile, deleteProfileDurably, exportProfileBackup,
@@ -80,6 +83,20 @@ export function AccountSection() {
   // those actions until adoption completes (the Account tab is reachable via the
   // settings gear even though the header avatar is hidden in this state).
   const adopting = isAdoptionPending();
+
+  // iCloud sync paused after a purge. The page's key is the truth the row
+  // renders from; the desktop bridge changes it and announces the change. Only
+  // the desktop bridge can resume, so the row exists only where it is present
+  // (iOS has this in its native Settings sheet; the browser has no transport).
+  const [syncSuspended, setSyncSuspended] = useState(() => !isSyncEnabled());
+  useEffect(() => {
+    const onChange = () => setSyncSuspended(!isSyncEnabled());
+    window.addEventListener(SYNC_SUSPENSION_EVENT, onChange);
+    return () => window.removeEventListener(SYNC_SUSPENSION_EVENT, onChange);
+  }, []);
+  const resumeSync = typeof window.__opDesktopSync?.resumeAfterPurge === 'function'
+    ? () => window.__opDesktopSync.resumeAfterPurge()
+    : null;
 
   const refresh = () => {
     setRegistry(listProfiles());
@@ -208,6 +225,7 @@ export function AccountSection() {
 
   return (
     <div className="space-y-6">
+      <SyncSuspendedRow suspended={syncSuspended && resumeSync !== null} onResume={resumeSync ?? (() => {})} />
       <section>
         <SectionHeader
           title="Profiles"

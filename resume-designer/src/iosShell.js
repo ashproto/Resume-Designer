@@ -1044,7 +1044,7 @@ export function createCommandDispatcher(actions) {
 const ACCOUNT_PROFILES_TIMEOUT_MS = 5000;
 let pendingAccountProfiles = null;
 
-function parseAccountProfilesAnswer(answer) {
+export function parseAccountProfilesAnswer(answer) {
   const parsed = JSON.parse(String(answer ?? ''));
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('syncAccountProfiles needs an account answer');
