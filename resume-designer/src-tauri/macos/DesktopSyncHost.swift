@@ -562,7 +562,9 @@ final class DesktopSyncHost {
   @MainActor private func scheduleDrainRetry() {
     guard drainRetryTask == nil, drainRetries < 12 else { return }
     drainRetries += 1
-    drainRetryTask = Task { @MainActor [weak self] in
+    // Detached: a callback-created task would pass its CloudKit mark on to this
+    // one, and the drain awaits `engine.send`. See `syncDidFail`.
+    drainRetryTask = Task.detached { @MainActor [weak self] in
       try? await Task.sleep(nanoseconds: 5_000_000_000)
       guard let self, !Task.isCancelled else { return }
       self.drainRetryTask = nil
@@ -578,9 +580,15 @@ final class DesktopSyncHost {
   /// suspends while it checks the account, and a second caller landing in that
   /// window would pass the same "already up?" check and build a second
   /// `CKSyncEngine` over the first — the one object everything here is keyed to.
+  ///
+  /// DETACHED, because two of its callers (`syncDidSwitchAccounts`,
+  /// `syncDidPurgeFromICloud`) are the engine's own delegate callbacks. CloudKit
+  /// marks the task that runs a callback, and a plain `Task {}` inherits the
+  /// mark: `engine.start`/`stop` from such a task traps inside CloudKit even
+  /// after the event is over. See `syncDidFail` for the crash that taught this.
   @MainActor private func enqueueLifecycle(_ work: @escaping @MainActor () async -> Void) {
     let previous = lifecycleTail
-    lifecycleTail = Task { @MainActor in
+    lifecycleTail = Task.detached { @MainActor in
       await previous?.value
       await work()
     }
@@ -850,7 +858,8 @@ extension DesktopSyncHost: OPSyncHost {
             + "\(failure.profileId.isEmpty ? "the open workspace" : failure.profileId), willRetry \(failure.willRetry)): \(failure.reason)")
       if failure.needsDurableRetry, let unitId = failure.unitId {
         let profileId = failure.profileId
-        Task { @MainActor [weak self] in
+        // Detached for the same reason as the recovery send below.
+        Task.detached { @MainActor [weak self] in
           await self?.deferSync([unitId], inProfile: profileId.isEmpty ? nil : profileId)
         }
       }
@@ -862,9 +871,15 @@ extension DesktopSyncHost: OPSyncHost {
       ["unitId": $0.unitId ?? "", "profileId": $0.profileId, "willRetry": $0.willRetry, "reason": $0.reason]
     }])
     guard !recover.isEmpty else { return }
-    // Deferred, not inline: this runs inside the engine's event handling and
-    // `send` re-enters the engine. The task puts it on a later main-actor turn.
-    Task { @MainActor [weak self] in
+    // DETACHED, not merely deferred. This runs inside the engine's delegate
+    // callback, and CloudKit marks the TASK that runs a callback, not the
+    // moment: a plain `Task {}` inherits the mark, and when this one reached
+    // `sendChanges()` after the event had ended — OPSync's time-based
+    // `delegateEventInFlight` guard already clear — CloudKit trapped ("Cannot
+    // await a call into CKSyncEngine from within a delegate callback … Try
+    // performing this in a detached Task"; the Mac, 2026-09-20 20:40, after a
+    // save conflict). A detached task starts with no inherited task-locals.
+    Task.detached { @MainActor [weak self] in
       for (profileId, unitIds) in recover {
         await self?.sendSync(unitIds: unitIds, inProfile: profileId.isEmpty ? nil : profileId)
       }

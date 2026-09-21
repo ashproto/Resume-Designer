@@ -50,7 +50,10 @@ echo "==> entitlements: Entitlements.development.plist (CloudKit env Development
 # `tauri build` exits non-zero AFTER the app is signed — so the checks below
 # never ran on the first attempt. The app is the deliverable here; the
 # .app.tar.gz + .sig pair is a release concern.
-APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build \
+# Symbols stay in a dev binary (the release profile strips them), so a crash
+# report from this build names its frames. The 2026-09-20 CloudKit trap could
+# not be read: every resume-designer frame was an unnamed offset.
+CARGO_PROFILE_RELEASE_STRIP=false APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build \
   --config '{"bundle":{"createUpdaterArtifacts":false,"macOS":{"entitlements":"Entitlements.development.plist"}}}'
 
 APP="$(ls -d src-tauri/target/release/bundle/macos/*.app | head -1)"
