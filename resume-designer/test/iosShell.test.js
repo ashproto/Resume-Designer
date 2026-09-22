@@ -76,6 +76,8 @@ describe('buildSnapshot', () => {
       settings: {
         theme: 'system', hasApiKey: false, autoFallback: false, syncEnabled: false, version: '',
         saveFailed: false,
+        aiSharingAllowed: false,
+        privacyPolicy: expect.objectContaining({ title: expect.any(String), sections: expect.any(Array) }),
       },
       document: null,
       chat: null,
@@ -385,7 +387,7 @@ describe('buildSettings', () => {
     expect(projected.hasApiKey).toBe(true);
     expect(JSON.stringify(projected)).not.toContain('sk-or');
     expect(Object.keys(projected).sort()).toEqual(
-      ['autoFallback', 'hasApiKey', 'saveFailed', 'syncEnabled', 'theme', 'version']
+      ['aiSharingAllowed', 'autoFallback', 'hasApiKey', 'privacyPolicy', 'saveFailed', 'syncEnabled', 'theme', 'version']
     );
   });
 
@@ -395,6 +397,8 @@ describe('buildSettings', () => {
       // Storage's answer, not a setting: every control here writes through the
       // cache, so the sheet has to be told when one of those writes was refused.
       saveFailed: false,
+      aiSharingAllowed: false,
+      privacyPolicy: expect.objectContaining({ title: expect.any(String), sections: expect.any(Array) }),
     });
   });
 

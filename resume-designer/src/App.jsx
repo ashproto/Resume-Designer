@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AIConsentHost } from './components/AIConsentHost.jsx';
 import shellHtml from './shell/appShell.html?raw';
 import { Toaster } from '@/components/ui/sonner';
 import { ConfirmHost } from '@/components/ui/confirm';
@@ -102,6 +103,7 @@ export default function App() {
       {storageReady && <PdfDialog />}
       <Toaster />
       <ConfirmHost />
+      <AIConsentHost />
       <ExperienceDateEditorHost />
       <UpdateNotesHost />
       <DeleteVariantThreadsHost />

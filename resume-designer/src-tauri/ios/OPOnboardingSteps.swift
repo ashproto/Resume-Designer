@@ -12,6 +12,7 @@
 // twice.
 
 import SwiftUI
+import Combine
 import UniformTypeIdentifiers
 
 /// The largest file worth pushing through the command channel.

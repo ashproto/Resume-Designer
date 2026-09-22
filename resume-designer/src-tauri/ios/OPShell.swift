@@ -544,10 +544,12 @@ struct ShellSnapshot: Decodable, Equatable {
     /// refusal arrives afterwards — and the toast that carries it on desktop
     /// renders under this sheet.
     var saveFailed: Bool
+    var aiSharingAllowed: Bool
+    var privacyPolicy: OPPrivacyPolicy?
 
     static let empty = Settings(
       theme: "system", hasApiKey: false, autoFallback: false, syncEnabled: false, version: "",
-      saveFailed: false
+      saveFailed: false, aiSharingAllowed: false, privacyPolicy: nil
     )
   }
 
@@ -1343,6 +1345,17 @@ final class ShellModel: ObservableObject {
     evaluate(type, extra) { reply in
       guard let onResult else { return }
       onResult((reply?["ok"] as? Bool) == true)
+    }
+  }
+
+  /// Allow time for a human decision; the JS presenter owns its five-minute limit.
+  func changeAISharing(_ allowed: Bool, completion: @escaping @MainActor (String) -> Void) {
+    evaluateAsync("setAISharing", ["value": allowed ? "true" : "false"]) { reply in
+      guard (reply?["ok"] as? Bool) == true, let message = reply?["result"] as? String else {
+        completion("Could not save that permission. Open Settings and try again.")
+        return
+      }
+      completion(message)
     }
   }
 
@@ -2905,6 +2918,12 @@ private final class SnapshotBridge: NSObject, WKScriptMessageHandler {
     }
 
     switch body["kind"] as? String {
+    case "aiConsent":
+      guard let request = try? JSONDecoder().decode(OPAIConsentRequest.self, from: data) else { return }
+      Task { @MainActor in OPShell.presentAIConsent(request) }
+    case "aiConsentCancel":
+      guard let requestId = body["requestId"] as? String else { return }
+      Task { @MainActor in OPShell.cancelAIConsent(requestId) }
     case "syncAccountProfiles":
       Task { @MainActor in await self.model?.answerAccountProfilesRequest() }
     case "profilesResolved":
@@ -2938,6 +2957,9 @@ private final class SnapshotBridge: NSObject, WKScriptMessageHandler {
       // life of a document.
       let profileId = body["profileId"] as? String ?? ""
       Task { @MainActor in
+        // The prior document's request endpoint no longer exists. WebKit can
+        // reclaim it without delivering pagehide, so retire its native sheet.
+        OPShell.cancelAIConsent()
         OPShell.lockWebViewZoom()
         await self.model?.startSync(profileId: profileId)
       }
@@ -3011,6 +3033,54 @@ final class OPShell: NSObject {
   /// inference about SwiftUI's storage.
   @MainActor private static var model: ShellModel?
   @MainActor private static var bridge: SnapshotBridge?
+
+  @MainActor private static var aiConsent: (id: String, controller: UIViewController)?
+
+  /// Present above chat, jobs, or onboarding; a web dialog is hidden below them.
+  @MainActor
+  static func presentAIConsent(_ request: OPAIConsentRequest) {
+    guard let webView = model?.webView else { return }
+    let reply: (Bool) -> Void = { [weak webView] allowed in
+      guard let bytes = try? JSONSerialization.data(withJSONObject: [request.requestId, allowed]),
+            let args = String(data: bytes, encoding: .utf8) else { return }
+      webView?.evaluateJavaScript("window.__opAIConsent?.answer(...\(args))", completionHandler: nil)
+    }
+    guard aiConsent == nil, let root = webView.window?.rootViewController else {
+      reply(false)
+      return
+    }
+    let host = UIHostingController(rootView: OPAIConsentView(request: request, decide: { _ in }))
+    host.rootView = OPAIConsentView(request: request) { [weak host] allowed in
+      guard aiConsent?.id == request.requestId else { return }
+      aiConsent = nil
+      host?.dismiss(animated: true) { reply(allowed) }
+    }
+    host.isModalInPresentation = true
+    host.modalPresentationStyle = .pageSheet
+    aiConsent = (request.requestId, host)
+    var presenter = root
+    while let next = presenter.presentedViewController, !next.isBeingDismissed { presenter = next }
+    let target = presenter
+    let present = {
+      guard aiConsent?.id == request.requestId else { return }
+      guard target.viewIfLoaded?.window != nil else {
+        aiConsent = nil
+        reply(false)
+        return
+      }
+      target.present(host, animated: true)
+    }
+    if let transition = target.transitionCoordinator {
+      transition.animate(alongsideTransition: nil) { _ in present() }
+    } else { present() }
+  }
+
+  @MainActor
+  static func cancelAIConsent(_ requestId: String? = nil) {
+    guard let pending = aiConsent, requestId == nil || pending.id == requestId else { return }
+    aiConsent = nil
+    pending.controller.dismiss(animated: true)
+  }
 
   /// The launch cover's view tag, so it can be found and removed idempotently.
   private static let launchCoverTag = 0x0_C0FFEE
@@ -4825,11 +4895,78 @@ private struct SettingsSaveWarning: View {
   }
 }
 
+struct OPPrivacyPolicy: Decodable, Equatable {
+  struct Section: Decodable, Equatable {
+    let title: String
+    let paragraphs: [String]
+  }
+  let title: String
+  let date: String
+  let sections: [Section]
+}
+
+struct OPAIConsentRequest: Decodable {
+  let requestId: String
+  let title: String
+  let message: String
+  let policy: OPPrivacyPolicy
+}
+
+private struct OPPrivacyPolicyView: View {
+  let policy: OPPrivacyPolicy
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 20) {
+        Text("Last updated \(policy.date)").font(.footnote).foregroundStyle(.secondary)
+        ForEach(policy.sections.indices, id: \.self) { index in
+          VStack(alignment: .leading, spacing: 8) {
+            Text(policy.sections[index].title).font(.headline)
+            ForEach(policy.sections[index].paragraphs.indices, id: \.self) { paragraph in
+              Text(policy.sections[index].paragraphs[paragraph]).textSelection(.enabled)
+            }
+          }
+        }
+        Link("Contact support", destination: URL(string: "https://github.com/ashproto/Resume-Designer/issues")!)
+      }.padding()
+    }
+    .navigationTitle(policy.title)
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+private struct OPAIConsentView: View {
+  let request: OPAIConsentRequest
+  let decide: (Bool) -> Void
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+          Text(request.title).font(.title2.bold())
+          Text(request.message)
+          NavigationLink("Privacy policy") { OPPrivacyPolicyView(policy: request.policy) }
+        }.padding()
+      }
+      .navigationTitle("AI data sharing")
+      .navigationBarTitleDisplayMode(.inline)
+      .safeAreaInset(edge: .bottom) {
+        VStack(spacing: 12) {
+          Button("Allow AI sharing") { decide(true) }
+            .buttonStyle(.borderedProminent).controlSize(.large)
+          Button("Not now", role: .cancel) { decide(false) }
+        }.frame(maxWidth: .infinity).padding().background(.regularMaterial)
+      }
+    }
+    .interactiveDismissDisabled()
+  }
+}
+
 private struct SettingsSheet: View {
   @ObservedObject var model: ShellModel
   @Environment(\.dismiss) private var dismiss
 
   @State private var apiKeyDraft = ""
+  @State private var aiSharingBusy = false
+  @State private var aiSharingError = ""
   @State private var apiKeyFocused = false
   /// Guards the destructive remove behind one confirmation. The key cannot be
   /// read back out of the keychain to show, so a mis-tap is only recoverable by
@@ -4930,6 +5067,18 @@ private struct SettingsSheet: View {
             } message: {
               Text("The AI assistant will stop working until you add a key again. Everything else is unaffected. This also removes it from your other devices.")
             }
+          LabeledContent("AI data sharing", value: settings.aiSharingAllowed ? "Allowed on this device" : "Not allowed")
+          Button(settings.aiSharingAllowed ? "Stop AI sharing" : "Review AI data sharing") {
+            aiSharingBusy = true
+            model.changeAISharing(!settings.aiSharingAllowed) { error in
+              aiSharingBusy = false
+              aiSharingError = error
+            }
+          }
+          .disabled(aiSharingBusy)
+          if !aiSharingError.isEmpty {
+            Text(aiSharingError).font(.footnote).foregroundStyle(.red)
+          }
         } header: {
           Text("AI")
         } footer: {
@@ -5017,6 +5166,9 @@ private struct SettingsSheet: View {
 
         Section("About") {
           LabeledContent("On Paper", value: settings.version.isEmpty ? "—" : settings.version)
+          if let policy = settings.privacyPolicy {
+            NavigationLink("Privacy policy") { OPPrivacyPolicyView(policy: policy) }
+          }
         }
       }
       .navigationTitle("Settings")

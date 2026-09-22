@@ -29,7 +29,7 @@ import {
 import {
   initVariants, loadVariant, duplicateVariant, exportCurrentVariant, renameCurrentVariant,
   subscribeVariants, getVariantsSnapshot,
-  getVariantList, getCurrentId, refreshVariants, createVariant,
+  getVariantList, getCurrentId, refreshVariants, createVariant, recoverVariantSelection,
 } from './variantManager.js';
 import { refreshChatPanel, startProfileInterviewFromPanel } from './chatPanel.js';
 import { initDiffView } from './diffView.js';
@@ -179,8 +179,7 @@ setResumeDeletedHandler((deletedIds, openVariantId) => {
   refreshVariants();
   if (!openVariantId) return;
 
-  const live = Object.keys(getVariants()).filter((id) => !deletedIds.includes(id));
-  if (live.length === 0) {
+  if (!recoverVariantSelection(null, deletedIds)) {
     // A FRESH ONE, not the deleted one left on screen. Leaving it there looked
     // harmless — the persistence path refuses to write over a tombstone, so it
     // cannot be resurrected — but that is exactly what makes it cruel: the
@@ -188,11 +187,11 @@ setResumeDeletedHandler((deletedIds, openVariantId) => {
     // keystroke, so the work is gone at the next reload with nothing having
     // said so. The app's own invariant is that there is always at least one
     // résumé, which is why the header refuses to delete the last one.
-    console.warn('[variants] every résumé was deleted elsewhere — starting a fresh one');
+    // Recovery has already cleared the deleted document and its autosave
+    // binding. If creation fails, the empty canvas remains safe to use.
+    console.warn('[variants] no usable résumé remains after remote deletion — starting a fresh one');
     createVariant('My Resume');
-    return;
   }
-  loadVariant(live[0]);
 });
 
 // Whether a deferred switch is already waiting on the wizard, so repeated
@@ -838,9 +837,8 @@ export async function init() {
     // is guarded by isNativeShellAvailable().
     setSyncDirtyNotifier: setStorageDirtyNotifier,
     getActiveProfileId,
-    // The iCloud switch, off until the person turns it on. Read on every
-    // snapshot so the native toggle shows what is stored rather than what it
-    // last set.
+    // iCloud sync starts automatically unless suspended after a cloud purge.
+    // Read on every snapshot so the native toggle reflects stored state.
     getSyncEnabled: isSyncEnabled, setSyncEnabled,
     generateId,
     subscribeDocument: (cb) => store.subscribe(cb),

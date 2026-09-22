@@ -41,6 +41,12 @@ import { TYPE_LABELS } from './historyEntryLabels.js';
 import { CHAT_THREADS_STATE_EVENT, threadsSaveFailed } from './chatThreads.js';
 import { DATA_SAVE_STATE_EVENT, dataSaveFailed, designSaveFailed } from './persistence.js';
 import { store } from './store.js';
+import { hasAIConsent, requestAIConsent, revokeAIConsent, subscribeAIConsent } from './aiConsent.js';
+import { PRIVACY_POLICY_TITLE, PRIVACY_POLICY_DATE, PRIVACY_POLICY_SECTIONS } from './privacyPolicy.js';
+
+const privacyPolicy = {
+  title: PRIVACY_POLICY_TITLE, date: PRIVACY_POLICY_DATE, sections: PRIVACY_POLICY_SECTIONS,
+};
 
 export const SHELL_HANDLER = 'opShell';
 
@@ -298,7 +304,10 @@ export function buildOnboarding({
     // already decodes rather than a second document projection — the review
     // screen would otherwise be a second place that knows the résumé's schema,
     // which is the one thing this bridge does not do anywhere else.
-    resume: resume ? buildDocumentOutline(resume) : null,
+    // This draft is read-only and has not been saved/adopted into the editor.
+    // The normal document publish adds these required Swift fields, but the
+    // onboarding preview reaches the decoder directly through this builder.
+    resume: resume ? { ...buildDocumentOutline(resume), revision: 0, saveFailed: false } : null,
     isTailored: list(jobDescriptions).length > 0,
 
     // A long AI call — parse, tailor, improve — with nothing else to show for
@@ -334,13 +343,15 @@ export function buildOnboarding({
  */
 export function buildSettings({
   theme, hasApiKey = false, autoFallback = false, syncEnabled = false, version = '',
-  saveFailed = false,
+  saveFailed = false, aiSharingAllowed = false,
 } = {}) {
   return {
     theme: theme === 'light' || theme === 'dark' ? theme : 'system',
     hasApiKey: !!hasApiKey,
     autoFallback: !!autoFallback,
     syncEnabled: !!syncEnabled,
+    aiSharingAllowed: aiSharingAllowed === true,
+    privacyPolicy,
     version: typeof version === 'string' ? version : '',
     // Every control on the native Settings sheet writes through the cache, so
     // each one reports success the moment the value is taken rather than
@@ -1043,6 +1054,45 @@ export function createCommandDispatcher(actions) {
 
 const ACCOUNT_PROFILES_TIMEOUT_MS = 5000;
 let pendingAccountProfiles = null;
+const NATIVE_AI_CONSENT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Present above native sheets; a web dialog would be hidden behind them. */
+export function requestNativeAIConsent({ title, message, signal } = {}) {
+  if (!isNativeShellAvailable() || signal?.aborted) return Promise.resolve(false);
+  const requestId = crypto.randomUUID();
+  return new Promise((resolve) => {
+    let settled = false;
+    const endpoint = {
+      answer: (id, allowed) => { if (id === requestId) finish(allowed === true); },
+    };
+    const finish = (allowed) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', cancel);
+      window.removeEventListener('pagehide', cancel);
+      if (window.__opAIConsent === endpoint) delete window.__opAIConsent;
+      resolve(allowed);
+    };
+    const cancel = () => {
+      if (settled) return;
+      finish(false);
+      try { window.webkit.messageHandlers[SHELL_HANDLER].postMessage({ kind: 'aiConsentCancel', requestId }); } catch { /* already unavailable */ }
+    };
+    // Bound a missing native reply without rushing someone reading the policy.
+    // The same cleanup releases the service's shared wait so a later request
+    // can ask again. Neither timeout nor document replacement grants access.
+    const timeout = setTimeout(cancel, NATIVE_AI_CONSENT_TIMEOUT_MS);
+    window.__opAIConsent = endpoint;
+    signal?.addEventListener('abort', cancel, { once: true });
+    window.addEventListener('pagehide', cancel, { once: true });
+    try {
+      window.webkit.messageHandlers[SHELL_HANDLER].postMessage({
+        kind: 'aiConsent', requestId, title, message, policy: privacyPolicy,
+      });
+    } catch { finish(false); }
+  });
+}
 
 export function parseAccountProfilesAnswer(answer) {
   const parsed = JSON.parse(String(answer ?? ''));
@@ -1859,6 +1909,15 @@ export function initIOSShell(deps) {
     // web dialog uses, then republishes so the sheet reflects what landed
     // rather than what it optimistically set.
     setTheme: ({ value }) => { deps.setTheme(value); publish(); },
+    setAISharing: async ({ value }) => {
+      try {
+        if (value === 'true') await requestAIConsent();
+        else await revokeAIConsent();
+        return '';
+      } catch (error) {
+        return error?.code === 'AI_CONSENT_DECLINED' ? '' : String(error?.message || error);
+      } finally { publish(); }
+    },
     setAutoFallback: ({ value }) => {
       deps.saveSettings({ autoFallback: value === 'true' });
       publish();
@@ -1965,6 +2024,7 @@ export function initIOSShell(deps) {
       theme: deps.getTheme(),
       hasApiKey: !!s.openrouterKey,
       autoFallback: !!s.autoFallback,
+      aiSharingAllowed: hasAIConsent(),
       // Optional like the other sync deps: this module is wired on desktop too,
       // where nothing calls it and there is no iCloud switch to read.
       syncEnabled: !!deps.getSyncEnabled?.(),
@@ -2091,6 +2151,7 @@ export function initIOSShell(deps) {
   };
 
   subscribeVariants(publish);
+  subscribeAIConsent(publish);
   // A job write that the DRAIN refused, which has no DOM change to notice.
   // `jobDescriptions` flips `jobStorageFailed()` and notifies its subscribers
   // when `onWriteFailure` fires — long after the synchronous action returned and

@@ -5,6 +5,7 @@ import {
 } from '../src/aiService.js';
 import { saveApiKey } from '../src/persistence.js';
 import { store } from '../src/store.js';
+import { setAIConsentPresenter } from '../src/aiConsent.js';
 
 // onboardingLogic statically imports resumeParser, whose pdfjs-dist import
 // needs browser APIs jsdom doesn't have. tailorResume never touches the
@@ -156,11 +157,13 @@ describe('grounding rules reach every AI entry point', () => {
     // The credential has its own async entry point now — saveSettings
     // refuses it outright so a keychain write can never be fire-and-forget.
     await saveApiKey('test-key');
+    setAIConsentPresenter(async () => true);
     fetchSpy = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
     vi.stubGlobal('fetch', fetchSpy);
   });
 
   afterEach(() => {
+    setAIConsentPresenter(null);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     localStorage.clear();
