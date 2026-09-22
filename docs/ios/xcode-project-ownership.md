@@ -15,9 +15,10 @@ src-tauri/gen/*
 
 Build output inside the Apple project is excluded by the project's own
 `src-tauri/gen/apple/.gitignore`, which Tauri generates and we keep:
-`build/`, `Externals/`, `xcuserdata/`. Committed set: **33 files** — the
+`build/`, `Externals/`, `xcuserdata/`. Committed source includes the
 xcodeproj, `project.yml`, the app icons, the Info plist, the entitlements, the
-launch storyboard, `main.mm` and its bindings header.
+launch storyboard, `main.mm` and its bindings header. The Cloud hooks in
+`ci_scripts/` are also maintained source; build/tool downloads stay ignored.
 
 ## What is hand-maintained
 
@@ -25,8 +26,7 @@ launch storyboard, `main.mm` and its bindings header.
 derived from it by `xcodegen generate`, so never hand-edit the pbxproj — the
 next regeneration would silently discard the edit.
 
-Five things in `project.yml` are ours. Each is commented `HAND-MAINTAINED` in
-place:
+These parts of `project.yml` are maintained here:
 
 | Block | Why it exists |
 |---|---|
@@ -35,6 +35,8 @@ place:
 | `Externals: excludes: ["**/*.a"]` | `Externals` is empty when `tauri ios init` first runs and holds the 365 MB `libapp.a` afterwards. Without the exclude, a later `xcodegen generate` copies that static library into the app bundle's Resources. It is *linked* via the `libapp.a` dependency; it must never be a resource. |
 | `DEVELOPMENT_TEAM: "847VH25R7U"` | Tauri writes this straight into the pbxproj and never records it in `project.yml`, so `xcodegen generate` drops it and device builds stop signing. Simulator builds don't care; device builds do. |
 | the `Shell` group name | Cosmetic — keeps the shell separate from generated `Sources` in Xcode's navigator. |
+| `OP_RUST_LIB_ROOT` and library search/output paths | CI links its own static library from isolated output; it must not overwrite a developer's existing `Externals/libapp.a`. The default remains the local Tauri path. |
+| conditional `Build Rust Code` phase | Xcode Cloud invokes Xcode without a parent Tauri CLI options server. `OP_IOS_CI=1` or Cloud selects the locked Cargo helper; the regular local Tauri command is preserved. See [TestFlight automation](testflight-automation.md). |
 
 ## Re-running `tauri ios init` — measured, not assumed
 

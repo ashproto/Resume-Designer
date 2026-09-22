@@ -1,0 +1,134 @@
+name: iOS TestFlight
+
+# The workflow and dispatcher execute only from main. A passing PR workflow
+# never authorizes signing. Automatic dispatch is enabled only AFTER a manual
+# Cloud pilot succeeds; missing/false variable leaves it dormant.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, next]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Protected branch to build after its push CI passes
+        required: true
+        default: next
+        type: choice
+        options: [next, main]
+      resume_run_id:
+        description: Existing Xcode Cloud build run to resume monitoring (optional)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    if: >-
+      github.repository == 'ashproto/Resume-Designer' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (vars.IOS_TESTFLIGHT_AUTOMATION_ENABLED == 'true' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      branch: ${{ steps.gate.outputs.branch }}
+      sha: ${{ steps.gate.outputs.sha }}
+      skip: ${{ steps.gate.outputs.skip }}
+    steps:
+      - name: Check out trusted dispatcher code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js without dependency cache
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Verify protected source and all required CI jobs
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/ios-release-gate.mjs
+
+  release:
+    needs: authorize
+    if: needs.authorize.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 210
+    # Configure this environment to allow only main workflow runs. Its Apple
+    # API key is never shared with CI or candidate code. See setup runbook.
+    environment: ios-testflight
+    permissions:
+      contents: write # only the deterministic, immutable release tag
+    concurrency:
+      group: ios-testflight-${{ needs.authorize.outputs.branch }}-${{ needs.authorize.outputs.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted dispatcher code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js without dependency cache
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # Deliberately no npm install, candidate checkout, artifact restore,
+      # signing certificate export, or execution of the candidate's scripts.
+      - name: Dispatch exact commit and wait for TestFlight
+        id: cloud
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ needs.authorize.outputs.branch }}
+          RELEASE_SHA: ${{ needs.authorize.outputs.sha }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          APP_STORE_CONNECT_APP_ID: ${{ vars.APP_STORE_CONNECT_APP_ID }}
+          APP_STORE_CONNECT_INTERNAL_GROUP_ID: ${{ vars.APP_STORE_CONNECT_INTERNAL_GROUP_ID }}
+          XCODE_CLOUD_WORKFLOW_ID: ${{ vars.XCODE_CLOUD_WORKFLOW_ID }}
+        run: |
+          args=(--branch "$RELEASE_BRANCH" --sha "$RELEASE_SHA")
+          if [[ -n "$RESUME_RUN_ID" ]]; then
+            args+=(--resume-run-id "$RESUME_RUN_ID")
+          fi
+          node tools/ios-cloud-release.mjs "${args[@]}"
+
+      - name: Record release outcome even when monitoring fails
+        if: always()
+        env:
+          RELEASE_BRANCH: ${{ needs.authorize.outputs.branch }}
+          RELEASE_SHA: ${{ needs.authorize.outputs.sha }}
+          RELEASE_TAG: ${{ steps.cloud.outputs.release_tag }}
+          CLOUD_RUN_ID: ${{ steps.cloud.outputs.build_run_id }}
+          CLOUD_BUILD_NUMBER: ${{ steps.cloud.outputs.cloud_build_number }}
+          BUILD_NUMBER: ${{ steps.cloud.outputs.build_number }}
+          RELEASE_STATE: ${{ steps.cloud.outputs.release_state }}
+          ASC_BUILD_ID: ${{ steps.cloud.outputs.asc_build_id }}
+        run: |
+          # shellcheck disable=SC2016 # Backticks are literal Markdown formatting.
+          {
+            printf '## On Paper iOS release\n\n'
+            printf -- '- Source: `%s` at `%s`\n' "$RELEASE_BRANCH" "$RELEASE_SHA"
+            printf -- '- Immutable tag: `%s`\n' "${RELEASE_TAG:-not created}"
+            printf -- '- Cloud run: `%s`; Cloud number: `%s`; uploaded build number: `%s`\n' "${CLOUD_RUN_ID:-not recorded}" "${CLOUD_BUILD_NUMBER:-unknown}" "${BUILD_NUMBER:-unknown}"
+            printf -- '- State: `%s`; App Store build: `%s`\n' "${RELEASE_STATE:-not confirmed}" "${ASC_BUILD_ID:-unknown}"
+            printf '\nA submitted request is not proof of TestFlight availability. If a run may have started, resume monitoring it; do not blindly dispatch another.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
