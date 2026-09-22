@@ -46,9 +46,9 @@ final class DesktopSyncHost {
   // Ported from the iOS host (OPShell.swift), and DUPLICATED there on purpose:
   // hoisting them into OPSync.swift would edit shipped iOS code for a desktop
   // feature. Same keys — the transport defines them — same carrier
-  // (UserDefaults, under the app's bundle domain), same behaviour. Suspension
-  // is the one deliberate difference: iOS keeps it in UserDefaults, desktop in
-  // the page's SYNC_SUSPENDED_KEY; each platform is self-consistent.
+  // (UserDefaults, under the app's bundle domain), same behaviour. Native
+  // suspension is authoritative on both platforms; the desktop page mirrors
+  // it for its model and Settings UI and reconciles it at every page startup.
   //
   // Why they exist: CKSyncEngine treats a fetched record as delivered once the
   // delegate returns. A unit the page refused (mid-edit) or a conflict it did
@@ -82,19 +82,28 @@ final class DesktopSyncHost {
   /// The purge marker, set SYNCHRONOUSLY when the engine reports the purge and
   /// cleared only by `resumeSyncing` — the same key and the same rule as OPShell.
   private static let syncSuspendedKey = "resume-designer-sync-suspended"
-  private var syncSuspended = UserDefaults.standard.bool(forKey: DesktopSyncHost.syncSuspendedKey)
+  private let suspensionDefaults: UserDefaults
+  private var syncSuspended: Bool
+  /// Process-local ordering lets the page reject an older startup answer that
+  /// arrives after a purge or resume notice. A page reload reads a new snapshot.
+  private var suspensionRevision = 0
   /// See `enqueueLifecycle`.
   private var lifecycleTail: Task<Void, Never>?
   private var tombstonedProfileIds: [String] = []
   /// One recovery send per scope per session, as OPShell keeps it.
   private var syncRecovered: Set<OPSyncScope> = []
   private var drainRetryTask: Task<Void, Never>?
-  /// Answers to the page's own questions (the account-profile probe), keyed by
+  /// Answers to the page's own questions (account profiles and suspension), keyed by
   /// the id Rust issued — a second callback because the first is Swift asking.
   private var answerCallback: OPSyncRustCallback?
   /// Guards every read-modify-write of the durable ledgers and the drain's
   /// bookkeeping: they run from main-actor callers AND nonisolated async ones.
   private let ledger = NSLock()
+
+  init(suspensionDefaults: UserDefaults = .standard) {
+    self.suspensionDefaults = suspensionDefaults
+    self.syncSuspended = suspensionDefaults.bool(forKey: Self.syncSuspendedKey)
+  }
   /// Synchronous on purpose: the lock is taken and released inside one
   /// non-async frame, never across an await, which is also what keeps the
   /// compiler's async-context lock diagnostic quiet.
@@ -381,6 +390,18 @@ final class DesktopSyncHost {
     profileId: String, knownProfileIds: [String], tombstonedProfileIds: [String], reason: String
   ) async {
     let began = Date()
+    guard !profileId.isEmpty else {
+      NSLog("[OPDesktopSync] no active profile — sync stays down")
+      notify("syncInitialProfileFetchSettled", ["status": "unavailable"])
+      return
+    }
+    // A paused cold launch still needs the page's profile context: an explicit
+    // resume can then start this workspace without depending on another reload.
+    // Recording metadata does not construct an engine or change upload debt.
+    let profileChanged = syncProfileId != profileId
+    syncProfileId = profileId
+    self.knownProfileIds = knownProfileIds
+    self.tombstonedProfileIds = tombstonedProfileIds
     // THE GATE, as OPShell has it: every way the transport comes up runs
     // through here. A purge means the account's owner emptied this app's
     // iCloud data; an automatic start would recreate the zone and put this
@@ -392,12 +413,7 @@ final class DesktopSyncHost {
       notify("syncInitialProfileFetchSettled", ["status": "unavailable"])
       return
     }
-    guard !profileId.isEmpty else {
-      NSLog("[OPDesktopSync] no active profile — sync stays down")
-      notify("syncInitialProfileFetchSettled", ["status": "unavailable"])
-      return
-    }
-    if syncProfileId != profileId {
+    if profileChanged {
       // A different profile is a different zone and a different engine session,
       // so the previous session's process-local recovery does not carry over.
       // Profile-scoped deferred ids stay under that profile's persisted key.
@@ -406,10 +422,7 @@ final class DesktopSyncHost {
         syncDeferredDrainKey = nil
         syncDeferredReowed.removeAll()
       }
-      syncProfileId = profileId
     }
-    self.knownProfileIds = knownProfileIds
-    self.tombstonedProfileIds = tombstonedProfileIds
     settleDeadWorkspaces(tombstonedProfileIds)
     // A workspace this device has never started sync for owes the mesh a full
     // upload of everything held for it. Decided BEFORE start, from the page's
@@ -637,13 +650,28 @@ final class DesktopSyncHost {
     Task { @MainActor in self.enqueueLifecycle { await self.stopEngine(forgettingServer: false) } }
   }
 
-  private func setSyncSuspended(_ suspended: Bool) {
+  @MainActor private func setSyncSuspended(_ suspended: Bool) {
     if suspended {
-      UserDefaults.standard.set(true, forKey: Self.syncSuspendedKey)
+      suspensionDefaults.set(true, forKey: Self.syncSuspendedKey)
     } else {
-      UserDefaults.standard.removeObject(forKey: Self.syncSuspendedKey)
+      suspensionDefaults.removeObject(forKey: Self.syncSuspendedKey)
     }
     syncSuspended = suspended
+    suspensionRevision += 1
+  }
+
+  @MainActor private func suspensionSnapshot() -> [String: Any] {
+    ["suspended": syncSuspended, "revision": suspensionRevision]
+  }
+
+  /// A startup read, independent of account availability and engine startup.
+  /// It shares the main actor with transitions so the flag and revision agree.
+  func answerSuspension(id: UInt64) {
+    Task { @MainActor in
+      let snapshot = self.suspensionSnapshot()
+      let data = try! JSONSerialization.data(withJSONObject: snapshot)
+      String(decoding: data, as: UTF8.self).withCString { self.answerCallback?(id, $0) }
+    }
   }
 
   /// The only path that clears suspension, in OPShell's order: re-owe every
@@ -651,13 +679,16 @@ final class DesktopSyncHost {
   /// death at any later line cannot leave automatic sync running without the
   /// uploads this explicit action requested.
   @MainActor private func resumeSyncing() async {
-    guard syncSuspended else { return }
+    guard syncSuspended else {
+      notify("syncResumed", suspensionSnapshot())
+      return
+    }
     oweFullUploadForEveryConsideredProfile()
     if let syncProfileId { setSyncFullUploadOwed(true, profileId: syncProfileId) }
     await stopEngine(forgettingServer: true)
     setSyncSuspended(false)
     NSLog("[OPDesktopSync] iCloud sync resumed after a purge; full uploads are owed")
-    notify("syncResumed")
+    notify("syncResumed", suspensionSnapshot())
     guard let syncProfileId else { return }
     await runStart(profileId: syncProfileId, knownProfileIds: knownProfileIds,
                    tombstonedProfileIds: tombstonedProfileIds, reason: "resume")
@@ -935,7 +966,7 @@ extension DesktopSyncHost: OPSyncHost {
     // device's workspaces back into an iCloud the account's owner emptied.
     setSyncSuspended(true)
     NSLog("[OPDesktopSync] iCloud data purged — the transport stays down, nothing local is deleted, nothing is re-sent")
-    notify("syncPurged")
+    notify("syncPurged", suspensionSnapshot())
     // Stop and server-bookkeeping cleanup on the same serialized turn, so no
     // start can slip between the engine going down and its state being forgotten.
     enqueueLifecycle { [self] in await stopEngine(forgettingServer: true) }
@@ -988,6 +1019,9 @@ public func op_sync_resume_after_purge() { host.resumeAfterPurge() }
 
 @_cdecl("op_sync_account_profiles")
 public func op_sync_account_profiles(_ id: UInt64) { host.answerAccountProfiles(id: id) }
+
+@_cdecl("op_sync_suspension")
+public func op_sync_suspension(_ id: UInt64) { host.answerSuspension(id: id) }
 
 @_cdecl("op_sync_dirty")
 public func op_sync_dirty(_ unitsJson: UnsafePointer<CChar>) {

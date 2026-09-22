@@ -132,6 +132,8 @@ pub fn run() {
             desktop_sync::desktop_sync_resume,
             #[cfg(target_os = "macos")]
             desktop_sync::desktop_sync_account_profiles,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_suspension,
             #[cfg(desktop)]
             commands::updater::check_update_on_channel,
             #[cfg(desktop)]

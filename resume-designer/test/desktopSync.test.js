@@ -22,6 +22,7 @@ const deps = (over = {}) => ({
   listProfileIds: () => ['p1', 'p2'],
   listTombstonedProfileIds: () => ['dead'],
   isSyncSuspended: () => false,
+  setSyncSuspended: vi.fn(),
   ...over,
 });
 
@@ -31,7 +32,12 @@ const lastReply = () => {
 };
 
 describe('initDesktopSync', () => {
-  beforeEach(() => { invoke.mockClear(); delete window.__opDesktopSync; });
+  beforeEach(() => {
+    invoke.mockReset().mockImplementation(async (cmd) => (
+      cmd === 'desktop_sync_suspension' ? JSON.stringify({ suspended: false, revision: 0 }) : undefined
+    ));
+    delete window.__opDesktopSync;
+  });
   afterEach(() => { delete window.__opDesktopSync; });
 
   it('installs the desktop global and leaves the iOS bridge alone', async () => {
@@ -84,17 +90,120 @@ describe('initDesktopSync', () => {
   it('exposes the explicit resume after a purge, and mirrors suspension both ways', async () => {
     const setSyncSuspended = vi.fn();
     await initDesktopSync(deps({ setSyncSuspended }));
-    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncPurged' }));
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncPurged', suspended: true, revision: 1 }));
     expect(setSyncSuspended).toHaveBeenLastCalledWith(true);
     await window.__opDesktopSync.resumeAfterPurge();
     expect(invoke).toHaveBeenCalledWith('desktop_sync_resume', undefined);
-    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncResumed' }));
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncResumed', suspended: false, revision: 2 }));
     expect(setSyncSuspended).toHaveBeenLastCalledWith(false);
   });
 
-  it('does not start the transport while sync is suspended', async () => {
-    // A purge stopped this device on purpose; only a person turns it back on.
-    await initDesktopSync(deps({ isSyncSuspended: () => true }));
+  it('repairs a stale paused page before reporting a resumed native host', async () => {
+    // Resume cleared the native marker, then the process died before its notice.
+    let pageSuspended = true;
+    const d = deps({
+      isSyncSuspended: () => pageSuspended,
+      setSyncSuspended: vi.fn((value) => { pageSuspended = value; }),
+    });
+    await initDesktopSync(d);
+    expect(pageSuspended).toBe(false);
+    const calls = invoke.mock.calls.map(([cmd]) => cmd);
+    expect(calls.indexOf('desktop_sync_suspension')).toBeGreaterThanOrEqual(0);
+    expect(calls.indexOf('desktop_sync_report_profile')).toBeGreaterThan(calls.indexOf('desktop_sync_suspension'));
+    expect(d.setSyncSuspended.mock.invocationCallOrder[0]).toBeLessThan(
+      invoke.mock.invocationCallOrder[calls.indexOf('desktop_sync_report_profile')],
+    );
+  });
+
+  it('repairs a missed purge notice and reports profile context for explicit resume', async () => {
+    invoke.mockResolvedValueOnce(JSON.stringify({ suspended: true, revision: 4 }));
+    let pageSuspended = false;
+    const announce = vi.fn();
+    window.addEventListener('rd:sync-suspension-changed', announce);
+    try {
+      await initDesktopSync(deps({
+        isSyncSuspended: () => pageSuspended,
+        setSyncSuspended: (value) => { pageSuspended = value; },
+      }));
+      expect(pageSuspended).toBe(true);
+      expect(announce).toHaveBeenCalledOnce();
+      // The native gate prevents CloudKit work. It still needs this metadata
+      // on a fresh paused launch, so the Resume button has a profile to start.
+      expect(invoke).toHaveBeenCalledWith('desktop_sync_report_profile', {
+        profileId: 'p1', knownProfileIds: ['p1', 'p2'], tombstonedProfileIds: ['dead'],
+      });
+    } finally {
+      window.removeEventListener('rd:sync-suspension-changed', announce);
+    }
+  });
+
+  it('does not let a late startup snapshot undo a newer purge notice', async () => {
+    let answer;
+    invoke.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const d = deps();
+    const ready = initDesktopSync(d);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_sync_suspension', undefined));
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncPurged', suspended: true, revision: 1 }));
+    answer(JSON.stringify({ suspended: false, revision: 0 }));
+    await ready;
+    expect(d.setSyncSuspended).toHaveBeenLastCalledWith(true);
+    expect(d.setSyncSuspended).not.toHaveBeenCalledWith(false);
+  });
+
+  it('ignores an old purge notice delivered after a newer resume notice', async () => {
+    const d = deps();
+    await initDesktopSync(d);
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncResumed', suspended: false, revision: 2 }));
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncPurged', suspended: true, revision: 1 }));
+    expect(d.setSyncSuspended).toHaveBeenLastCalledWith(false);
+  });
+
+  it.each([null, {}, { suspended: 'false', revision: 0 }, { suspended: false, revision: -1 }])(
+    'refuses an invalid native snapshot instead of starting with guessed state: %j', async (snapshot) => {
+      invoke.mockResolvedValueOnce(JSON.stringify(snapshot));
+      const d = deps();
+      await expect(initDesktopSync(d)).rejects.toThrow(/suspension/);
+      expect(d.setSyncSuspended).not.toHaveBeenCalled();
+      expect(invoke.mock.calls.some(([cmd]) => cmd === 'desktop_sync_report_profile')).toBe(false);
+    },
+  );
+
+  it('does not start when the native suspension query fails', async () => {
+    invoke.mockRejectedValueOnce(new Error('native query unavailable'));
+    const d = deps();
+    await expect(initDesktopSync(d)).rejects.toThrow('native query unavailable');
+    expect(d.setSyncSuspended).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'desktop_sync_report_profile')).toBe(false);
+  });
+
+  it('waits for the page mirror to persist before reporting the profile', async () => {
+    let persist;
+    const d = deps({ setSyncSuspended: vi.fn(() => new Promise((resolve) => { persist = resolve; })) });
+    const ready = initDesktopSync(d);
+    await vi.waitFor(() => expect(d.setSyncSuspended).toHaveBeenCalledWith(false));
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'desktop_sync_report_profile')).toBe(false);
+    persist(true);
+    await ready;
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'desktop_sync_report_profile')).toBe(true);
+  });
+
+  it('keeps the document profile when the active pointer changes during reconciliation', async () => {
+    let active = 'p1';
+    let answer;
+    invoke.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const ready = initDesktopSync(deps({ getActiveProfileId: () => active }));
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_sync_suspension', undefined));
+    active = 'p2'; // Switching workspaces changes this pointer before page reload.
+    answer(JSON.stringify({ suspended: false, revision: 0 }));
+    await ready;
+    expect(invoke).toHaveBeenCalledWith('desktop_sync_report_profile', {
+      profileId: 'p1', knownProfileIds: ['p1', 'p2'], tombstonedProfileIds: ['dead'],
+    });
+  });
+
+  it('refuses startup when the page cannot persist the reconciled marker', async () => {
+    await expect(initDesktopSync(deps({ setSyncSuspended: () => Promise.resolve(false) })))
+      .rejects.toThrow(/suspension/);
     expect(invoke.mock.calls.some(([cmd]) => cmd === 'desktop_sync_report_profile')).toBe(false);
   });
 
@@ -144,7 +253,7 @@ describe('initDesktopSync', () => {
   it('sets the suspended flag when Swift reports a purge, and deletes nothing', async () => {
     const setSyncSuspended = vi.fn();
     await initDesktopSync(deps({ setSyncSuspended }));
-    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncPurged' }));
+    await window.__opDesktopSync.request(0, JSON.stringify({ kind: 'syncPurged', suspended: true, revision: 1 }));
     expect(setSyncSuspended).toHaveBeenCalledWith(true);
   });
 });

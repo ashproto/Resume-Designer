@@ -63,8 +63,7 @@ const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
  * @param {() => string[]} deps.listProfileIds  the registry's live ids — the page owns the registry
  * @param {() => string[]} [deps.listTombstonedProfileIds]  the registry's durably deleted ids
  * @param {(status: string) => void} [deps.markInitialProfileFetchSettled]  releases first-run work deferred until the first pull
- * @param {() => boolean} deps.isSyncSuspended   a purge stopped this device; only a person restarts it
- * @param {(v: boolean) => void} [deps.setSyncSuspended]
+ * @param {(v: boolean) => void|Promise<boolean>} [deps.setSyncSuspended] mirrors the native marker into the page's durable store
  * @param {(notify: Function) => void} [deps.setSyncDirtyNotifier]  the model's one notifier slot
  * @param {(message: string) => void} [deps.note]  a line onto the process's stderr; the
  *   webview console is invisible when the app is run by path, and "sync did not
@@ -105,6 +104,25 @@ export function initDesktopSync(deps) {
   // The Settings account section renders the paused state from the page's
   // key; it is told to re-read whenever the transport changes it.
   const announceSuspension = () => window.dispatchEvent(new CustomEvent(SYNC_SUSPENSION_EVENT));
+  // Native owns suspension; the page key is a mirror that a crash or reload
+  // can leave stale. A query may return after a newer purge/resume notice, so
+  // snapshots carry a revision from the native process. Never roll that back.
+  let suspensionRevision = -1;
+  let suspensionMirror = Promise.resolve();
+  const applySuspension = (snapshot) => {
+    if (typeof snapshot?.suspended !== 'boolean'
+      || !Number.isSafeInteger(snapshot?.revision) || snapshot.revision < 0) {
+      throw new Error('invalid native sync suspension state');
+    }
+    if (snapshot.revision < suspensionRevision) return suspensionMirror;
+    suspensionRevision = snapshot.revision;
+    const stored = deps.setSyncSuspended?.(snapshot.suspended);
+    announceSuspension();
+    suspensionMirror = Promise.resolve(stored).then((ok) => {
+      if (ok === false) throw new Error('could not persist native sync suspension state');
+    });
+    return suspensionMirror;
+  };
 
   // Things Swift TELLS the page (id 0). Each is a fact about the transport,
   // and the page decides what to do with it; none of them destroys anything.
@@ -113,8 +131,8 @@ export function initDesktopSync(deps) {
     // transport has already recorded its own durable suspension and stopped;
     // this mirrors it into the page's key, which the UI reads. Nothing local
     // is deleted, and only a person turns sync back on (`resumeAfterPurge`).
-    syncPurged: () => { deps.setSyncSuspended?.(true); announceSuspension(); },
-    syncResumed: () => { deps.setSyncSuspended?.(false); announceSuspension(); },
+    syncPurged: applySuspension,
+    syncResumed: applySuspension,
     // Refused or unresolved units. The transport holds them in its durable
     // ledger and re-offers them at the next drain; logged for the trace.
     syncRefused: ({ profileId, unitIds }) =>
@@ -161,7 +179,7 @@ export function initDesktopSync(deps) {
       const { kind, ...args } = parsed ?? {};
 
       if (id === 0) {
-        try { notices[kind]?.(args); } catch (e) { console.warn('[desktopSync] notice failed', kind, e); }
+        try { await notices[kind]?.(args); } catch (e) { console.warn('[desktopSync] notice failed', kind, e); }
         return;
       }
 
@@ -179,18 +197,18 @@ export function initDesktopSync(deps) {
     },
   };
 
-  // The transport starts against the active profile's zone, and is told every
-  // profile the registry names — the page owns the registry. Not while
-  // suspended: a purge stopped this device on purpose.
+  // Reconcile BEFORE reporting the profile: a missed resume notice must not
+  // leave the model refusing units when native starts. Always report context,
+  // even while paused, so a fresh host has the profile to resume explicitly.
+  // Native enforces its own suspension gate before any CloudKit operation.
   const note = deps.note ?? (() => {});
-  if (deps.isSyncSuspended()) { note('not starting: sync is suspended on this device'); return Promise.resolve(); }
-  const profileId = deps.getActiveProfileId();
-  if (!profileId) { note('not starting: no active profile yet'); return Promise.resolve(); }
-  const knownProfileIds = deps.listProfileIds();
-  // Durably tombstoned workspaces, read from the registry on disk: the transport
-  // settles their debt (a dead workspace has no zone to send into, and its
-  // deferred queue used to fail at every start, forever).
-  const tombstonedProfileIds = deps.listTombstonedProfileIds?.() ?? [];
-  note(`starting: profile ${profileId}, ${knownProfileIds.length} known, ${tombstonedProfileIds.length} tombstoned`);
-  return tauriInvoke('desktop_sync_report_profile', { profileId, knownProfileIds, tombstonedProfileIds });
+  return (async () => {
+    const raw = await tauriInvoke('desktop_sync_suspension');
+    await applySuspension(JSON.parse(raw));
+    const profileId = openProfileId;
+    if (!profileId) { note('not starting: no active profile yet'); return; }
+    const { knownProfileIds, tombstonedProfileIds } = profileReport();
+    note(`reporting: profile ${profileId}, ${knownProfileIds.length} known, ${tombstonedProfileIds.length} tombstoned`);
+    await tauriInvoke('desktop_sync_report_profile', { profileId, knownProfileIds, tombstonedProfileIds });
+  })();
 }

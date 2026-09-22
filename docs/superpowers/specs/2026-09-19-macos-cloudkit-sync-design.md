@@ -86,6 +86,8 @@ The page also issues commands in the other direction:
   workspaces the registry has durably tombstoned. A shared-zone landing triggers
   this report, so newly discovered workspaces can enter later fetches.
 - `desktop_sync_resume` is the explicit recovery action after an iCloud purge.
+- `desktop_sync_suspension` reads the native marker and its process-local
+  revision through the same answer channel as the account-profile probe.
 - `desktop_sync_account_profiles` probes the account registry during first-run
   setup. This uses a separate answer callback and request-ID table because Swift
   is answering the page's question. The Swift lookup is bounded at eight seconds
@@ -192,6 +194,13 @@ person's local documents, and prevents automatic re-upload. Only the explicit
 resume action re-owes full uploads, clears suspension and starts again. An
 account change likewise preserves local content and re-owes uploads for the new
 account.
+
+Native suspension is authoritative. At each page startup, the bridge reconciles
+the page's durable mirror before reporting its profile, repairing notices lost
+during a reload or crash. Purge and resume notices carry the same revisioned
+snapshot, so a late startup answer cannot overwrite a newer transition. A paused
+start records profile metadata without starting CloudKit; an explicit resume
+therefore has the context it needs even after a cold launch.
 
 ## Build, signing and environments
 

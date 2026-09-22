@@ -954,9 +954,8 @@ export async function init() {
         // The page owns the registry; the transport is told every live profile.
         listProfileIds: () => listProfiles().map((p) => p.id),
         listTombstonedProfileIds: () => loadRegistry().filter((p) => p.deletedAt).map((p) => p.id),
-        // A purge suspends sync — `setSyncEnabled(false)` writes SYNC_SUSPENDED_KEY —
-        // and `isSyncEnabled` reads it back, so the two are the same fact.
-        isSyncSuspended: () => !isSyncEnabled(),
+        // Native owns suspension. Startup and notices reconcile this page-side
+        // mirror before the model handles sync requests.
         setSyncSuspended: (suspended) => setSyncEnabled(!suspended),
         // The page → transport edge: initIOSShell above installed a notifier
         // that is a no-op off iOS; the desktop bridge replaces it with its own.

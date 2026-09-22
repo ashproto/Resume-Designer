@@ -23,10 +23,11 @@ extern "C" {
     fn op_sync_profiles(known_profile_ids_json: *const c_char, tombstoned_profile_ids_json: *const c_char);
     fn op_sync_resume_after_purge();
     fn op_sync_account_profiles(id: u64);
+    fn op_sync_suspension(id: u64);
 }
 
 /// Answers to the page's own questions, keyed by the id this side issued. The
-/// one question so far is a fresh Mac's account-profile probe: an async command
+/// questions are account profiles and the native suspension marker: an async command
 /// parks a oneshot here, Swift answers on the second callback, the command
 /// resolves. Separate from `on_request` because that carries Swift asking.
 type Answers = std::sync::Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<String>>>;
@@ -146,6 +147,16 @@ pub async fn desktop_sync_account_profiles() -> Result<String, String> {
     let (id, rx) = park_answer();
     unsafe { op_sync_account_profiles(id) };
     rx.await.map_err(|_| "the account profile answer was dropped".to_string())
+}
+
+/// Native suspension is the authority for this device. The page reconciles its
+/// model/UI mirror before starting, even when a previous notice was lost during
+/// a reload. The revision orders this answer against live transition notices.
+#[tauri::command]
+pub async fn desktop_sync_suspension() -> Result<String, String> {
+    let (id, rx) = park_answer();
+    unsafe { op_sync_suspension(id) };
+    rx.await.map_err(|_| "the suspension answer was dropped".to_string())
 }
 
 /// A line from the page onto the process's stderr. The webview console is
@@ -413,4 +424,3 @@ mod ledger_tests {
     }
 
 }
-
