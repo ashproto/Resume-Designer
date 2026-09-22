@@ -272,9 +272,11 @@ The following are not established by that run:
 - Production signing/notarization, Intel and Windows release artifacts, and
   cross-platform release smoke tests.
 
-The wrap-up production dependency audit also reported an existing high-severity
-`@xmldom/xmldom` issue through `mammoth`; dependencies were unchanged by this sync
-work. That CI blocker remains separate from the verified transport behavior.
+The wrap-up production dependency audit initially reported a high-severity
+`@xmldom/xmldom` issue through `mammoth`. On 2026-09-22, a targeted lockfile update
+from `0.8.13` to `0.8.15` resolved that blocker without changing Mammoth or app code.
+The production audit reported zero vulnerabilities; all 1,729 tests, the frontend
+build, and DOCX extraction smoke checks passed after the update.
 These results describe the recorded run, not a promise about subsequent builds.
 
 API-key sharing through a common keychain access group and replacement-epoch

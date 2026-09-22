@@ -44,9 +44,11 @@ were retained locally and are not part of the repository.
 
 ## Remaining checks and separate work
 
-- The 2026-09-21 production dependency audit failed on one high-severity issue in
-  `@xmldom/xmldom@0.8.13`, via `mammoth@1.12.0`. The dependency files are unchanged
-  from `next`; this needs a separate fix before the configured audit gate passes.
+- The 2026-09-21 dependency-audit blocker was resolved on 2026-09-22 by updating
+  only the locked `@xmldom/xmldom` version from `0.8.13` to `0.8.15`, within
+  Mammoth's existing range. The production audit then reported zero
+  vulnerabilities; all 1,729 tests, the frontend build, and DOCX extraction
+  smoke checks passed. Mammoth and application code were unchanged.
 - The real-device iCloud Settings purge test in Task 7 remains unrun. The purge
   handling is implemented; this document does not claim hardware verification.
 - An independent iPhone-origin asset conflict was not forced. Both platforms
