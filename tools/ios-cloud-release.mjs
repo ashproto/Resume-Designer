@@ -7,7 +7,7 @@
 // The tag is a durable reservation. An existing reservation never authorizes a
 // second POST, including after a lost response or runner crash. Cloud must have
 // no automatic start conditions, and repository rules must forbid moving or
-// deleting ios-testflight/** tags. Workflow concurrency serializes each SHA.
+// deleting ios-testflight/** tags. Workflow concurrency serializes each branch.
 import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -91,15 +91,20 @@ export function createApi({ origin, token, fetchImpl = fetch, sleep = pause }) {
   return { request, collection };
 }
 
-export async function ensureTrustedCommit(gh, input) {
-  const base = `/repos/${input.repository}`;
-  const branch = await gh.request(`${base}/branches/${input.branch}`);
+async function protectedBranchHead(gh, input) {
+  const branch = await gh.request(`/repos/${input.repository}/branches/${input.branch}`);
   if (branch.protected !== true || !SHA.test(branch.commit?.sha || '')) throw new Error('Release branch must be protected');
+  return branch.commit.sha;
+}
+
+export async function ensureTrustedCommit(gh, input) {
+  const head = await protectedBranchHead(gh, input);
   // Compare two SHAs, never bare "next" (there is also a next tag).
-  const comparison = await gh.request(`${base}/compare/${input.sha}...${branch.commit.sha}`);
+  const comparison = await gh.request(`/repos/${input.repository}/compare/${input.sha}...${head}`);
   if (!['ahead', 'identical'].includes(comparison.status) || comparison.merge_base_commit?.sha !== input.sha) {
     throw new Error('Release commit is not reachable from the protected branch');
   }
+  return head;
 }
 
 function assertTag(value, { tag, sha }) {
@@ -108,7 +113,7 @@ function assertTag(value, { tag, sha }) {
   }
 }
 
-export async function ensureReleaseTag(gh, input) {
+export async function ensureReleaseTag(gh, input, { allowCreate = true } = {}) {
   const path = `/repos/${input.repository}/git/ref/tags/${input.tag}`;
   try {
     const value = await gh.request(path);
@@ -117,6 +122,7 @@ export async function ensureReleaseTag(gh, input) {
   } catch (error) {
     if (error.status !== 404) throw error;
   }
+  if (!allowCreate) return null;
   let value;
   try {
     value = await gh.request(`/repos/${input.repository}/git/refs`, { method: 'POST', body: { ref: `refs/tags/${input.tag}`, sha: input.sha } });
@@ -190,6 +196,11 @@ export function betaState(build, detail) {
 export async function release(supplied, { gh, asc, output = () => {}, log = console.log, sleep = pause, pollAttempts = 180, discoveryAttempts = 20, pollMs = 30_000 }) {
   const input = validateInput(supplied);
   const { workflowId, tag, sha, appId, groupId } = input;
+  const superseded = () => {
+    output({ release_state: 'superseded' });
+    log(`Skipping new Cloud build for ${sha}: ${input.branch} has advanced. Any existing release tag is retained.`);
+    return { state: 'superseded' };
+  };
   async function poll(check, attempts, timeoutMessage) {
     for (let index = 0; index < attempts; index++) {
       const result = await check();
@@ -208,8 +219,16 @@ export async function release(supplied, { gh, asc, output = () => {}, log = cons
   if (group?.id !== groupId || group.attributes?.isInternalGroup !== true || relationId(group, 'app') !== appId) {
     throw new Error('Configured TestFlight group must be an internal group belonging to this app');
   }
-  await ensureTrustedCommit(gh, input);
-  const reservation = await ensureReleaseTag(gh, input);
+  const head = await ensureTrustedCommit(gh, input);
+  // Older reachable commits may still have a run to monitor, but cannot make
+  // a fresh reservation or start a higher-numbered build after newer code.
+  // Explicit recovery must never consume a new reservation before the supplied
+  // run can be checked. A wrong run ID otherwise strands the current head.
+  const reservation = await ensureReleaseTag(gh, input, { allowCreate: head === sha && !input.resumeRunId });
+  if (!reservation) {
+    if (input.resumeRunId) throw new Error('Resuming a Cloud run requires an existing release tag; no new reservation was created.');
+    return superseded();
+  }
   output({ release_tag: tag });
   const reference = await poll(async () => selectTag(await asc.collection(`/v1/scmRepositories/${repoId}/gitReferences?limit=200`), tag), discoveryAttempts,
     'Cloud has not discovered the release tag. Reservation retained; reconcile before starting a build manually.');
@@ -230,6 +249,10 @@ export async function release(supplied, { gh, asc, output = () => {}, log = cons
   if (!run) {
     // Recheck the immutable GitHub ref immediately before the non-idempotent POST.
     assertTag(await gh.request(`/repos/${input.repository}/git/ref/tags/${tag}`), input);
+    // Discovery and queueing can outlive another push. Keep this protected-head
+    // read as the final awaited check before any new POST; existing runs above
+    // remain monitorable after their branch advances.
+    if (await protectedBranchHead(gh, input) !== sha) return superseded();
     try {
       run = (await asc.request('/v1/ciBuildRuns', { method: 'POST', body: { data: { type: 'ciBuildRuns', relationships: {
         workflow: relation(workflowId, 'ciWorkflows'), sourceBranchOrTag: relation(reference.id, 'scmGitReferences'),

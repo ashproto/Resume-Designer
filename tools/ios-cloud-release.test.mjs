@@ -119,14 +119,15 @@ test('current Apple enums distinguish submitted, complete success, failures and 
   assert.throws(() => betaState({ ...build, attributes: { ...build.attributes, processingState: 'INVALID' } }, {}), /INVALID/);
 });
 
-function scenario({ existing = false, existingRun = true, startError, runChange, beta = 'IN_BETA_TESTING' } = {}) {
+function scenario({ existing = false, existingRun = true, startError, runChange, beta = 'IN_BETA_TESTING', head = sha } = {}) {
   const writes = [], outputs = [], calls = [];
   const tagPayload = { ref: `refs/tags/${tag}`, object: { type: 'commit', sha } };
+  const branch = { protected: true, commit: { sha: head } };
   let made = existing;
   const gh = { request: async (path, options) => {
     calls.push(path);
-    if (path.includes('/branches/')) return { protected: true, commit: { sha } };
-    if (path.includes('/compare/')) return { status: 'identical', merge_base_commit: { sha } };
+    if (path.includes('/branches/')) return branch;
+    if (path.includes('/compare/')) return { status: branch.commit.sha === sha ? 'identical' : 'ahead', merge_base_commit: { sha } };
     if (options?.method === 'POST') { made = true; writes.push('tag'); return tagPayload; }
     if (path.includes('/git/ref/')) return made ? tagPayload : fail404();
     throw new Error(`Unexpected GitHub path ${path}`);
@@ -149,7 +150,7 @@ function scenario({ existing = false, existingRun = true, startError, runChange,
     if (path.includes('/builds?')) return [build];
     throw new Error(`Unexpected Apple collection ${path}`);
   } };
-  return { gh, asc, writes, calls, outputs, options: { gh, asc, output: item => outputs.push(item), sleep: async () => {}, pollAttempts: 2, discoveryAttempts: 2, log: () => {} } };
+  return { gh, asc, branch, writes, calls, outputs, options: { gh, asc, output: item => outputs.push(item), sleep: async () => {}, pollAttempts: 2, discoveryAttempts: 2, log: () => {} } };
 }
 
 test('new release dispatches once and only reports finished after beta is in testing', async () => {
@@ -167,6 +168,68 @@ test('rerun resumes an existing run without a second start', async () => {
   await release(input, s.options);
   assert.deepEqual(s.writes, []);
 });
+
+test('a mistaken explicit resume cannot consume a new head reservation', async () => {
+  const s = scenario();
+  const original = s.asc.request;
+  s.asc.request = async (path, options) => {
+    const response = await original(path, options);
+    if (path.startsWith('/v1/ciBuildRuns/run?')) {
+      response.data.relationships.sourceBranchOrTag = relation('older-tag', 'scmGitReferences');
+    }
+    return response;
+  };
+  await assert.rejects(release({ ...input, resumeRunId: 'run' }, s.options), /existing release tag/);
+  assert.deepEqual(s.writes, []);
+  s.asc.request = original;
+  assert.equal((await release(input, s.options)).state, 'testflight_available');
+  assert.deepEqual(s.writes, ['tag', 'start']);
+});
+
+test('a superseded candidate does not reserve a tag or start a Cloud build', async () => {
+  const s = scenario({ head: 'b'.repeat(40) });
+  const result = await release(input, s.options);
+  assert.deepEqual(s.writes, []);
+  assert.equal(result.state, 'superseded');
+  assert.deepEqual(s.outputs, [{ release_state: 'superseded' }]);
+});
+
+test('branch advancement during tag discovery retains its reservation without starting a build', async () => {
+  const s = scenario();
+  const original = s.asc.collection;
+  s.asc.collection = async path => {
+    if (path.includes('/gitReferences')) s.branch.commit.sha = 'b'.repeat(40);
+    return original(path);
+  };
+  const result = await release(input, s.options);
+  assert.deepEqual(s.writes, ['tag']);
+  assert.equal(result.state, 'superseded');
+  assert.equal(s.outputs.at(-1).release_state, 'superseded');
+  const retained = await s.gh.request(`/repos/${input.repository}/git/ref/tags/${tag}`);
+  assert.equal(retained.object.sha, sha);
+});
+
+test('branch protection is rechecked after discovery before any Cloud start', async () => {
+  const s = scenario();
+  const original = s.asc.collection;
+  s.asc.collection = async path => {
+    if (path.includes('/gitReferences')) s.branch.protected = false;
+    return original(path);
+  };
+  await assert.rejects(release(input, s.options), /protected/);
+  assert.deepEqual(s.writes, ['tag']);
+});
+
+for (const resumeRunId of [undefined, 'run']) {
+  test(`an existing older Cloud run remains monitorable after branch advancement (${resumeRunId ? 'explicit run' : 'tag lookup'})`, async () => {
+    const s = scenario({ existing: true, head: 'b'.repeat(40) });
+    const result = await release({ ...input, resumeRunId }, s.options);
+    assert.deepEqual(s.writes, []);
+    assert.equal(result.state, 'testflight_available');
+    assert.equal(result.runId, 'run');
+    assert.equal(s.outputs.at(-1).release_state, 'testflight_available');
+  });
+}
 
 test('existing reservation with no visible run fails closed rather than duplicate dispatch', async () => {
   const s = scenario({ existing: true, existingRun: false });

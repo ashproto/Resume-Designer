@@ -112,6 +112,12 @@ export async function authorizeRelease({ eventName, event, ref, get, sleep = ms 
     requireCondition(matching.length === 1 && matching[0].status === 'completed' && matching[0].conclusion === 'success',
       `Required CI job ${name} did not pass.`);
   }
+  // CI may finish out of source order. An older successful run must not
+  // dispatch after a newer branch revision has already reached TestFlight.
+  // The controller checks again under the branch release lock before POST.
+  if (eventName === 'workflow_run' && currentHead !== result.sha) {
+    return { ...result, skip: true, skipReason: 'superseded' };
+  }
   // Manual builds are an intentional override of the desktop-compatible label,
   // but never override the successful CI / protected-branch requirements.
   const skip = eventName === 'workflow_run' && await shouldSkip(get, result.branch, result.sha, sleep);
@@ -137,7 +143,7 @@ async function main() {
     get: githubGet(process.env.GITHUB_TOKEN) });
   const output = `branch=${result.branch}\nsha=${result.sha}\nci_run_id=${result.runId}\nskip=${result.skip}\n`;
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, output);
-  console.log(`${result.skip ? 'Skipped by skip-build' : 'Authorized'}: ${result.branch} ${result.sha} (CI ${result.runId})`);
+  console.log(`${result.skip ? `Skipped (${result.skipReason || 'skip-build'})` : 'Authorized'}: ${result.branch} ${result.sha} (CI ${result.runId})`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

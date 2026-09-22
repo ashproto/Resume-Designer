@@ -27,12 +27,12 @@ candidate based on `next` at `75536fcd`:
 
 | Gate | Evidence |
 | --- | --- |
-| App regression suite | 113 files, 1,816 tests passed. |
-| Release controller/gate/build-helper regressions | 49 tests passed. Includes fork/PR rejection, delayed merge metadata, immutable refs, ambiguous dispatch/retry, TestFlight processing/group membership, Cloud tag guards, isolated compiler invocation and SwiftPM compatibility. |
-| Static checks | ESLint has zero errors and two existing warnings; actionlint, shellcheck and `git diff --check` pass. |
+| App regression suite | 113 files, 1,831 tests passed after review fixes. |
+| Release controller/gate/build-helper regressions | 56 tests passed. Includes superseded-commit rejection before dispatch, older-run recovery, mistaken-resume isolation, fork/PR rejection, delayed merge metadata, immutable refs, ambiguous dispatch/retry, TestFlight processing/group membership, Cloud tag guards, isolated compiler invocation and SwiftPM compatibility. |
+| Static checks | ESLint has zero errors and two existing warnings; shellcheck and `git diff --check` pass. See the documented concurrency queue and actionlint compatibility note below. |
 | Native simulator | Full unsigned Debug build passed with Node 24, Rust 1.92.0, Xcode 27/iOS 27 SDK. |
 | Native device | Full unsigned Release archive passed with the same toolchain. Bundle verified as `com.onpaper.app`, minimum iOS 26.0, version 1.0.0; bundled privacy manifest present and static library absent from app resources. |
-| Hosted CI / Xcode 26.6 | Not run; requires publication. |
+| Hosted CI / Xcode 26.6 | [All three jobs passed](https://github.com/ashproto/Resume-Designer/actions/runs/35797641144) for PR #133 at `fc1b06f8`; subsequent review commits are checked separately on the PR. |
 | Cloud signing / upload / TestFlight installation | Not run; App Store Connect setup and credentials are still needed. |
 
 Local native outputs and bundle verification are retained under
@@ -60,6 +60,30 @@ restoring candidate artifacts/caches. It refreshes the CI run through GitHub's
 API, verifies the workflow identity, upstream repository, push event, required
 successful jobs, protected branch, and commit ancestry. A passing fork or PR
 workflow cannot authorize delivery.
+
+## Release ordering
+
+Delivery holds one concurrency slot for each source branch, from dispatch through
+Cloud completion and TestFlight monitoring. Different SHAs of the same branch
+cannot start releases concurrently. Automatic CI events for an older branch
+revision are skipped as superseded, even if that revision is still an ancestor.
+The controller rechecks the protected branch head immediately before every new
+Cloud build request, including after a job waits for its slot or Cloud discovers
+its tag. A queued manual pilot also must still target the current head to start
+a new build. Already-started builds remain monitorable by their exact tag/run ID.
+
+The concurrency group uses `queue: max`, so a late older job cannot cancel a
+newer job that is waiting. GitHub queues by arrival at the concurrency group,
+which can differ from commit order; the head checks remain necessary. See
+[GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+The locally installed actionlint 1.7.12 predates the documented `queue` property.
+Validate the remaining workflow with only that specific unsupported-key diagnostic
+excluded; do not suppress other concurrency, expression, or shell errors:
+
+```sh
+actionlint -ignore '^unexpected key "queue" for "concurrency" section\.' \
+  .github/workflows/ci.yml .github/workflows/ios-testflight.yml
+```
 
 ## One-time account setup
 
@@ -172,14 +196,22 @@ does not imply Apple stopped the build.
   tag causes the dispatcher to locate and monitor an existing matching run
   rather than issue another build request. A known run ID can also be supplied
   to manual dispatch; it must match the selected source commit and workflow.
+  Supplying a run ID only reads an existing tag and never creates a reservation,
+  so a mistaken resume cannot block a later normal release.
 - A failed/timed-out POST can still have started a build. Do not delete the tag
   or repeatedly dispatch. Check Cloud's build list first. If no matching run is
   visible, the dispatcher stops for operator reconciliation rather than risk
-  two signed builds. Only after proving no run exists, manually start the
-  **same immutable tag** in the configured Cloud workflow, then resume monitoring
-  it. Keep the tag; never delete or move it to retry.
+  two signed builds. Only after proving no run exists and confirming the tagged
+  commit is still the protected branch head, manually start the **same immutable
+  tag** in the configured Cloud workflow, then resume monitoring it. If the branch
+  has advanced, release the newer head instead. Keep the tag; never delete or move
+  it to retry.
 - If the branch has advanced, rerunning failed release jobs retains the original
-  authorized commit. Re-running **all** jobs on a manually dispatched pilot
+  authorized commit and can monitor an existing Cloud run. It cannot start a new
+  build for that superseded commit. If the head advances during tag discovery,
+  the unused reservation is retained and the job reports `superseded`; leave that
+  tag in place and let the newer head's successful CI authorize its own release.
+  Re-running **all** jobs on a manually dispatched pilot
   resolves the branch's current head again; avoid that when recovering an older
   pilot. Automatic `workflow_run` events retain their original CI run identity.
   A new manual dispatch also resolves the branch's current head.

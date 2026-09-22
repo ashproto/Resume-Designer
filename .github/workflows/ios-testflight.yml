@@ -74,7 +74,10 @@ jobs:
     permissions:
       contents: write # only the deterministic, immutable release tag
     concurrency:
-      group: ios-testflight-${{ needs.authorize.outputs.branch }}-${{ needs.authorize.outputs.sha }}
+      # Serialize all SHAs of a branch, including their Cloud monitoring. Keep
+      # queued jobs so a late older candidate cannot evict the newest one.
+      group: ios-testflight-${{ needs.authorize.outputs.branch }}
+      queue: max
       cancel-in-progress: false
     steps:
       - name: Check out trusted dispatcher code

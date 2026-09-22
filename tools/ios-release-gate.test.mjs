@@ -53,6 +53,15 @@ test('trusted successful push with all native gates authorizes its exact SHA', a
   assert.deepEqual(await authorize(fixture()), { branch: 'next', sha, runId: 9, skip: false });
 });
 
+test('late successful CI for an ancestor is superseded rather than released after a newer head', async () => {
+  const head = 'b'.repeat(40);
+  const get = fixture({
+    [`/repos/${repository}/branches/next`]: { protected: true, commit: { sha: head } },
+    [`/repos/${repository}/compare/${sha}...${head}`]: { status: 'ahead' },
+  });
+  assert.deepEqual(await authorize(get), { branch: 'next', sha, runId: 9, skip: true, skipReason: 'superseded' });
+});
+
 test('unprotected branch, changed history, missing or skipped native checks refuse release', async () => {
   for (const overrides of [
     { [`/repos/${repository}/branches/next`]: { protected: false, commit: { sha } } },
