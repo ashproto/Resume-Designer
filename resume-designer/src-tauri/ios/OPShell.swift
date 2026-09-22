@@ -545,11 +545,26 @@ struct ShellSnapshot: Decodable, Equatable {
     /// renders under this sheet.
     var saveFailed: Bool
     var aiSharingAllowed: Bool
+    var aiSharingRevocationPending: Bool
     var privacyPolicy: OPPrivacyPolicy?
+
+    var aiSharingStatus: String {
+      if aiSharingRevocationPending { return "Paused — change not saved" }
+      return aiSharingAllowed ? "Allowed on this device" : "Not allowed"
+    }
+
+    var aiSharingActionTitle: String {
+      if aiSharingRevocationPending { return "Retry stopping AI sharing" }
+      return aiSharingAllowed ? "Stop AI sharing" : "Review AI data sharing"
+    }
+
+    // A failed deletion has already paused requests, but must be retried as a
+    // revocation. Negating `aiSharingAllowed` alone would grant permission.
+    var aiSharingActionAllows: Bool { !aiSharingAllowed && !aiSharingRevocationPending }
 
     static let empty = Settings(
       theme: "system", hasApiKey: false, autoFallback: false, syncEnabled: false, version: "",
-      saveFailed: false, aiSharingAllowed: false, privacyPolicy: nil
+      saveFailed: false, aiSharingAllowed: false, aiSharingRevocationPending: false, privacyPolicy: nil
     )
   }
 
@@ -5067,10 +5082,10 @@ private struct SettingsSheet: View {
             } message: {
               Text("The AI assistant will stop working until you add a key again. Everything else is unaffected. This also removes it from your other devices.")
             }
-          LabeledContent("AI data sharing", value: settings.aiSharingAllowed ? "Allowed on this device" : "Not allowed")
-          Button(settings.aiSharingAllowed ? "Stop AI sharing" : "Review AI data sharing") {
+          LabeledContent("AI data sharing", value: settings.aiSharingStatus)
+          Button(settings.aiSharingActionTitle) {
             aiSharingBusy = true
-            model.changeAISharing(!settings.aiSharingAllowed) { error in
+            model.changeAISharing(settings.aiSharingActionAllows) { error in
               aiSharingBusy = false
               aiSharingError = error
             }

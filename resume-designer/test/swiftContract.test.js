@@ -52,7 +52,7 @@ function requiredFields(name) {
   const body = swiftDeclaration(name);
   // Only this struct's OWN fields: nested types are indented deeper.
   const indent = name === 'JobsView' || name === 'ProfileView' || name === 'OnboardingView' ? '  ' : '    ';
-  const re = new RegExp(`^${indent}(?:var|let) (\\w+):\\s*([^\\n=]+)$`, 'gm');
+  const re = new RegExp(`^${indent}(?:var|let) (\\w+):\\s*([^\\n={]+)$`, 'gm');
   const out = [];
   for (const m of body.matchAll(re)) {
     const type = m[2].trim();
@@ -146,5 +146,61 @@ do {
     const result = spawnSync(executable, [], { input: JSON.stringify(projected), encoding: 'utf8', timeout: 10_000 });
     expect(result.status, result.stdout || result.stderr).toBe(0);
     expect(result.stdout).toContain(`decoded step=${step}`);
+  });
+});
+
+describe.skipIf(process.platform !== 'darwin')('native Settings consent action', () => {
+  let directory;
+  let executable;
+  beforeAll(() => {
+    directory = fs.mkdtempSync(path.join(tmpdir(), 'op-settings-contract-'));
+    const swiftFile = path.join(directory, 'DecodeSettings.swift');
+    executable = path.join(directory, 'decode-settings');
+    fs.writeFileSync(swiftFile, `import Foundation
+${swiftDeclaration('OPPrivacyPolicy')}
+struct ShellSnapshot {
+${swiftDeclaration('Settings')}
+}
+do {
+  let data = FileHandle.standardInput.readDataToEndOfFile()
+  let settings = try JSONDecoder().decode(ShellSnapshot.Settings.self, from: data)
+  let presentation: [String: Any] = [
+    "pending": settings.aiSharingRevocationPending,
+    "status": settings.aiSharingStatus,
+    "action": settings.aiSharingActionTitle,
+    "allow": settings.aiSharingActionAllows
+  ]
+  let result = try JSONSerialization.data(withJSONObject: presentation)
+  print(String(decoding: result, as: UTF8.self))
+} catch {
+  print(error)
+  exit(1)
+}
+`);
+    execFileSync('xcrun', ['swiftc', '-module-cache-path', path.join(directory, 'module-cache'),
+      swiftFile, '-o', executable], { encoding: 'utf8', timeout: 60_000 });
+  }, 65_000);
+  afterAll(() => { if (directory) fs.rmSync(directory, { recursive: true, force: true }); });
+
+  const decode = value => {
+    const result = spawnSync(executable, [], { input: JSON.stringify(value), encoding: 'utf8', timeout: 10_000 });
+    expect(result.status, result.stdout || result.stderr).toBe(0);
+    return JSON.parse(result.stdout);
+  };
+
+  it('decodes both the default projection and an unsaved revocation', () => {
+    expect(decode(buildSettings()).pending).toBe(false);
+    expect(decode(buildSettings({ aiSharingRevocationPending: true })).pending).toBe(true);
+  });
+
+  it.each([
+    [false, true, 'Paused — change not saved', 'Retry stopping AI sharing', false],
+    [true, false, 'Allowed on this device', 'Stop AI sharing', false],
+    [false, false, 'Not allowed', 'Review AI data sharing', true],
+  ])('maps allowed=%s pending=%s to the native action and boolean sent to JS', (allowed, pending, status, action, allow) => {
+    // An explicit wire fixture tests the native branch independently of the
+    // JS projection, so a missing emitter cannot mask a retry that grants.
+    expect(decode({ ...buildSettings(), aiSharingAllowed: allowed, aiSharingRevocationPending: pending }))
+      .toEqual({ pending, status, action, allow });
   });
 });

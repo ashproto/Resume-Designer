@@ -22,6 +22,7 @@ let pending = null;
 let generation = 0;
 let savingConsent = false;
 let paused = false;
+let revocationPending = false;
 const listeners = new Set();
 
 function consentError(code = 'AI_CONSENT_DECLINED') {
@@ -32,6 +33,12 @@ function consentError(code = 'AI_CONSENT_DECLINED') {
   return error;
 }
 
+function revocationError() {
+  const error = new Error('AI sharing is paused for this session, but the change could not be saved. Retry stopping AI sharing in Settings before closing the app.');
+  error.code = 'AI_CONSENT_STORAGE';
+  return error;
+}
+
 function announce() {
   for (const listener of listeners) {
     try { listener(); } catch (error) { console.error('[aiConsent] status listener failed:', error); }
@@ -39,11 +46,17 @@ function announce() {
 }
 
 export function hasAIConsent() {
-  if (savingConsent || paused) return false;
+  if (savingConsent || paused || revocationPending) return false;
   try {
     const saved = JSON.parse(appStorage.getItem(CONSENT_KEY));
     return saved?.revision === AI_CONSENT_DISCLOSURE.revision && saved?.accepted === true;
   } catch { return false; }
+}
+
+// A failed deletion can leave the previous grant on disk even though this
+// session has no permission. Settings must keep offering to retry that deletion.
+export function isAIConsentRevocationPending() {
+  return revocationPending;
 }
 
 export function setAIConsentPresenter(nextPresenter) {
@@ -110,6 +123,7 @@ function beginRequest({ modelIds = [], feature = 'chat', webSearch = false }) {
 /** Called at every inference boundary, including retries and fallback attempts. */
 export async function requestAIConsent({ signal, ...details } = {}) {
   if (signal?.aborted) throw new DOMException('AI request stopped.', 'AbortError');
+  if (revocationPending) throw revocationError();
   if (hasAIConsent()) return;
   const current = pending || beginRequest(details);
   current.consumers += 1;
@@ -132,13 +146,18 @@ export async function revokeAIConsent() {
   generation += 1;
   const revoked = generation;
   paused = true;
+  revocationPending = true;
   pending?.controller.abort();
-  appStorage.removeItem(CONSENT_KEY);
   announce();
-  if (appStorage.isRestoreGuardActive() || !(await appStorage.flush())) {
-    const error = new Error('AI sharing is paused for this session, but the change could not be saved. Try turning it off again before closing the app.');
-    error.code = 'AI_CONSENT_STORAGE';
-    throw error;
+  try {
+    appStorage.removeItem(CONSENT_KEY);
+    if (appStorage.isRestoreGuardActive() || !(await appStorage.flush())) throw revocationError();
+  } catch {
+    throw revocationError();
   }
-  if (generation === revoked) paused = false;
+  if (generation === revoked) {
+    paused = false;
+    revocationPending = false;
+    announce();
+  }
 }

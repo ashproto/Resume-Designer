@@ -48,6 +48,68 @@ describe('native AI consent presentation', () => {
     expect(shell.buildSettings().privacyPolicy.sections.length).toBeGreaterThan(0);
   });
 
+  it('distinguishes an unsaved revocation from permission that is durably off', () => {
+    expect(shell.buildSettings({ aiSharingAllowed: false, aiSharingRevocationPending: true }))
+      .toMatchObject({ aiSharingAllowed: false, aiSharingRevocationPending: true });
+    expect(shell.buildSettings().aiSharingRevocationPending).toBe(false);
+    expect(shell.buildSettings({ aiSharingRevocationPending: 'true' }).aiSharingRevocationPending).toBe(false);
+  });
+
+  it('publishes failed native revocation and lets the stop command retry its durable deletion', async () => {
+    vi.resetModules();
+    const storage = await import('../src/appStorage.js');
+    storage.__resetAppStorageForTests();
+    const consent = await import('../src/aiConsent.js');
+    const nativeShell = await import('../src/iosShell.js');
+    const key = 'resume-designer-ai-sharing-consent';
+    const files = new Map([['marker', 'present']]);
+    let refuseDelete = false;
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const posted = [];
+    window.webkit = { messageHandlers: { opShell: { postMessage: (value) => posted.push(value) } } };
+    try {
+      await storage.initAppStorage({ backend: {
+        loadAll: async () => Object.fromEntries(files),
+        write: async (name, value) => files.set(name, value),
+        delete: async name => {
+          if (refuseDelete) throw new Error('disk unavailable');
+          files.delete(name);
+        },
+      } });
+      consent.setAIConsentPresenter(async () => true);
+      await consent.requestAIConsent();
+      nativeShell.initIOSShell({
+        subscribeVariants: () => {}, subscribeDocument: () => {},
+        getVariantsSnapshot: () => ({ currentId: null, list: [] }),
+        getZoom: () => 1, getSettings: () => ({}), getTheme: () => 'system',
+        getAppInfo: async () => ({ version: '1.0.0' }),
+        getDocument: () => null, getLibrary: () => null, getPendingChanges: () => [],
+      });
+      await Promise.resolve();
+      const settings = () => posted.filter(message => message.kind === 'snapshot').at(-1).settings;
+      expect(settings().aiSharingAllowed).toBe(true);
+      refuseDelete = true;
+      const failure = await window.__opShell.commandAsync({ type: 'setAISharing', value: 'false' });
+      expect(failure.ok).toBe(true);
+      expect(failure.result).toMatch(/could not be saved/i);
+      expect(settings()).toMatchObject({ aiSharingAllowed: false, aiSharingRevocationPending: true });
+      expect(files.has(key)).toBe(true);
+
+      refuseDelete = false;
+      expect(await window.__opShell.commandAsync({ type: 'setAISharing', value: 'false' }))
+        .toEqual({ ok: true, result: '' });
+      expect(settings()).toMatchObject({ aiSharingAllowed: false, aiSharingRevocationPending: false });
+      expect(files.has(key)).toBe(false);
+    } finally {
+      refuseDelete = false;
+      await consent.revokeAIConsent();
+      consent.setAIConsentPresenter(null);
+      storage.__resetAppStorageForTests();
+      log.mockRestore();
+      delete window.__opShell;
+    }
+  });
+
   it('fails closed after five minutes without a native decision and allows a fresh request', async () => {
     vi.useFakeTimers();
     const posted = [];

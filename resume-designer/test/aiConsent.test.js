@@ -202,14 +202,20 @@ describe('AI data-sharing permission at the network boundary', () => {
     expect(consent.hasAIConsent()).toBe(false);
   });
 
-  it('notifies settings only after successful consent and immediately on revocation', async () => {
+  it('notifies settings after successful consent and at both stages of revocation', async () => {
     const states = [];
-    const unsubscribe = consent.subscribeAIConsent(() => states.push(consent.hasAIConsent()));
+    const unsubscribe = consent.subscribeAIConsent(() => states.push({
+      allowed: consent.hasAIConsent(), revocationPending: consent.isAIConsentRevocationPending(),
+    }));
     consent.setAIConsentPresenter(async () => true);
     await consent.requestAIConsent();
     await consent.revokeAIConsent();
     unsubscribe();
-    expect(states).toEqual([true, false]);
+    expect(states).toEqual([
+      { allowed: true, revocationPending: false },
+      { allowed: false, revocationPending: true },
+      { allowed: false, revocationPending: false },
+    ]);
   });
 
   it('retains an approved revision after reloading the same device storage', async () => {
@@ -268,10 +274,44 @@ describe('AI data-sharing permission at the network boundary', () => {
     await expect(consent.revokeAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
     expect(files.has(CONSENT_KEY)).toBe(true);
     expect(consent.hasAIConsent()).toBe(false);
-    consent.setAIConsentPresenter(null);
-    await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_DECLINED' });
+    expect(consent.isAIConsentRevocationPending()).toBe(true);
+    const presenter = vi.fn(async () => true);
+    consent.setAIConsentPresenter(presenter);
+    await expect(chat(MODEL, [{ role: 'user', content: 'Private details' }], false))
+      .rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+    expect(presenter).not.toHaveBeenCalled();
+    expect(requests).toEqual([]);
     failDelete = false;
     await consent.revokeAIConsent();
     expect(files.has(CONSENT_KEY)).toBe(false);
+    expect(consent.isAIConsentRevocationPending()).toBe(false);
+    await consent.requestAIConsent();
+    expect(presenter).toHaveBeenCalledTimes(1);
+    expect(consent.hasAIConsent()).toBe(true);
+  });
+
+  it('does not offer approval while revocation is still waiting for disk', async () => {
+    const files = new Map([[CONSENT_KEY, JSON.stringify({ revision: 1, accepted: true })]]);
+    let finishDelete;
+    await initAppStorage({ backend: {
+      loadAll: async () => Object.fromEntries(files),
+      write: async (key, value) => files.set(key, value),
+      delete: async (key) => {
+        await new Promise((resolve) => { finishDelete = resolve; });
+        files.delete(key);
+      },
+    } });
+    const presenter = vi.fn(async () => true);
+    consent.setAIConsentPresenter(presenter);
+    const revoked = consent.revokeAIConsent();
+    await vi.waitFor(() => expect(finishDelete).toBeTypeOf('function'));
+    expect(consent.isAIConsentRevocationPending()).toBe(true);
+    expect(consent.hasAIConsent()).toBe(false);
+    await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+    expect(presenter).not.toHaveBeenCalled();
+    finishDelete();
+    await revoked;
+    expect(files.has(CONSENT_KEY)).toBe(false);
+    expect(consent.isAIConsentRevocationPending()).toBe(false);
   });
 });

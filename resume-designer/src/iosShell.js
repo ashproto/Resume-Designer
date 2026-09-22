@@ -41,7 +41,9 @@ import { TYPE_LABELS } from './historyEntryLabels.js';
 import { CHAT_THREADS_STATE_EVENT, threadsSaveFailed } from './chatThreads.js';
 import { DATA_SAVE_STATE_EVENT, dataSaveFailed, designSaveFailed } from './persistence.js';
 import { store } from './store.js';
-import { hasAIConsent, requestAIConsent, revokeAIConsent, subscribeAIConsent } from './aiConsent.js';
+import {
+  hasAIConsent, isAIConsentRevocationPending, requestAIConsent, revokeAIConsent, subscribeAIConsent,
+} from './aiConsent.js';
 import { PRIVACY_POLICY_TITLE, PRIVACY_POLICY_DATE, PRIVACY_POLICY_SECTIONS } from './privacyPolicy.js';
 
 const privacyPolicy = {
@@ -343,7 +345,7 @@ export function buildOnboarding({
  */
 export function buildSettings({
   theme, hasApiKey = false, autoFallback = false, syncEnabled = false, version = '',
-  saveFailed = false, aiSharingAllowed = false,
+  saveFailed = false, aiSharingAllowed = false, aiSharingRevocationPending = false,
 } = {}) {
   return {
     theme: theme === 'light' || theme === 'dark' ? theme : 'system',
@@ -351,6 +353,7 @@ export function buildSettings({
     autoFallback: !!autoFallback,
     syncEnabled: !!syncEnabled,
     aiSharingAllowed: aiSharingAllowed === true,
+    aiSharingRevocationPending: aiSharingRevocationPending === true,
     privacyPolicy,
     version: typeof version === 'string' ? version : '',
     // Every control on the native Settings sheet writes through the cache, so
@@ -2025,6 +2028,7 @@ export function initIOSShell(deps) {
       hasApiKey: !!s.openrouterKey,
       autoFallback: !!s.autoFallback,
       aiSharingAllowed: hasAIConsent(),
+      aiSharingRevocationPending: isAIConsentRevocationPending(),
       // Optional like the other sync deps: this module is wired on desktop too,
       // where nothing calls it and there is no iCloud switch to read.
       syncEnabled: !!deps.getSyncEnabled?.(),

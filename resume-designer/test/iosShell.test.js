@@ -77,6 +77,7 @@ describe('buildSnapshot', () => {
         theme: 'system', hasApiKey: false, autoFallback: false, syncEnabled: false, version: '',
         saveFailed: false,
         aiSharingAllowed: false,
+        aiSharingRevocationPending: false,
         privacyPolicy: expect.objectContaining({ title: expect.any(String), sections: expect.any(Array) }),
       },
       document: null,
@@ -387,7 +388,7 @@ describe('buildSettings', () => {
     expect(projected.hasApiKey).toBe(true);
     expect(JSON.stringify(projected)).not.toContain('sk-or');
     expect(Object.keys(projected).sort()).toEqual(
-      ['aiSharingAllowed', 'autoFallback', 'hasApiKey', 'privacyPolicy', 'saveFailed', 'syncEnabled', 'theme', 'version']
+      ['aiSharingAllowed', 'aiSharingRevocationPending', 'autoFallback', 'hasApiKey', 'privacyPolicy', 'saveFailed', 'syncEnabled', 'theme', 'version']
     );
   });
 
@@ -398,6 +399,7 @@ describe('buildSettings', () => {
       // cache, so the sheet has to be told when one of those writes was refused.
       saveFailed: false,
       aiSharingAllowed: false,
+      aiSharingRevocationPending: false,
       privacyPolicy: expect.objectContaining({ title: expect.any(String), sections: expect.any(Array) }),
     });
   });
