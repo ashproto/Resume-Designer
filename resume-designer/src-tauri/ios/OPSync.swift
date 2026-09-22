@@ -488,6 +488,65 @@ protocol OPSyncHost: AnyObject {
 
 private let opSyncRecordType = "SyncUnit"
 
+#if os(macOS)
+/// Serializes model ingestion with CKSyncEngine's delegate events. Waiting uses
+/// continuations, so it creates no task and inherits no CloudKit task-local.
+@MainActor
+fileprivate final class OPSyncIngressGate {
+  private(set) var isHeld = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func acquire() async {
+    if !isHeld {
+      isHeld = true
+      return
+    }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func release() {
+    precondition(isHeld)
+    if waiters.isEmpty { isHeld = false }
+    else { waiters.removeFirst().resume() }
+  }
+}
+
+/// Download a complete page before applying any of it. The caller owns the
+/// cursor, and may advance it only on true. Metadata never reaches the model.
+@MainActor
+private func opReadForegroundRecords(
+  metadata: [CKRecord], shouldDownload: (CKRecord) -> Bool,
+  fetch: (CKRecord.ID) async throws -> CKRecord, isCurrent: () -> Bool,
+  ingest: ([CKRecord]) async -> Bool
+) async throws -> Bool {
+  guard isCurrent() else { return false }
+  var records: [CKRecord] = []
+  for record in metadata where shouldDownload(record) {
+    guard isCurrent() else { return false }
+    do {
+      let downloaded = try await fetch(record.recordID)
+      guard isCurrent() else { return false }
+      // CKAsset files are temporary. Capture this record's bytes before the
+      // next network suspension can outlive its download. This local snapshot
+      // is only ingested; the writer still rebuilds outbound records normally.
+      if downloaded["payload"] as? String == nil,
+         let asset = downloaded["asset"] as? CKAsset, let url = asset.fileURL,
+         let data = try? Data(contentsOf: url), let payload = String(data: data, encoding: .utf8) {
+        downloaded["payload"] = payload as CKRecordValue
+        downloaded["asset"] = nil
+      }
+      records.append(downloaded)
+    } catch let error as CKError where error.code == .unknownItem {
+      // A physical deletion between the two reads is not a local deletion.
+      guard isCurrent() else { return false }
+    }
+  }
+  guard isCurrent() else { return false }
+  let accounted = await ingest(records)
+  return isCurrent() && accounted
+}
+#endif
+
 @MainActor
 final class OPSyncEngine {
   private let container = CKContainer(identifier: "iCloud.com.onpaper.app")
@@ -504,6 +563,31 @@ final class OPSyncEngine {
   /// an engine session. Held rather than rebuilt at each use so all zones are
   /// always set and cleared together.
   private var sharedZoneID: CKRecordZone.ID?
+
+  #if os(macOS)
+  fileprivate let ingress = OPSyncIngressGate()
+  private var foregroundEpoch: UInt64 = 0
+  private var foregroundTokens: [CKRecordZone.ID: CKServerChangeToken] = [:]
+  private var foregroundRetryAfter: Date?
+  private var foregroundReadEpoch: UInt64?
+
+  /// Called before stop can suspend, and before account events wait for the
+  /// ingestion gate. A late database reply then belongs to no current session.
+  fileprivate func invalidateForegroundRead() {
+    foregroundEpoch &+= 1
+    foregroundTokens.removeAll()
+    foregroundRetryAfter = nil
+    foregroundReadEpoch = nil
+  }
+
+  fileprivate func currentForegroundEpoch(for engine: CKSyncEngine) -> UInt64? {
+    self.engine === engine ? foregroundEpoch : nil
+  }
+
+  private func foregroundIsCurrent(_ epoch: UInt64, engine: CKSyncEngine) -> Bool {
+    self.engine === engine && foregroundEpoch == epoch && !Task.isCancelled
+  }
+  #endif
 
   /// The system fields — record id, zone, and the `recordChangeTag` — of every
   /// record this device has seen on the server.
@@ -662,6 +746,9 @@ final class OPSyncEngine {
   /// Put the transport down. Local data is untouched — this is the transport
   /// going quiet, not a sign-out.
   func stop() async {
+    #if os(macOS)
+    invalidateForegroundRead()
+    #endif
     await engine?.cancelOperations()
     engine = nil
     delegate = nil
@@ -729,7 +816,13 @@ final class OPSyncEngine {
     // duplicate of what the engine has by then already sent, which costs a
     // change-tag comparison and nothing else. Debt settling LATE is the safe
     // direction; settling early is how units are lost.
+    #if os(macOS)
+    // A direct foreground apply also owns ingestion while the page answers.
+    // Queue the send above, but leave its engine callbacks until that finishes.
+    if delegateEventInFlight || ingress.isHeld { throw OPSyncError.eventInFlight }
+    #else
     if delegateEventInFlight { throw OPSyncError.eventInFlight }
+    #endif
     try await engine.sendChanges()
   }
 
@@ -770,6 +863,21 @@ final class OPSyncEngine {
     try await engine.fetchChanges()
   }
 
+  /// `fetch`, for a user who is waiting on it. The engine's own fetches run at
+  /// utility quality of service, and macOS treats that as deferrable: on the day
+  /// this was added, fetches asked for while the app was frontmost did not run
+  /// for minutes. User-initiated quality of service, carried by the operation
+  /// group, is the one knob the API offers for "now".
+  func fetchNow() async throws {
+    guard let engine else { throw OPSyncError.notStarted }
+    let group = CKOperationGroup()
+    group.name = "foreground-refresh"
+    let configuration = CKOperation.Configuration()
+    configuration.qualityOfService = .userInitiated
+    group.defaultConfiguration = configuration
+    try await engine.fetchChanges(CKSyncEngine.FetchChangesOptions(operationGroup: group))
+  }
+
   /// Pull the SHARED zone, and only it.
   ///
   /// It exists for order, not for scope. The registry has to come down before
@@ -788,6 +896,130 @@ final class OPSyncEngine {
       CKSyncEngine.FetchChangesOptions(scope: .zoneIDs([sharedZoneID]))
     )
   }
+
+  #if os(macOS)
+  /// Foreground fallback when CKSyncEngine has not yet learned that a zone
+  /// changed. Its manual fetch can return without a database request until a
+  /// push or activation updates that knowledge. These independent RAM cursors
+  /// ask the public database change feed directly; CKSyncEngine keeps its own.
+  func fetchForegroundChanges() async throws {
+    guard let engine, let sharedZoneID else { throw OPSyncError.notStarted }
+    guard foregroundReadEpoch == nil else { return }
+    if let retryAfter = foregroundRetryAfter, Date() < retryAfter { return }
+    let epoch = foregroundEpoch
+    foregroundReadEpoch = epoch
+    let began = Date()
+    defer {
+      if foregroundReadEpoch == epoch { foregroundReadEpoch = nil }
+      NSLog("[OPSync] foreground direct pull done in %d ms", Int(Date().timeIntervalSince(began) * 1000))
+    }
+
+    // Registry landing reports new profile zones asynchronously. Use the list
+    // after shared ingestion; a later report is picked up on the next tick.
+    try await fetchForegroundZone(sharedZoneID, engine: engine, epoch: epoch)
+    guard foregroundIsCurrent(epoch, engine: engine) else { return }
+    for zoneID in profileZoneIDs {
+      try await fetchForegroundZone(zoneID, engine: engine, epoch: epoch)
+      guard foregroundIsCurrent(epoch, engine: engine) else { return }
+    }
+  }
+
+  private func fetchForegroundZone(
+    _ zoneID: CKRecordZone.ID, engine: CKSyncEngine, epoch: UInt64
+  ) async throws {
+    // At most two pages per zone per foreground pass. A large zone continues
+    // on the next tick instead of monopolizing the lifecycle queue.
+    for _ in 0..<2 {
+      guard foregroundIsCurrent(epoch, engine: engine) else { return }
+      if let retryAfter = foregroundRetryAfter, Date() < retryAfter { return }
+      do {
+        let page = try await container.privateCloudDatabase.recordZoneChanges(
+          inZoneWith: zoneID, since: foregroundTokens[zoneID], desiredKeys: [], resultsLimit: 100
+        )
+        guard foregroundIsCurrent(epoch, engine: engine) else { return }
+        var metadata: [CKRecord] = []
+        for result in page.modificationResultsByID.values {
+          do { metadata.append(try result.get().record) }
+          catch let error as CKError where error.code == .unknownItem { continue }
+        }
+        // Physical deletions remain ignored, as on the engine fetch path:
+        // document deletion is represented by an ordinary tombstone unit.
+        let baseline = Dictionary(uniqueKeysWithValues: metadata.map {
+          ($0.recordID, rememberedRecord(for: $0.recordID)?.recordChangeTag)
+        })
+        let needsDownload: (CKRecord) -> Bool = { record in
+          guard let tag = record.recordChangeTag else { return true }
+          return (baseline[record.recordID] ?? nil) != tag
+        }
+        let skipped = metadata.filter { !needsDownload($0) }
+        var downloadedCount = 0
+        let accounted = try await opReadForegroundRecords(
+          metadata: metadata, shouldDownload: needsDownload,
+          fetch: { try await self.container.privateCloudDatabase.record(for: $0) },
+          isCurrent: { self.foregroundIsCurrent(epoch, engine: engine) },
+          ingest: { records in
+            await self.ingress.acquire()
+            defer { self.ingress.release() }
+            guard self.foregroundIsCurrent(epoch, engine: engine) else { return false }
+            // The engine may have settled a newer tag while downloads were
+            // running. Refuse this page rather than adopt an older snapshot.
+            for record in skipped {
+              guard self.rememberedRecord(for: record.recordID)?.recordChangeTag == record.recordChangeTag else {
+                return false
+              }
+            }
+            for record in records {
+              let current = self.rememberedRecord(for: record.recordID)?.recordChangeTag
+              guard current == (baseline[record.recordID] ?? nil) || current == record.recordChangeTag else {
+                return false
+              }
+            }
+            downloadedCount = records.count
+            let accepted = await self.ingestFetchedRecords(
+              records, isCurrent: { self.foregroundIsCurrent(epoch, engine: engine) }
+            )
+            guard self.foregroundIsCurrent(epoch, engine: engine) else { return false }
+            self.flushSystemFields()
+            return records.allSatisfy { accepted.contains($0.recordID) }
+          }
+        )
+        guard foregroundIsCurrent(epoch, engine: engine) else { return }
+        NSLog("[OPSync] foreground direct zone %@: %d changed, %d downloaded, accounted %@, more %@",
+              zoneID.zoneName, metadata.count, downloadedCount, String(accounted), String(page.moreComing))
+        guard accounted else { return }
+        foregroundTokens[zoneID] = page.changeToken
+        if !page.moreComing {
+          // Match the engine's successful zone event. In the shared zone this
+          // also asks the page to report any newly learned profile zones.
+          land([.zone(zoneID)])
+          return
+        }
+      } catch {
+        guard foregroundIsCurrent(epoch, engine: engine) else { return }
+        if let cloudError = error as? CKError {
+          if let seconds = cloudError.retryAfterSeconds {
+            foregroundRetryAfter = Date().addingTimeInterval(max(0, seconds))
+          }
+          switch cloudError.code {
+          case .changeTokenExpired:
+            foregroundTokens.removeValue(forKey: zoneID)
+            return // Start this zone from nil on the next foreground tick.
+          case .zoneNotFound:
+            return // A new zone may not have completed its initial save yet.
+          case .userDeletedZone:
+            await ingress.acquire()
+            defer { ingress.release() }
+            guard foregroundIsCurrent(epoch, engine: engine) else { return }
+            purgeFromICloud(engine: engine, reason: "a foreground pull found the zone deleted from Settings")
+            return
+          default: break
+          }
+        }
+        throw error // Keep this page's cursor; the next allowed tick retries.
+      }
+    }
+  }
+  #endif
 }
 
 // MARK: - CKSyncEngine's delegate
@@ -807,6 +1039,18 @@ private final class OPSyncDelegate: CKSyncEngineDelegate {
 
   func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
     guard let owner else { return }
+    #if os(macOS)
+    guard owner.currentForegroundEpoch(for: syncEngine) != nil else { return }
+    // Invalidate before waiting: a direct application already suspended on the
+    // host must not adopt old-account tags when that host returns.
+    if case .accountChange = event { owner.invalidateForegroundRead() }
+    await owner.ingress.acquire()
+    defer { owner.ingress.release() }
+    // Stop invalidates the supplementary reader before awaiting cancellation,
+    // but delivered engine events must finish accounting for their records
+    // before a later stateUpdate persists an advanced change token.
+    guard owner.currentForegroundEpoch(for: syncEngine) != nil else { return }
+    #endif
     owner.beginDelegateEvent()
     defer { owner.finishDelegateEvent() }
     await owner.handle(event, engine: syncEngine)
@@ -884,51 +1128,12 @@ extension OPSyncEngine {
       // explicit tombstone unit that travels like any other unit, and this task
       // does not implement it — nothing here may turn a record's absence, or the
       // server's deletion list, into a local delete.
-      var arrivals: [Arrival] = []
-      var unreadable: [OPSyncFailure] = []
-      for modification in changes.modifications {
-        let record = modification.record
-        // DECODE FIRST. `remember` used to run before this check, and the two
-        // in that order were a silent overwrite. A record that will not decode
-        // is not hypothetical — it is an asset whose `fileURL` is nil because
-        // the download did not finish, which is what every payload over
-        // `opSyncAssetThreshold` travels as. It was dropped without a word, and
-        // this device kept its change tag anyway; holding that tag makes the
-        // NEXT save of that id a clean update, so it destroys the server copy
-        // with no conflict raised and nothing parked.
-        guard let unit = unit(from: record) else {
-          // The tag goes with it. A tag is a claim to know which server version
-          // this device is editing, and that cannot be true of content nobody
-          // read. Without one the next save quotes no tag, CloudKit answers
-          // `serverRecordChanged`, and the record comes back down the conflict
-          // path where both copies are compared and the loser is parked.
-          forget(record.recordID)
-          // Marked as ours to ask for again. `recordToSend` cannot tell on its
-          // own why the page had no unit — see `unreadableRecords`.
-          unreadableRecords.insert(record.recordID)
-          saveUnreadableRecords()
-          unreadable.append(OPSyncFailure(
-            unitId: record.recordID.recordName,
-            profileId: opProfileId(forZone: record.recordID.zoneID),
-            willRetry: false, code: nil,
-            reason: "a fetched record could not be read — most likely a large "
-              + "payload whose asset did not finish downloading — and was not applied"
-          ))
-          continue
-        }
-        // Decoding it is not taking it. The record travels WITH its unit and
-        // `deliver` decides its tag, once the page has answered.
-        arrivals.append(Arrival(record: record, unit: unit))
-      }
-      // Reported, not swallowed: the engine's change token has already advanced
-      // past these and there is no public way to rewind it, so the only thing
-      // that can bring the record back down is something acting on this.
-      //
-      // Ahead of `deliver` rather than after it: `deliver` awaits the page, and
-      // a page that is gone takes the full timeout to say so. Reporting first
-      // costs nothing and keeps an unrelated failure from waiting behind it.
-      report(unreadable)
-      await deliver(arrivals)
+      #if os(macOS)
+      await ingestFetchedRecords(changes.modifications.map(\.record),
+                                 isCurrent: { self.engine === engine })
+      #else
+      await ingestFetchedRecords(changes.modifications.map(\.record))
+      #endif
 
     case .sentRecordZoneChanges(let sent):
       // The saved records come back carrying their NEW change tags. Recording
@@ -1150,6 +1355,9 @@ extension OPSyncEngine {
   /// lives and iCloud is a mirror of it, so "delete any locally cached data"
   /// means the data that is a cache OF ICLOUD, which is the bookkeeping above.
   private func purgeFromICloud(engine: CKSyncEngine, reason: String) {
+    #if os(macOS)
+    invalidateForegroundRead()
+    #endif
     NSLog("[OPSync] iCloud data purged — \(reason). Stopping; nothing local is deleted "
           + "and nothing will be re-sent.")
     engine.state.remove(pendingRecordZoneChanges: engine.state.pendingRecordZoneChanges)
@@ -1197,10 +1405,30 @@ extension OPSyncEngine {
 
       switch error.code {
       case .serverRecordChanged:
-        guard let serverRecord = error.serverRecord,
-              let serverUnit = unit(from: serverRecord),
-              let localUnit = unit(from: failure.record)
-        else {
+        let conflict: Conflict?
+        do {
+          conflict = try await opReadConflict(
+            localRecord: failure.record, serverRecord: error.serverRecord,
+            decode: { self.unit(from: $0) },
+            fetch: { try await self.container.privateCloudDatabase.record(for: $0) }
+          )
+        } catch let fetchError as CKError where fetchError.code == .userDeletedZone {
+          guard self.engine === engine, !Task.isCancelled else { return }
+          purgeFromICloud(engine: engine, reason: "a conflict fetch found the zone deleted from Settings")
+          return
+        } catch {
+          guard self.engine === engine, !Task.isCancelled else { return }
+          reported.append(OPSyncFailure(
+            unitId: recordID.recordName, profileId: profileId,
+            willRetry: false, code: .serverRecordChanged,
+            reason: "conflict on an unreadable record: direct fetch failed: \(error.localizedDescription)"
+          ))
+          continue
+        }
+        // An ordinary database fetch is not cancelled by stopping CKSyncEngine.
+        // Its late result must not resolve content into a replacement session.
+        guard self.engine === engine, !Task.isCancelled else { return }
+        guard let conflict else {
           reported.append(OPSyncFailure(
             unitId: recordID.recordName, profileId: profileId,
             willRetry: false, code: error.code,
@@ -1216,10 +1444,7 @@ extension OPSyncEngine {
         //
         // Nothing is remembered yet either: the server's tag is a claim to hold
         // its content, and this device holds none of it until the model says so.
-        conflicts.append(Conflict(
-          serverRecord: serverRecord,
-          versions: SyncConflict(local: localUnit, server: serverUnit)
-        ))
+        conflicts.append(conflict)
 
       case .zoneNotFound:
         // The zone has never been created — this is the first send of the first
@@ -1424,8 +1649,18 @@ extension OPSyncEngine {
   /// same `deliver` an ordinary fetch uses, so the page decides what to keep
   /// and the change tag is earned the same way.
   private func refetchMissingRecord(_ recordID: CKRecord.ID, profileId: String) async {
+    #if os(macOS)
+    guard let recoveryEngine = engine else { return }
+    let epoch = foregroundEpoch
+    #endif
     do {
       let record = try await container.privateCloudDatabase.record(for: recordID)
+      #if os(macOS)
+      guard foregroundIsCurrent(epoch, engine: recoveryEngine) else { return }
+      await ingress.acquire()
+      defer { flushSystemFields(); ingress.release() }
+      guard foregroundIsCurrent(epoch, engine: recoveryEngine) else { return }
+      #endif
       guard let unit = unit(from: record) else {
         // Still unreadable. The asset is genuinely not coming down, and saying
         // so is the whole of what is left — `willRetry: false`, because this
@@ -1452,17 +1687,35 @@ extension OPSyncEngine {
       // next start would find neither local bytes nor a marker, `recordToSend`
       // would drop the pending save, and nothing would ever ask for the record
       // again. Held, the refusal is just another round trip.
+      #if os(macOS)
+      let accounted = await deliver([Arrival(record: record, unit: unit)],
+                                    isCurrent: { self.foregroundIsCurrent(epoch, engine: recoveryEngine) })
+      guard foregroundIsCurrent(epoch, engine: recoveryEngine) else { return }
+      #else
       let accounted = await deliver([Arrival(record: record, unit: unit)])
+      #endif
       guard accounted.contains(unit.route) else { return }
       unreadableRecords.remove(recordID)
       saveUnreadableRecords()
     } catch let error as CKError where error.code == .unknownItem {
+      #if os(macOS)
+      guard foregroundIsCurrent(epoch, engine: recoveryEngine) else { return }
+      await ingress.acquire()
+      defer { flushSystemFields(); ingress.release() }
+      guard foregroundIsCurrent(epoch, engine: recoveryEngine) else { return }
+      #endif
       // The server does not have it. Nothing is wrong and nothing is missing:
       // absence is not deletion here, and there is simply nothing to fetch.
       unreadableRecords.remove(recordID)
       saveUnreadableRecords()
       forget(recordID)
     } catch {
+      #if os(macOS)
+      guard foregroundIsCurrent(epoch, engine: recoveryEngine) else { return }
+      await ingress.acquire()
+      defer { flushSystemFields(); ingress.release() }
+      guard foregroundIsCurrent(epoch, engine: recoveryEngine) else { return }
+      #endif
       // Network, quota, anything else. Worth saying, and worth saying it WILL
       // be tried again — the id stays in the recovery memory for this session
       // and the next start re-offers everything.
@@ -1476,12 +1729,72 @@ extension OPSyncEngine {
     }
   }
 
+  /// Shared by the engine feed and the supplementary foreground reader. A
+  /// record that cannot decode is durably marked for the existing bounded
+  /// recovery path, so one bad asset need not block all later changes.
+  @discardableResult
+  private func ingestFetchedRecords(
+    _ records: [CKRecord], isCurrent: () -> Bool = { true }
+  ) async -> Set<CKRecord.ID> {
+    guard isCurrent() else { return [] }
+    var arrivals: [Arrival] = []
+    var unreadable: [OPSyncFailure] = []
+    var unreadableIDs: Set<CKRecord.ID> = []
+    for record in records {
+      // DECODE FIRST. `remember` used to run before this check, and the two
+      // in that order were a silent overwrite. A record that will not decode
+      // is not hypothetical — it is an asset whose `fileURL` is nil because
+      // the download did not finish, which is what every payload over
+      // `opSyncAssetThreshold` travels as. It was dropped without a word, and
+      // this device kept its change tag anyway; holding that tag makes the
+      // NEXT save of that id a clean update, so it destroys the server copy
+      // with no conflict raised and nothing parked.
+      guard let unit = unit(from: record) else {
+        // The tag goes with it. A tag is a claim to know which server version
+        // this device is editing, and that cannot be true of content nobody
+        // read. Without one the next save quotes no tag, CloudKit answers
+        // `serverRecordChanged`, and the record comes back down the conflict
+        // path where both copies are compared and the loser is parked.
+        unreadableIDs.insert(record.recordID)
+        forget(record.recordID)
+        // Marked as ours to ask for again. `recordToSend` cannot tell on its
+        // own why the page had no unit — see `unreadableRecords`.
+        unreadableRecords.insert(record.recordID)
+        saveUnreadableRecords()
+        unreadable.append(OPSyncFailure(
+          unitId: record.recordID.recordName,
+          profileId: opProfileId(forZone: record.recordID.zoneID),
+          willRetry: false, code: nil,
+          reason: "a fetched record could not be read — most likely a large "
+            + "payload whose asset did not finish downloading — and was not applied"
+        ))
+        continue
+      }
+      // Decoding it is not taking it. The record travels WITH its unit and
+      // `deliver` decides its tag, once the page has answered.
+      arrivals.append(Arrival(record: record, unit: unit))
+    }
+    // Reported, not swallowed: the engine's change token has already advanced
+    // past these and there is no public way to rewind it, so the only thing
+    // that can bring the record back down is something acting on this.
+    //
+    // Ahead of `deliver` rather than after it: `deliver` awaits the page, and
+    // a page that is gone takes the full timeout to say so. Reporting first
+    // costs nothing and keeps an unrelated failure from waiting behind it.
+    report(unreadable)
+    let accounted = await deliver(arrivals, isCurrent: isCurrent)
+    guard isCurrent() else { return [] }
+    return unreadableIDs.union(arrivals.filter { accounted.contains($0.unit.route) }.map(\.recordID))
+  }
+
   /// Returns the routes the page ACCOUNTED FOR, so a caller that holds recovery
   /// state for one of these units can release it on the same answer the change
   /// tag is settled on rather than on the delivery merely having been attempted.
   @discardableResult
-  private func deliver(_ arrivals: [Arrival]) async -> Set<String> {
-    guard !arrivals.isEmpty else { return [] }
+  private func deliver(
+    _ arrivals: [Arrival], isCurrent: () -> Bool = { true }
+  ) async -> Set<String> {
+    guard isCurrent(), !arrivals.isEmpty else { return [] }
     // PER ARRIVAL, not per batch. The page answers with the route of every unit
     // it has ACCOUNTED FOR — written, or settled because nothing will ever land
     // it — and only those keep their change tags.
@@ -1493,6 +1806,7 @@ extension OPSyncEngine {
     // and the identical batch came back and failed identically at every start,
     // for ever. Nothing converged and nothing said why.
     let accounted = await host?.syncDidFetch(arrivals.map(\.unit)) ?? []
+    guard isCurrent() else { return [] }
     for arrival in arrivals {
       if accounted.contains(arrival.unit.route) { remember(arrival.record) }
       else { forget(arrival.recordID) }
@@ -1538,6 +1852,34 @@ private struct Conflict {
   let versions: SyncConflict
 
   var recordID: CKRecord.ID { serverRecord.recordID }
+}
+
+/// Conflict errors can carry asset metadata without the downloaded bytes.
+/// Give an unreadable server version one direct fetch, then take the existing
+/// terminal failure path if it still cannot be decoded. This asks CKDatabase,
+/// never CKSyncEngine, so it may be awaited inside the serial delegate event
+/// without re-entering the engine or spawning a task with its task-local.
+@MainActor
+private func opReadConflict(
+  localRecord: CKRecord, serverRecord: CKRecord?,
+  decode: (CKRecord) -> SyncUnit?,
+  fetch: (CKRecord.ID) async throws -> CKRecord
+) async throws -> Conflict? {
+  // Capture local asset bytes before suspending: a later send can re-stage the
+  // same file. The model must receive the version this failed save carried.
+  guard let local = decode(localRecord) else { return nil }
+  if let serverRecord, let server = decode(serverRecord) {
+    return Conflict(serverRecord: serverRecord, versions: SyncConflict(local: local, server: server))
+  }
+  NSLog("[OPSync] directly fetching unreadable conflict: %@ in zone %@",
+        localRecord.recordID.recordName, localRecord.recordID.zoneID.zoneName)
+  let downloaded = try await fetch(localRecord.recordID)
+  guard let server = decode(downloaded) else { return nil }
+  NSLog("[OPSync] downloaded conflict is readable: %@ in zone %@",
+        downloaded.recordID.recordName, downloaded.recordID.zoneID.zoneName)
+  // Keep the downloaded payload and tag together. Only `resolve` may remember
+  // that tag, after the model has durably accounted for both versions.
+  return Conflict(serverRecord: downloaded, versions: SyncConflict(local: local, server: server))
 }
 
 // MARK: - Records
@@ -1788,7 +2130,11 @@ extension OPSyncEngine {
       unreadableRecords.map(Self.systemFieldsKey).sorted(), forKey: Self.unreadableKey
     )
   }
-  static func deferredKey(_ profileId: String) -> String { "op-sync-deferred-\(profileId)" }
+  /// `nonisolated`: a pure string function, and the ONE piece of this class the
+  /// macOS host reads from outside the main actor — its ledger keeps the same
+  /// keys, and defining the format twice is how the two hosts would drift.
+  /// The iOS host only ever calls it from the main actor; nothing changes there.
+  nonisolated static func deferredKey(_ profileId: String) -> String { "op-sync-deferred-\(profileId)" }
   /// NOT per profile: an iCloud account is a property of the device, and every
   /// profile's zone lives in whichever one is signed in.
   private static let accountKey = "op-sync-icloud-account"

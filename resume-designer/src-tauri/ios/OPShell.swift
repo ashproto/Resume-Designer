@@ -2465,6 +2465,10 @@ extension ShellModel {
 /// pair suspends on the bridge, and the engine awaits them: the whole point of
 /// `syncDidFetch`'s answer is that the transport must not move on before it has
 /// one.
+///
+/// Tasks created here must detach: CloudKit marks its delegate task with a
+/// task-local that an ordinary `Task` inherits. Returning from the callback or
+/// hopping to the main actor does not clear it before a later engine call.
 extension ShellModel: OPSyncHost {
   /// The unit as the page holds it RIGHT NOW, asked at send time.
   func syncUnit(withId id: String, inProfile profileId: String) async -> SyncUnit? {
@@ -2790,7 +2794,7 @@ extension ShellModel: OPSyncHost {
       // that will refetch it.
       if failure.needsDurableRetry, let unitId = failure.unitId {
         let profileId = failure.profileId
-        Task { @MainActor [weak self] in
+        Task.detached { @MainActor [weak self] in
           await self?.deferSync([unitId], inProfile: profileId.isEmpty ? nil : profileId)
         }
       }
@@ -2815,10 +2819,10 @@ extension ShellModel: OPSyncHost {
     }
 
     guard !recover.isEmpty else { return }
-    // Deferred, not inline: this runs inside the engine's event handling and
-    // `send` re-enters the engine. The task puts it on a later main-actor turn,
-    // once the event these failures belong to has been fully handled.
-    Task { @MainActor [weak self] in
+    // Detaching clears CloudKit's delegate task-local before `send` re-enters
+    // the engine. An ordinary task inherits that mark even when it runs after
+    // this callback has returned; a later main-actor turn alone is not enough.
+    Task.detached { @MainActor [weak self] in
       // "" is the open workspace, which is what `sendSync` already means by nil
       // — the same convention the `syncDirty` handler follows.
       for (profileId, unitIds) in recover {
@@ -2866,9 +2870,8 @@ extension ShellModel: OPSyncHost {
   /// "not resent" stays true across a launch. Settings explains why and offers
   /// the explicit action that re-owes every full upload before clearing it.
   ///
-  /// Deferred onto a later main-actor turn, like every other host callback that
-  /// re-enters the transport: this is called from inside the engine's event
-  /// handling and the work below cancels the engine's operations.
+  /// Detached from CloudKit's delegate task-local before cancelling the engine's
+  /// operations. Main-actor isolation alone does not leave that callback context.
   func syncDidPurgeFromICloud() {
     // BEFORE the hop, not inside `applyICloudPurge`, and this is the whole of
     // why it is written here: a kill between the engine's event and that later
@@ -2878,7 +2881,7 @@ extension ShellModel: OPSyncHost {
     // answer comes back as an expired token rather than as `.userDeletedZone` —
     // the account owner's instruction read as ordinary staleness, and undone.
     setSyncSuspended(true)
-    Task { @MainActor [weak self] in await self?.applyICloudPurge() }
+    Task.detached { @MainActor [weak self] in await self?.applyICloudPurge() }
   }
 }
 

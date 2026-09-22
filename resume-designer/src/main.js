@@ -46,9 +46,10 @@ import { exportFullBackupWithFeedback, importBackupFromFile } from './backupFlow
 import {
   initIOSShell, buildDocumentOutline, buildLibrary, buildDesign, buildHistory,
   initIOSProfileBootstrap, askAccountProfiles, resolveAccountProfiles, reportProfilesResolved,
-  nativeEditingBusy,
+  nativeEditingBusy, parseAccountProfilesAnswer,
 } from './iosShell.js';
 import { registerNativeProfileEditing } from './userProfileHolder.js';
+import { initDesktopSync, askDesktopAccountProfiles } from './desktopSync.js';
 import { registerNativeChatEditing } from './chatThreads.js';
 import {
   collectUnit, collectUnits, unitScopes, applyUnits, resolveConflicts,
@@ -543,6 +544,12 @@ function showMigrationToast(probe, result = null) {
 }
 
 // Initialize the application
+// A line onto the process's stderr, for the one failure that must never be
+// silent: desktop sync not starting. The webview console is invisible when the
+// app is run by path. Best-effort; never throws into the caller.
+const syncNote = (message) => import('@tauri-apps/api/core')
+  .then(({ invoke }) => invoke('desktop_sync_note', { message })).catch(() => {});
+
 export async function init() {
   // The full native shell is wired after the app services below, as it always
   // has been. This bootstrap-only command must exist earlier because profile
@@ -563,7 +570,12 @@ export async function init() {
   try {
     await initAppStorage();
     await maybeAutoMigrateLegacyData();
-    await ensureProfilesInitialized({ askAccount: askAccountProfiles });
+    // A fresh Mac asks the account for its registry through the desktop bridge,
+    // as a fresh iPhone asks its shell — before it mints a starter workspace.
+    const askAccount = (isTauri && (await getPlatform()) === 'darwin')
+      ? () => askDesktopAccountProfiles(parseAccountProfilesAnswer)
+      : askAccountProfiles;
+    await ensureProfilesInitialized({ askAccount });
     reportProfilesResolved();            // profiles resolve BEFORE the React gate opens
     // The workspace that was ACTIVE when its tombstone arrived. The purge in
     // the sync reconciliation skips it on purpose — it was still mapped and
@@ -922,6 +934,42 @@ export async function init() {
       });
     };
     console.log('[Main] Desktop build detected, resetForTesting() available');
+  }
+
+  // The macOS desktop joins the same CloudKit mesh through the same transport,
+  // over the Tauri bridge rather than the WebKit one. Wired beside — never
+  // inside — initIOSShell: `window.__opShell` stays dormant here, and this is
+  // its own global. `getPlatform` is async, and this is the one place in init
+  // that needs the answer, so the await is local to it.
+  // The trace below is OUTSIDE every gate on purpose: it reports the gate
+  // values themselves, so "sync did not start" is never silent about why.
+  syncNote(`wiring reached; isTauri=${isTauri}`);
+  if (isTauri) {
+    getPlatform().then((platform) => {
+      syncNote(`platform=${platform}`);
+      if (platform !== 'darwin') { syncNote(`not starting: platform is ${platform}, not darwin`); return; }
+      return initDesktopSync({
+        note: syncNote,
+        collectUnit, collectUnits, unitScopes, applyUnits, resolveConflicts, getActiveProfileId,
+        // The page owns the registry; the transport is told every live profile.
+        listProfileIds: () => listProfiles().map((p) => p.id),
+        listTombstonedProfileIds: () => loadRegistry().filter((p) => p.deletedAt).map((p) => p.id),
+        // Native owns suspension. Startup and notices reconcile this page-side
+        // mirror before the model handles sync requests.
+        setSyncSuspended: (suspended) => setSyncEnabled(!suspended),
+        // The page → transport edge: initIOSShell above installed a notifier
+        // that is a no-op off iOS; the desktop bridge replaces it with its own.
+        setSyncDirtyNotifier: setStorageDirtyNotifier,
+        markInitialProfileFetchSettled,
+      });
+    }).catch((e) => {
+      // A rejection here — the OS plugin missing, the bridge command absent —
+      // used to vanish: no catch, so sync silently never started and nothing
+      // said so. Said now, and said on STDERR too: the console is invisible
+      // when the app is run by path, and this is the failure that needs a trace.
+      console.warn('[desktopSync] did not start:', e);
+      syncNote(`did not start: ${e?.message ?? e}`);
+    });
   }
 
   // Kick off the auto-update check (no-op in dev / web). Fire-and-forget;

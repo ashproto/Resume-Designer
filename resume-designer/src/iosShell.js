@@ -26,6 +26,7 @@
 // Shared projection and lifecycle services stay on the JS side of the bridge,
 // so native code never grows a second implementation of their rules.
 import { appStorage } from './appStorage.js';
+import { makeSyncHostRoutes } from './sync/syncHostRoutes.js';
 import { computeStats, timelinePoints } from './applicationStats.js';
 import { profileInitials } from './accountStats.js';
 import {
@@ -1043,7 +1044,7 @@ export function createCommandDispatcher(actions) {
 const ACCOUNT_PROFILES_TIMEOUT_MS = 5000;
 let pendingAccountProfiles = null;
 
-function parseAccountProfilesAnswer(answer) {
+export function parseAccountProfilesAnswer(answer) {
   const parsed = JSON.parse(String(answer ?? ''));
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('syncAccountProfiles needs an account answer');
@@ -1429,8 +1430,10 @@ export function initIOSShell(deps) {
   } = deps;
 
   // Persistence names the units whose bytes landed. The shell only carries
-  // those ids to CKSyncEngine, and stays silent on desktop/browser builds.
-  deps.setSyncDirtyNotifier?.((units) => {
+  // those ids to CKSyncEngine. Off iOS the slot is left EMPTY rather than
+  // filled with a no-op: the model deletes what it hands a notifier, so a no-op
+  // here dropped every unit flushed before the desktop installed its own.
+  if (isNativeShellAvailable()) deps.setSyncDirtyNotifier?.((units) => {
     if (!isNativeShellAvailable()) return;
     // Each entry carries the workspace it belongs to — '' for the open one.
     // Swift groups by it and sends each group into its own zone, because a
@@ -1933,86 +1936,19 @@ export function initIOSShell(deps) {
         kind: 'syncUnits', profileId: forProfile, units: deps.collectUnits(forProfile),
       });
     },
-    syncUnit: ({ unitId, profileId }) =>
-      deps.collectUnit(String(unitId ?? ''), String(profileId ?? '')),
+    // The request/answer routes shared with the macOS host — see syncHostRoutes.js.
+    // `publish` is handed over as a THUNK, not a value: the inline handlers this
+    // replaced read the binding at call time, and this table is built before
+    // `publish` is rebound. Capturing the value here handed the routes a stale
+    // publish, and an open sheet stayed on its old projection after a landing —
+    // the iosShell suite caught it on the first run.
+    ...makeSyncHostRoutes(deps, { publish: () => publish() }),
     syncAccountProfiles: accountProfilesAction(deps),
     // Registry bootstrap and profile-zone readiness are separate facts. Native
     // reports only after its initial pull has either settled or become
     // unavailable, so first-run onboarding cannot race ahead of fetched content.
     syncInitialProfileFetchSettled: ({ status }) =>
       deps.markInitialProfileFetchSettled(String(status ?? 'unavailable')),
-    // Which zone each named unit belongs in, asked when the transport QUEUES a
-    // save: a CloudKit record id carries its zone, and all Swift holds at that
-    // moment is the id it was handed. Answered here rather than derived there
-    // for the same reason a conflict is resolved here — what a unit id means is
-    // this side's knowledge. A JSON STRING in, an object out, like the two
-    // batch routes below.
-    syncScopes: ({ unitIds }) => {
-      const parsed = JSON.parse(String(unitIds ?? '[]'));
-      if (!Array.isArray(parsed)) throw new Error('syncScopes needs an array of unit ids');
-      return deps.unitScopes(parsed);
-    },
-    // One of the two commands whose answer is a promise — `setSyncEnabled` is
-    // the other, for the same durability reason — and both are asked for
-    // through `callAsyncJavaScript` (see `dispatch.async`). A malformed batch
-    // still throws SYNCHRONOUSLY — this handler is not `async` on purpose — so
-    // it is a refusal on either entry point rather than an answer on one.
-    // Each unit now names the profile whose zone it arrived in — `''` for the
-    // shared zone. Swift is reporting a fact about the record's zone, not
-    // deciding what the unit is; see `syncScopes` for the same seam in reverse.
-    syncApply: ({ units }) => {
-      const parsed = JSON.parse(String(units ?? '[]'));
-      if (!Array.isArray(parsed)) throw new Error('syncApply needs an array of units');
-      // RETURNED, not discarded. `applyUnits` answers `{ applied }` — how many
-      // units are DURABLY this device's — and the transport keeps the server's
-      // change tag for a unit only once it knows this device took it. Swallowing
-      // the count here is what let a batch the page never applied leave its
-      // change tags behind, and a tag for content this device does not hold
-      // makes the next save of that unit a clean update that destroys the
-      // server's copy.
-      //
-      // `applyUnits` lands everything synchronously and only THEN awaits the
-      // disk, so the cache is already current when this returns its promise —
-      // which is why the republish below can stay where it is and does not wait
-      // on a disk write. Nothing on screen ever waits for sync.
-      const pending = deps.applyUnits(parsed);
-      // Republished like every other mutating route here, and for the same
-      // reason: an open sheet projects on demand and nothing else re-reads it.
-      // A landing that changed the job list or the application history would
-      // otherwise sit behind whatever the sheet last drew, until the user
-      // happened to touch something. (The chat sheet gets there anyway —
-      // ChatPanel publishes on every engine change, and adopting a thread list
-      // is one — so this is the other screens catching up with it.)
-      publish();
-      return pending;
-    },
-    // BOTH versions of every unit whose save hit a conflict, resolved by the
-    // model — the one side that can tell a newer-wins comparison from a union,
-    // and therefore the only one that can tell whether a loser exists at all.
-    // The transport used to decide this itself and hand back only the loser,
-    // which is why the two append-shaped units never unioned on the save path.
-    //
-    // A JSON STRING for the same reason `syncApply`'s units are one: the command
-    // channel is a JS string literal. The answer is a promise for the same
-    // reason its answer is — a resolution is not confirmed until the bytes are
-    // on disk — so this route is reached through `dispatch.async` too, and a
-    // malformed batch still throws SYNCHRONOUSLY rather than resolving to a
-    // refusal.
-    syncResolveConflicts: ({ conflicts }) => {
-      const parsed = JSON.parse(String(conflicts ?? '[]'));
-      if (!Array.isArray(parsed)) {
-        throw new Error('syncResolveConflicts needs an array of conflicts');
-      }
-      // RETURNED, not discarded, exactly as `syncApply`'s count is: the
-      // transport keeps the server's change tag for a unit only once the model
-      // says it merged, applied or parked the server's version, and it learns
-      // whether that unit still owes the server a save from the same answer.
-      const pending = deps.resolveConflicts(parsed);
-      // Republished like every other mutating route here: a resolution can
-      // replace the document on screen and can add a version-history entry.
-      publish();
-      return pending;
-    },
   });
 
   let pdfBusy = false;

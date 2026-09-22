@@ -26,10 +26,10 @@
     <array><string>CloudKit</string></array>
     <key>com.apple.developer.icloud-container-identifiers</key>
     <array><string>iCloud.com.onpaper.app</string></array>
-    <!-- PRODUCTION: this file signs RELEASES, against the Developer ID
-         provisioning profile, which permits only Production. Development and
-         Production are separate data stores. Local builds against real data use
-         Entitlements.development.plist via scripts/build-mac-dev.sh. -->
+    <!-- DEVELOPMENT: this file signs LOCAL builds against the macOS App Development
+         provisioning profile, which permits both. Development and
+         Production are separate data stores, and the phone's data is in Development. Selected by
+         scripts/build-mac-dev.sh through the CLI's config override; never used by CI. -->
     <!-- Silent CloudKit pushes. CKSyncEngine creates its own database
          subscription and fetches when the push arrives; the app only has to
          register for remote notifications (DesktopSyncHost.start) and carry
@@ -37,8 +37,8 @@
          and a provisioning profile regenerated after that. Nothing is ever shown
          to the user; macOS does not prompt for silent pushes. -->
     <key>com.apple.developer.aps-environment</key>
-    <string>production</string>
+    <string>development</string>
     <key>com.apple.developer.icloud-container-environment</key>
-    <string>Production</string>
+    <string>Development</string>
   </dict>
 </plist>

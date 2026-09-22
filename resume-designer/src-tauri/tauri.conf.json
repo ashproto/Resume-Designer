@@ -55,6 +55,9 @@
     "publisher": "Ash Shah",
     "macOS": {
       "entitlements": "Entitlements.plist",
+      "files": {
+        "embedded.provisionprofile": "./embedded.provisionprofile"
+      },
       "hardenedRuntime": true,
       "minimumSystemVersion": "14.4",
       "providerShortName": null
