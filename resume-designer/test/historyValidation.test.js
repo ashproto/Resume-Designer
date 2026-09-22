@@ -75,6 +75,38 @@ describe('damaged recovery history cannot become the active résumé', () => {
     expect(store.getHistoryEntryData(1)).toEqual(damaged);
   });
 
+  it('traverses past damaged, parked, and foreign entries in both directions without deleting them', () => {
+    const older = { ...healthy(), name: 'Earlier Ada' };
+    const history = [
+      entry(older, '2020-01-01T00:00:00.000Z'),
+      entry({ ...healthy(), experience: [{ bullets: 'Invalid list' }] }, '2020-01-02T00:00:00.000Z'),
+      { ...entry(healthy(), '2020-01-03T00:00:00.000Z'), changeType: 'sync-conflict' },
+      { ...entry(healthy(), '2020-01-04T00:00:00.000Z'), origin: 'another-device' },
+      entry({ ...healthy(), sections: [null] }, '2020-01-05T00:00:00.000Z'),
+      entry(healthy(), '2020-01-06T00:00:00.000Z'),
+    ];
+    loadLegacyHistory(history, 5);
+
+    expect(store.canUndo()).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(store.getHistoryIndex()).toBe(0);
+    expect(store.getData()).toEqual(older);
+    expect(store.canUndo()).toBe(false);
+    expect(store.canRedo()).toBe(true);
+    expect(store.saveNow()).toBe(true);
+    expect(persistence.getVariants().open.data).toEqual(older);
+    expect(JSON.parse(localStorage.getItem(HISTORY_KEY)).history).toEqual(history);
+
+    expect(store.redo()).toBe(true);
+    expect(store.getHistoryIndex()).toBe(5);
+    expect(store.getData()).toEqual(healthy());
+    expect(store.canUndo()).toBe(true);
+    expect(store.canRedo()).toBe(false);
+    expect(store.saveNow()).toBe(true);
+    expect(persistence.getVariants().open.data).toEqual(healthy());
+    expect(JSON.parse(localStorage.getItem(HISTORY_KEY)).history).toEqual(history);
+  });
+
   it('still restores and persists a sparse valid older conflict copy', () => {
     const legacy = { name: 'Earlier Ada' };
     expect(parkLoser('resume:open', JSON.stringify({ id: 'open', data: legacy }))).toBe(true);

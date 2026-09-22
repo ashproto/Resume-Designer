@@ -617,6 +617,28 @@ extension ShellSnapshot {
   }
 }
 
+extension ShellSnapshot.Settings {
+  private enum CodingKeys: String, CodingKey {
+    case theme, hasApiKey, autoFallback, syncEnabled, version, saveFailed
+    case aiSharingAllowed, aiSharingRevocationPending, privacyPolicy
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    theme = try values.decode(String.self, forKey: .theme)
+    hasApiKey = try values.decode(Bool.self, forKey: .hasApiKey)
+    autoFallback = try values.decode(Bool.self, forKey: .autoFallback)
+    syncEnabled = try values.decode(Bool.self, forKey: .syncEnabled)
+    version = try values.decode(String.self, forKey: .version)
+    saveFailed = try values.decode(Bool.self, forKey: .saveFailed)
+    // During an update, an older cached page may omit these newer fields.
+    // Missing permission stays off while the rest of the snapshot remains usable.
+    aiSharingAllowed = try values.decodeIfPresent(Bool.self, forKey: .aiSharingAllowed) ?? false
+    aiSharingRevocationPending = try values.decodeIfPresent(Bool.self, forKey: .aiSharingRevocationPending) ?? false
+    privacyPolicy = try values.decodeIfPresent(OPPrivacyPolicy.self, forKey: .privacyPolicy)
+  }
+}
+
 // MARK: - Reply pacing
 
 /// Paces the live reply so it flows instead of landing in bursts.

@@ -237,14 +237,16 @@ function createStore() {
   const isForeign = (entry) => entry?.origin != null && entry.origin !== deviceOrigin();
   const isOwnStep = (entry) => !isParked(entry) && !isForeign(entry);
   // The index undo/redo would move to from `from`, or -1 when there is none.
+  // Damaged legacy steps must not strand healthy snapshots beyond them. Skip
+  // them during traversal while retaining the original entries for recovery.
   const undoTarget = (from) => {
     let i = from - 1;
-    while (i >= 0 && !isOwnStep(history[i])) i -= 1;
+    while (i >= 0 && (!isOwnStep(history[i]) || !canRestoreHistoryEntry(i))) i -= 1;
     return i;
   };
   const redoTarget = (from) => {
     let i = from + 1;
-    while (i < history.length && !isOwnStep(history[i])) i += 1;
+    while (i < history.length && (!isOwnStep(history[i]) || !canRestoreHistoryEntry(i))) i += 1;
     return i < history.length ? i : -1;
   };
 

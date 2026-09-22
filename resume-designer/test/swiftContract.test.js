@@ -35,9 +35,9 @@ const SWIFT_SOURCES = ['OPShell.swift', 'OPJobs.swift', 'OPProfile.swift', 'OPOn
   .join('\n');
 
 /** Extract the real wire declaration, including its nested types. */
-function swiftDeclaration(name) {
-  const start = SWIFT_SOURCES.indexOf(`struct ${name}: Decodable`);
-  expect(start, `Swift struct ${name} not found`).toBeGreaterThan(-1);
+function swiftBlock(marker) {
+  const start = SWIFT_SOURCES.indexOf(marker);
+  expect(start, `Swift declaration ${marker} not found`).toBeGreaterThan(-1);
   let depth = 0;
   let i = SWIFT_SOURCES.indexOf('{', start);
   for (; i < SWIFT_SOURCES.length; i += 1) {
@@ -45,6 +45,10 @@ function swiftDeclaration(name) {
     else if (SWIFT_SOURCES[i] === '}') { depth -= 1; if (depth === 0) break; }
   }
   return SWIFT_SOURCES.slice(start, i + 1);
+}
+
+function swiftDeclaration(name) {
+  return swiftBlock(`struct ${name}: Decodable`);
 }
 
 /** The `var`/`let` fields declared directly inside `name`'s braces. */
@@ -161,10 +165,12 @@ ${swiftDeclaration('OPPrivacyPolicy')}
 struct ShellSnapshot {
 ${swiftDeclaration('Settings')}
 }
+${swiftBlock('extension ShellSnapshot.Settings {')}
 do {
   let data = FileHandle.standardInput.readDataToEndOfFile()
   let settings = try JSONDecoder().decode(ShellSnapshot.Settings.self, from: data)
   let presentation: [String: Any] = [
+    "allowed": settings.aiSharingAllowed,
     "pending": settings.aiSharingRevocationPending,
     "status": settings.aiSharingStatus,
     "action": settings.aiSharingActionTitle,
@@ -194,6 +200,29 @@ do {
   });
 
   it.each([
+    [['aiSharingAllowed', 'aiSharingRevocationPending'], {}, false, false],
+    [['aiSharingAllowed'], { aiSharingRevocationPending: true }, false, true],
+    [['aiSharingRevocationPending'], { aiSharingAllowed: true }, true, false],
+  ])('decodes a cached page without %s while preserving fields it supplied', (missing, supplied, allowed, pending) => {
+    const cached = { ...buildSettings(), ...supplied };
+    for (const field of missing) delete cached[field];
+    expect(decode(cached)).toMatchObject({ allowed, pending });
+  });
+
+  it('treats null consent flags like omitted values without inventing permission', () => {
+    expect(decode({ ...buildSettings(), aiSharingAllowed: null, aiSharingRevocationPending: null }))
+      .toMatchObject({ allowed: false, pending: false });
+  });
+
+  it.each(['aiSharingAllowed', 'aiSharingRevocationPending'])('rejects incorrectly typed %s instead of granting permission', field => {
+    const result = spawnSync(executable, [], {
+      input: JSON.stringify({ ...buildSettings(), [field]: 'true' }), encoding: 'utf8', timeout: 10_000,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/typeMismatch/);
+  });
+
+  it.each([
     [false, true, 'Paused — change not saved', 'Retry stopping AI sharing', false],
     [true, false, 'Allowed on this device', 'Stop AI sharing', false],
     [false, false, 'Not allowed', 'Review AI data sharing', true],
@@ -201,6 +230,6 @@ do {
     // An explicit wire fixture tests the native branch independently of the
     // JS projection, so a missing emitter cannot mask a retry that grants.
     expect(decode({ ...buildSettings(), aiSharingAllowed: allowed, aiSharingRevocationPending: pending }))
-      .toEqual({ pending, status, action, allow });
+      .toEqual({ allowed, pending, status, action, allow });
   });
 });
