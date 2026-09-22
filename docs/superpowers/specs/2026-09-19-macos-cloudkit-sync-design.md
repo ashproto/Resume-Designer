@@ -27,8 +27,10 @@ does not accidentally compile or link CloudKit. The browser and Windows paths
 do not initialize the desktop sync bridge.
 
 Replacement epochs remain a separate, unimplemented feature under
-[#126](https://github.com/ashproto/Resume-Designer/issues/126). See the tracked
-[replacement-epoch design](2026-08-18-restore-replacement-epoch-design.md).
+[#126](https://github.com/ashproto/Resume-Designer/issues/126). See the
+[replacement-epoch design](2026-08-18-restore-replacement-epoch-design.md) and
+[implementation plan](../plans/2026-08-28-restore-replacement-epoch-plan.md),
+included here as supporting documentation for that future work.
 This implementation does not make a replacement restore remove records the
 restoring device has never seen.
 
