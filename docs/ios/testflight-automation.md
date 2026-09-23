@@ -7,7 +7,7 @@ to the configured internal TestFlight group. App Store submission is separate.
 
 ## Current activation state
 
-The implementation is ready for review and awaits merge/account setup.
+Account setup is configured; the implementation awaits merge and a live pilot.
 Automatic dispatch is **off**
 unless the repository variable `IOS_TESTFLIGHT_AUTOMATION_ENABLED` is exactly
 `true`. A successful local archive is not evidence of Cloud signing, upload,
@@ -18,9 +18,24 @@ On 2026-09-22, the GitHub `ios-testflight` environment was created with a
 **main-only** deployment branch policy, automatic dispatch was explicitly set to
 `false`, and an active tag ruleset was added to prevent updates/deletions of
 `ios-testflight/main/*` and `ios-testflight/next/*` (no bypass actors). Existing
-branch rulesets were retained. App Store Connect credentials, app/group/workflow
-IDs, Cloud configuration and the live pilot remain outstanding. The existing
-Apple/CSC secrets are for desktop releases; this lane does not use them.
+branch rulesets were retained, with the passing `ios-native` check added as a
+requirement on both `main` and `next`. App Store Connect credentials and the
+verified app/group/workflow IDs are now stored in that environment. The existing Apple/CSC
+secrets are for desktop releases; this lane does not use them.
+
+The App Store Connect record is **OnPaper - Career Workspace** (`6815088694`),
+bundle **`com.onpaper.app`**. The owner deployed the current `SyncUnit` schema to
+the production **`iCloud.com.onpaper.app`** container. Apple's API confirms the
+enabled **On Paper – TestFlight** workflow uses the committed project and shared
+scheme, restricted editing, clean builds, Xcode **27 (27A266a)**, and macOS
+**27 (26A428)**. Its only start condition is manual tags beginning with
+`ios-testflight/`; its sole action is an App Store eligible iOS archive. The
+workflow's internal TestFlight post-action selects **On Paper Internal**, as
+verified in Xcode. API checks confirm that group belongs to this app and has one
+tester. The release controller's workflow validation passes against the live
+Apple metadata. No Cloud runs or uploaded builds existed at this preflight.
+Signing, upload, processing, installation and production device sync still await
+the pilot; API authentication and configuration checks do not establish them.
 
 Local verification on 2026-09-22 covers the release-readiness and automation
 candidate based on `next` at `75536fcd`:
@@ -33,7 +48,7 @@ candidate based on `next` at `75536fcd`:
 | Native simulator | Full unsigned Debug build passed with Node 24, Rust 1.92.0, Xcode 27/iOS 27 SDK. |
 | Native device | Full unsigned Release archive passed with the same toolchain. Bundle verified as `com.onpaper.app`, minimum iOS 26.0, version 1.0.0; bundled privacy manifest present and static library absent from app resources. |
 | Hosted CI / Xcode 26.6 | [All three jobs passed](https://github.com/ashproto/Resume-Designer/actions/runs/35797641144) for PR #133 at `fc1b06f8`; subsequent review commits are checked separately on the PR. |
-| Cloud signing / upload / TestFlight installation | Not run; App Store Connect setup and credentials are still needed. |
+| Cloud signing / upload / TestFlight installation | Not run; account configuration and read-only API preflight passed, and the live pilot remains outstanding. |
 
 Local native outputs and bundle verification are retained under
 `/private/tmp/onpaper-ios-ci-validation`; full build log is

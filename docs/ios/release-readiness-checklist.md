@@ -87,9 +87,9 @@ and Mac apps currently have separate keychain access groups.
 | In-app privacy and AI permission | On a fresh installation, open the policy offline; decline AI sharing; exercise chat, import analysis, interview, job analysis, and generation; confirm declining makes no AI content request. Accept, run an AI action, withdraw in Settings, and confirm later actions require permission again. | Network-boundary regression tests and native simulator policy/decline/accept/revoke/restart checks passed. A funded live AI action and all physical-device entry points remain unrun. |
 | Hosted privacy and support | Publish `website/privacy.html` to `https://onpaper.pro/privacy.html`, verify it returns the current policy without login, and enter it in App Store Connect. Verify the support route below. | Prepared locally only; publication and live checks remain outstanding. |
 | Distribution artifact | Archive the complete Swift/Rust/web app with a supported shipping Xcode and iOS SDK, export for App Store Connect, and obtain successful upload/processing with no unresolved validation errors. Verify the signed bundle identifier, build number, CloudKit container, production APNs entitlement, and bundled privacy manifest. | Unsigned device Release archive compiled and bundle metadata/manifest checked. Distribution signing, validation, export, upload, and processing remain unverified. |
-| Production CloudKit | Confirm `iCloud.com.onpaper.app` has the current schema deployed to production, including `kind`, `modifiedAt`, `payload`, and `asset`. Test sync from the distributed build on physical devices, including offline edits, conflicts, larger asset-backed data, account changes, deletion, and cloud-purge/resume. | Local code and automated checks exist; production-console state and these device results are unverified. |
+| Production CloudKit | Confirm `iCloud.com.onpaper.app` has the current schema deployed to production, including `kind`, `modifiedAt`, `payload`, and `asset`. Test sync from the distributed build on physical devices, including offline edits, conflicts, larger asset-backed data, account changes, deletion, and cloud-purge/resume. | Owner deployed the schema on 2026-09-22; the Production console shows all four fields with the expected types. Local code and automated checks exist; distributed-build physical-device results remain unverified. |
 | Core device workflow | Test fresh install without a key, save/force-quit/relaunch, import, editing with the keyboard, PDF export/share, backups, profile switching, and optional AI on an iPhone and iPad. Check that malformed JSON is refused without replacing current work, and that a previously damaged saved resume can be backed up without blocking launch or losing later edits. Include offline/error states, landscape, larger text, and VoiceOver. Preserve the build number and results. | Final simulator keyless interview/create/relaunch and PDF preview/system share passed. Malformed import, sync, deletion, and history recovery passed automated regressions. Full physical iPhone/iPad workflow and accessibility matrix remain unrun. |
-| Store metadata and review access | Complete the app record, screenshots, age-rating answers, app privacy answers, pricing/availability, support/privacy URLs, and reviewer access to AI. Confirm the record uses `com.onpaper.app`. | App Store Connect was not inspected. |
+| Store metadata and review access | Complete the app record, screenshots, age-rating answers, app privacy answers, pricing/availability, support/privacy URLs, and reviewer access to AI. Confirm the record uses `com.onpaper.app`. | App record created as OnPaper - Career Workspace, Apple ID 6815088694; API verification confirms `com.onpaper.app`. Remaining store metadata and review access are unverified. |
 
 Apple currently requires uploads to use the iOS/iPadOS 26 SDK or newer; that is
 separate from the app's minimum supported OS. See
@@ -102,12 +102,13 @@ operator can use those or Xcode's distribution flow. Select a new build number
 appropriate to the actual App Store Connect record. No archive or upload is
 authorized merely by this checklist.
 
-An automated iOS release workflow is being prepared locally; see the
+An automated iOS release workflow is prepared in PR #133; see the
 [TestFlight automation runbook](testflight-automation.md) for its activation and
 pilot gates. The updated CI includes the SwiftUI target, simulator compilation,
-and unsigned device archive. Publication, hosted CI, Cloud signing and an actual
-TestFlight pilot remain separate verification gates. A reproducible, validated
-manual archive and upload are also sufficient for the first release. Broader OS
+and unsigned device archive. Hosted CI passed on the reviewed implementation;
+account configuration and read-only API preflight are complete. Merge, Cloud
+signing and an actual TestFlight pilot remain separate verification gates. A
+reproducible, validated manual archive and upload are also sufficient for the first release. Broader OS
 support, more templates, and deeper desktop parity can follow once the shipped
 workflow is verified.
 

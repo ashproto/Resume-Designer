@@ -58,7 +58,7 @@
 		A9AD7A55017F2378971EFABE /* bundle_name.rs */ = {isa = PBXFileReference; path = bundle_name.rs; sourceTree = "<group>"; };
 		B741908E2A880994641D65B4 /* storage.rs */ = {isa = PBXFileReference; path = storage.rs; sourceTree = "<group>"; };
 		B88B98D3680A30C30A6A6462 /* updater.rs */ = {isa = PBXFileReference; path = updater.rs; sourceTree = "<group>"; };
-		BDC7AE925FF8A5E78E4092E3 /* resume-designer_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "resume-designer_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C2211DDC20EFA0238B46EF62 /* On Paper.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "On Paper.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3298D515A47F34CE46B1895 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
 		C665389A04CB90B3400E715B /* OPJobs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OPJobs.swift; sourceTree = "<group>"; };
 		C6B2C125BE7763BFA3EBC123 /* desktop_sync.rs */ = {isa = PBXFileReference; path = desktop_sync.rs; sourceTree = "<group>"; };
@@ -173,7 +173,7 @@
 		AE1549F90D83F60E8E278A1C /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				BDC7AE925FF8A5E78E4092E3 /* resume-designer_iOS.app */,
+				C2211DDC20EFA0238B46EF62 /* On Paper.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -251,7 +251,7 @@
 			packageProductDependencies = (
 			);
 			productName = "resume-designer_iOS";
-			productReference = BDC7AE925FF8A5E78E4092E3 /* resume-designer_iOS.app */;
+			productReference = C2211DDC20EFA0238B46EF62 /* On Paper.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */

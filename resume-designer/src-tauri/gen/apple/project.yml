@@ -44,6 +44,7 @@ targetTemplates:
 targets:
   resume-designer_iOS:
     type: application
+    productName: On Paper
     platform: iOS
     sources:
       - path: Sources
