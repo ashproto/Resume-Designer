@@ -27,7 +27,7 @@ if [[ ! -x "$CARGO_HOME/bin/rustup" ]]; then
 fi
 rustup toolchain install "$OP_IOS_RUST_VERSION" --profile minimal
 rustup default "$OP_IOS_RUST_VERSION"
-rustup target add --toolchain "$OP_IOS_RUST_VERSION" aarch64-apple-ios aarch64-apple-ios-sim
+rustup target add --toolchain "$OP_IOS_RUST_VERSION" aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 op_ios_ci_check_tools
 cd "$OP_IOS_APP_ROOT"
 npm ci
