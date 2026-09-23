@@ -57,8 +57,10 @@ Apple documents product discovery with
 the result must have `displayName: On Paper`, `bundleIdentifier: com.onpaper.app`
 and `containingSchemes: [resume-designer_iOS]`.
 
-The Cloud manifest maps the **On Paper** target to the existing product UUID.
-Its UUID and the workflow UUID remain unchanged. Local discovery does not
+The Cloud manifest maps **On Paper** and the existing server label
+`resume-designer_iOS` to the same product UUID. Xcode adds the legacy mapping
+when reopening the project; preserve both until Apple refreshes that label.
+The product UUID and workflow UUID remain unchanged. Local discovery does not
 prove that Apple has refreshed an existing server-side product label; verify
 that separately in Xcode Cloud. No product deletion is part of this rename.
 
