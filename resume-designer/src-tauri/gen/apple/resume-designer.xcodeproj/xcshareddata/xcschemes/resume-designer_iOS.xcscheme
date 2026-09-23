@@ -16,7 +16,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "9A022876887F3AE2402D3448"
                BuildableName = "On Paper.app"
-               BlueprintName = "resume-designer_iOS"
+               BlueprintName = "On Paper"
                ReferencedContainer = "container:resume-designer.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -32,7 +32,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "9A022876887F3AE2402D3448"
             BuildableName = "On Paper.app"
-            BlueprintName = "resume-designer_iOS"
+            BlueprintName = "On Paper"
             ReferencedContainer = "container:resume-designer.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -67,7 +67,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "9A022876887F3AE2402D3448"
             BuildableName = "On Paper.app"
-            BlueprintName = "resume-designer_iOS"
+            BlueprintName = "On Paper"
             ReferencedContainer = "container:resume-designer.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -96,7 +96,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "9A022876887F3AE2402D3448"
             BuildableName = "On Paper.app"
-            BlueprintName = "resume-designer_iOS"
+            BlueprintName = "On Paper"
             ReferencedContainer = "container:resume-designer.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

@@ -6,10 +6,49 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { cargoBuildPlan, unsignedBuildPlans } from './ios-ci.mjs';
+import { brandIosTarget } from './ios-project-name.mjs';
 
 const scripts = fileURLToPath(new URL('.', import.meta.url));
 const sha = 'a'.repeat(40);
 const cloudEnv = { CI_XCODE_CLOUD: 'TRUE', CI_TAG: `ios-testflight/next/${sha}`, CI_COMMIT: sha, CI_BUILD_NUMBER: '42' };
+
+const xcodeProject = fileURLToPath(new URL('../src-tauri/gen/apple/resume-designer.xcodeproj/', import.meta.url));
+const committedProject = readFileSync(join(xcodeProject, 'project.pbxproj'), 'utf8');
+const committedScheme = readFileSync(join(xcodeProject, 'xcshareddata/xcschemes/resume-designer_iOS.xcscheme'), 'utf8');
+
+test('branding preserves the configuration identities Tauri uses and is stable after regeneration', () => {
+  const generated = committedProject.replace('\t\t\tname = "On Paper";', '\t\t\tname = "resume-designer_iOS";');
+  const scheme = committedScheme.replaceAll('BlueprintName = "On Paper"', 'BlueprintName = "resume-designer_iOS"');
+  const branded = brandIosTarget(generated, scheme);
+  assert.deepEqual(branded, { project: committedProject, scheme: committedScheme });
+  assert.deepEqual(brandIosTarget(branded.project, branded.scheme), branded);
+  // Tauri finds this list by its comment, then uses these same configuration
+  // IDs for bundle/team/profile synchronization and export signing options.
+  const configSection = text => text.match(/\/\* Begin XCBuildConfiguration section \*\/[\s\S]*?\/\* End XCConfigurationList section \*\//)[0];
+  assert.equal(configSection(branded.project), configSection(generated));
+  assert.match(configSection(branded.project), /Build configuration list for PBXNativeTarget "resume-designer_iOS"/);
+  assert.match(branded.project, /name = "On Paper";/);
+});
+
+test('branding stops before any file writes if generator output loses Tauri or scheme compatibility', t => {
+  const root = mkdtempSync(join(tmpdir(), 'on-paper-project-contract-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const schemePath = join(root, 'xcshareddata/xcschemes/resume-designer_iOS.xcscheme');
+  mkdirSync(join(root, 'xcshareddata/xcschemes'), { recursive: true });
+  for (const [project, scheme, message] of [
+    [committedProject.replaceAll('Build configuration list for PBXNativeTarget "resume-designer_iOS"', 'Build configuration list for PBXNativeTarget "On Paper"'), committedScheme, /Tauri iOS configuration marker/],
+    [committedProject, committedScheme.replaceAll('BlueprintIdentifier = "9A022876887F3AE2402D3448"', 'BlueprintIdentifier = "UNRELATED"'), /does not reference the iOS target/],
+  ]) {
+    writeFileSync(join(root, 'project.pbxproj'), project);
+    writeFileSync(schemePath, scheme);
+    const result = spawnSync(process.execPath, [join(scripts, 'ios-project-name.mjs'), root], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+    assert.equal(readFileSync(join(root, 'project.pbxproj'), 'utf8'), project);
+    assert.equal(readFileSync(schemePath, 'utf8'), scheme);
+  }
+});
+
 function gate(overrides = {}) {
   return spawnSync('/bin/bash', ['-c', 'source "$1/ios-ci-env.sh"; op_ios_ci_cloud_gate', 'test', scripts], {
     env: { PATH: process.env.PATH, ...cloudEnv, ...overrides }, encoding: 'utf8',

@@ -247,7 +247,7 @@
 			);
 			dependencies = (
 			);
-			name = "resume-designer_iOS";
+			name = "On Paper";
 			packageProductDependencies = (
 			);
 			productName = "resume-designer_iOS";

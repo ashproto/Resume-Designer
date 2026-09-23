@@ -22,9 +22,10 @@ launch storyboard, `main.mm` and its bindings header. The Cloud hooks in
 
 ## What is hand-maintained
 
-**`project.yml` is the only file to edit.** `resume-designer.xcodeproj` is
-derived from it by `xcodegen generate`, so never hand-edit the pbxproj — the
-next regeneration would silently discard the edit.
+**Edit `project.yml` and the maintained generator hook, not the pbxproj.**
+`resume-designer.xcodeproj` is derived by `xcodegen generate`, including its
+`postGenCommand` in `scripts/ios-project-name.mjs`. Manual pbxproj edits are
+discarded by the next regeneration.
 
 These parts of `project.yml` are maintained here:
 
@@ -37,6 +38,29 @@ These parts of `project.yml` are maintained here:
 | the `Shell` group name | Cosmetic — keeps the shell separate from generated `Sources` in Xcode's navigator. |
 | `OP_RUST_LIB_ROOT` and library search/output paths | CI links its own static library from isolated output; it must not overwrite a developer's existing `Externals/libapp.a`. The default remains the local Tauri path. |
 | conditional `Build Rust Code` phase | Xcode Cloud invokes Xcode without a parent Tauri CLI options server. `OP_IOS_CI=1` or Cloud selects the locked Cargo helper; the regular local Tauri command is preserved. See [TestFlight automation](testflight-automation.md). |
+| `options.postGenCommand` | Sets the visible Xcode target name to **On Paper**, which Xcode Cloud uses during product discovery. Preserves the legacy target IDs, scheme name and configuration-list comments required by the local Tauri CLI. |
+
+## Xcode and Xcode Cloud naming
+
+The generated target's `name` and shared scheme's `BlueprintName` are **On
+Paper**. The generator key and shared scheme filename remain
+`resume-designer_iOS`. This is deliberate: Tauri CLI 2.11.2 selects that
+scheme and finds the target's signing/build configurations using `_iOS` in
+the `XCConfigurationList` comments. The post-generation hook changes only
+the display name and scheme references; it preserves those comments and IDs.
+It fails before writing if the generator no longer produces that contract.
+
+Keep the hook when regenerating with either `xcodegen generate` or
+`tauri ios init`. Validate Tauri compatibility when upgrading either tool.
+Apple documents product discovery with
+`xcodebuild -project resume-designer.xcodeproj -describeAllArchivableProducts -json`;
+the result must have `displayName: On Paper`, `bundleIdentifier: com.onpaper.app`
+and `containingSchemes: [resume-designer_iOS]`.
+
+The Cloud manifest maps the **On Paper** target to the existing product UUID.
+Its UUID and the workflow UUID remain unchanged. Local discovery does not
+prove that Apple has refreshed an existing server-side product label; verify
+that separately in Xcode Cloud. No product deletion is part of this rename.
 
 ## Re-running `tauri ios init` — measured, not assumed
 
@@ -81,11 +105,11 @@ table above is the checklist.
 
 ## Frozen, and not touched by any of this
 
-Bundle identifier `com.resumedesigner.app` (Tauri derives the app-data
-directory from it, so changing it factory-resets every user), the Cargo package
-name `resume-designer`, and every `resume-designer-*` / `resume-*` storage key.
-The Xcode project name and target name are `resume-designer` for the same
-reason; only `PRODUCT_NAME` is branded **On Paper**.
+Desktop bundle identifier `com.resumedesigner.app`, iOS bundle identifier
+`com.onpaper.app`, the Cargo package name `resume-designer`, and every
+`resume-designer-*` / `resume-*` storage key remain unchanged. The Xcode
+project filename and legacy scheme are preserved for Tauri compatibility;
+the visible target and `PRODUCT_NAME` are **On Paper**.
 
 ## Reverting pbxproj churn: the test that is NOT sufficient
 

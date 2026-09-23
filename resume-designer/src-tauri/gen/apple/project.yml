@@ -1,5 +1,8 @@
 name: resume-designer
 options:
+  # Brand the discovered target while preserving Tauri's legacy scheme and
+  # `_iOS` configuration-list markers. This also runs after `tauri ios init`.
+  postGenCommand: node ../../../scripts/ios-project-name.mjs resume-designer.xcodeproj
   bundleIdPrefix: com.onpaper.app
   deploymentTarget:
     iOS: 26.0
@@ -42,6 +45,7 @@ targetTemplates:
     settings:
       groups: [app]
 targets:
+  # Generator identity only. postGenCommand sets the visible target to On Paper.
   resume-designer_iOS:
     type: application
     productName: On Paper
