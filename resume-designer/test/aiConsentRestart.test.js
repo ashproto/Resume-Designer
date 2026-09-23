@@ -67,11 +67,48 @@ it('removes the old grant even if the denial record cannot be written', async ()
   expect(consent.isAIConsentRevocationPending()).toBe(false);
 });
 
-it('reports total storage failure and blocks sharing for the current session', async () => {
+it('retries the denial when writes recover during failed deletion', async () => {
   backend.write.mockRejectedValue(new Error('storage unavailable'));
-  backend.delete.mockRejectedValue(new Error('storage unavailable'));
+  backend.delete.mockImplementation(async () => {
+    backend.write.mockImplementation(async (key, value) => { files.set(key, value); });
+    throw new Error('deletion unavailable');
+  });
   await expect(consent.revokeAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+
+  await restart();
   expect(consent.hasAIConsent()).toBe(false);
   expect(consent.isAIConsentRevocationPending()).toBe(true);
   await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+});
+
+it('retains an unsaved denial for a later flush when deletion remains unavailable', async () => {
+  backend.write.mockRejectedValue(new Error('storage unavailable'));
+  backend.delete.mockRejectedValue(new Error('deletion unavailable'));
+  await expect(consent.revokeAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+
+  backend.write.mockImplementation(async (key, value) => { files.set(key, value); });
+  await expect(storage.appStorage.flush()).resolves.toBe(true);
+  await restart();
+  expect(consent.hasAIConsent()).toBe(false);
+  expect(consent.isAIConsentRevocationPending()).toBe(true);
+  await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+});
+
+it('reports total storage failure and blocks sharing for the current session', async () => {
+  backend.write.mockRejectedValue(new Error('storage unavailable'));
+  backend.delete.mockRejectedValue(new Error('storage unavailable'));
+  await expect(consent.revokeAIConsent()).rejects.toMatchObject({
+    code: 'AI_CONSENT_STORAGE',
+    message: expect.stringContaining('Previous permission may return after restarting.'),
+  });
+  expect(consent.hasAIConsent()).toBe(false);
+  expect(consent.isAIConsentRevocationPending()).toBe(true);
+  await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+
+  backend.write.mockImplementation(async (key, value) => { files.set(key, value); });
+  backend.delete.mockImplementation(async (key) => { files.delete(key); });
+  await consent.revokeAIConsent();
+  await restart();
+  expect(consent.hasAIConsent()).toBe(false);
+  expect(consent.isAIConsentRevocationPending()).toBe(false);
 });

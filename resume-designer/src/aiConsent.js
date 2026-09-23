@@ -34,7 +34,7 @@ function consentError(code = 'AI_CONSENT_DECLINED') {
 }
 
 function revocationError() {
-  const error = new Error('AI sharing is paused for this session, but the change could not be saved. Retry stopping AI sharing in Settings before closing the app.');
+  const error = new Error('AI sharing is paused for this session, but the change could not be saved. Previous permission may return after restarting. Retry stopping AI sharing in Settings before closing the app.');
   error.code = 'AI_CONSENT_STORAGE';
   return error;
 }
@@ -153,20 +153,32 @@ export async function revokeAIConsent() {
   pending?.controller.abort();
   announce();
   if (appStorage.isRestoreGuardActive()) throw revocationError();
+  const denial = JSON.stringify({
+    revision: AI_CONSENT_DISCLOSURE.revision, accepted: false,
+    revocationPending: true,
+  });
+  let denialDurable = false;
   try {
     // Commit denial BEFORE deleting: a failed deletion must not resurrect an
     // accepted grant on the next launch. Separate flushes prevent coalescing
     // this write away. If writing fails, still try deleting the old grant.
-    appStorage.setItem(CONSENT_KEY, JSON.stringify({
-      revision: AI_CONSENT_DISCLOSURE.revision, accepted: false,
-      revocationPending: true,
-    }));
-    await appStorage.flush();
+    appStorage.setItem(CONSENT_KEY, denial);
+    denialDurable = await appStorage.flush();
   } catch { /* Deletion can succeed even when storage cannot accept a write. */ }
   try {
     appStorage.removeItem(CONSENT_KEY);
     if (appStorage.isRestoreGuardActive() || !(await appStorage.flush())) throw revocationError();
   } catch {
+    // removeItem replaced the failed write with a queued deletion. If neither
+    // operation landed, restore the denial so recovering writes can persist it
+    // even while deletion remains unavailable. Try once now; appStorage keeps
+    // a failed write queued for the next flush without a background retry loop.
+    if (!denialDurable && generation === revoked && !appStorage.isRestoreGuardActive()) {
+      try {
+        appStorage.setItem(CONSENT_KEY, denial);
+        if (!(await appStorage.flush())) throw revocationError();
+      } catch { /* Keep sharing paused and report the incomplete revocation. */ }
+    }
     throw revocationError();
   }
   if (generation === revoked) {
