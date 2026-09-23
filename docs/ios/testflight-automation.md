@@ -28,7 +28,7 @@ candidate based on `next` at `75536fcd`:
 | Gate | Evidence |
 | --- | --- |
 | App regression suite | 113 files, 1,831 tests passed after review fixes. |
-| Release controller/gate/build-helper regressions | 56 tests passed. Includes superseded-commit rejection before dispatch, older-run recovery, mistaken-resume isolation, fork/PR rejection, delayed merge metadata, immutable refs, ambiguous dispatch/retry, TestFlight processing/group membership, Cloud tag guards, isolated compiler invocation and SwiftPM compatibility. |
+| Release controller/gate/build-helper regressions | 62 tests passed. Includes superseded-commit rejection before dispatch, original-SHA recovery after branch advancement, mistaken-resume isolation, fork/PR rejection, delayed merge metadata, immutable refs, ambiguous dispatch/retry, TestFlight processing/group membership, Cloud tag guards, isolated compiler invocation and SwiftPM compatibility. |
 | Static checks | ESLint has zero errors and two existing warnings; shellcheck and `git diff --check` pass. See the documented concurrency queue and actionlint compatibility note below. |
 | Native simulator | Full unsigned Debug build passed with Node 24, Rust 1.92.0, Xcode 27/iOS 27 SDK. |
 | Native device | Full unsigned Release archive passed with the same toolchain. Bundle verified as `com.onpaper.app`, minimum iOS 26.0, version 1.0.0; bundled privacy manifest present and static library absent from app resources. |
@@ -46,7 +46,7 @@ still `1.0.0`; the Cloud pre-build hook applies `CI_BUILD_NUMBER` during the pil
 | --- | --- |
 | Pull request to `next` or `main` | Existing lint, tests, audit and Rust checks; release-tool tests; actual Swift decoder tests; unsigned simulator compilation and device archive. No Apple credentials. |
 | Push to `next` or `main` | The same CI checks. A successful run can trigger the separate iOS delivery workflow after automatic dispatch is enabled. |
-| Manual `iOS TestFlight` dispatch from `main` | Select `next` or `main`. Its current head must already have successful push CI, including `ios-native`. This is also the pilot path. |
+| Manual `iOS TestFlight` dispatch from `main` | Select `next` or `main`. A new pilot uses its current head and requires successful push CI, including `ios-native`. To resume an existing run, supply both its run ID and original full SHA; that SHA needs passing CI and must still belong to the selected protected branch. |
 | App Store submission | A separate, explicit release decision in App Store Connect. The archive is App Store eligible, but this workflow never submits it for review. |
 
 `skip-build` on the exact merged PR suppresses automatic iOS delivery, matching
@@ -195,7 +195,11 @@ does not imply Apple stopped the build.
   run, retaining the successful authorization job's original commit outputs. The deterministic
   tag causes the dispatcher to locate and monitor an existing matching run
   rather than issue another build request. A known run ID can also be supplied
-  to manual dispatch; it must match the selected source commit and workflow.
+  to manual dispatch together with **`resume_sha`**, the original full lowercase
+  40-character commit SHA. Both fields are required together. The gate validates
+  successful push CI for that SHA and verifies it remains reachable from the
+  selected protected branch; the controller verifies the run's workflow and exact
+  reserved tag. Branch advancement does not change the selected recovery commit.
   Supplying a run ID only reads an existing tag and never creates a reservation,
   so a mistaken resume cannot block a later normal release.
 - A failed/timed-out POST can still have started a build. Do not delete the tag
@@ -211,10 +215,11 @@ does not imply Apple stopped the build.
   build for that superseded commit. If the head advances during tag discovery,
   the unused reservation is retained and the job reports `superseded`; leave that
   tag in place and let the newer head's successful CI authorize its own release.
-  Re-running **all** jobs on a manually dispatched pilot
-  resolves the branch's current head again; avoid that when recovering an older
-  pilot. Automatic `workflow_run` events retain their original CI run identity.
-  A new manual dispatch also resolves the branch's current head.
+  Re-running **all** jobs on a manually dispatched pilot without recovery inputs
+  resolves the branch's current head again. Supply both recovery fields in a new
+  manual dispatch to monitor an older run. Automatic `workflow_run` events retain
+  their original CI run identity, and manual recovery inputs retain their named
+  SHA. A new manual pilot without those inputs resolves the current head.
 - Set `IOS_TESTFLIGHT_AUTOMATION_ENABLED=false` to stop new automatic dispatches.
   Existing Cloud runs continue and must be managed separately in App Store
   Connect. This does not affect desktop releases.

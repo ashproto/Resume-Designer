@@ -20,6 +20,10 @@ on:
         description: Existing Xcode Cloud build run to resume monitoring (optional)
         required: false
         type: string
+      resume_sha:
+        description: Original full commit SHA (required with resume_run_id)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -77,6 +81,8 @@ jobs:
       # Serialize all SHAs of a branch, including their Cloud monitoring. Keep
       # queued jobs so a late older candidate cannot evict the newest one.
       group: ios-testflight-${{ needs.authorize.outputs.branch }}
+      # Supported for jobs.<job_id>.concurrency; actionlint 1.7.12 predates it:
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idconcurrency
       queue: max
       cancel-in-progress: false
     steps:

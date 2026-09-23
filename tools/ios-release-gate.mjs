@@ -8,6 +8,7 @@ export const REPOSITORY = 'ashproto/Resume-Designer';
 const WORKFLOW_PATH = '.github/workflows/ci.yml';
 const REQUIRED_JOBS = ['checks', 'rust-check', 'ios-native'];
 const SHA = /^[a-f0-9]{40}$/;
+const RUN_ID = /^[A-Za-z0-9-]+$/;
 
 function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
@@ -23,6 +24,14 @@ export function candidateFromEvent(eventName, event, ref) {
   requireCondition(eventName === 'workflow_dispatch', 'Unsupported release event.');
   const branch = event.inputs?.target;
   requireCondition(['main', 'next'].includes(branch), 'Manual target must be main or next.');
+  const resumeSha = event.inputs?.resume_sha;
+  const resumeRunId = event.inputs?.resume_run_id;
+  if ([resumeSha, resumeRunId].some(value => value !== undefined && value !== '')) {
+    requireCondition(typeof resumeSha === 'string' && SHA.test(resumeSha)
+      && typeof resumeRunId === 'string' && RUN_ID.test(resumeRunId),
+      'Manual resume requires both a full lowercase 40-character resume SHA and a valid resume run ID.');
+    return { branch, sha: resumeSha };
+  }
   return { branch };
 }
 
@@ -95,12 +104,15 @@ export async function authorizeRelease({ eventName, event, ref, get, sleep = ms 
     run = await get(`/repos/${REPOSITORY}/actions/runs/${candidate.runId}`);
   } else {
     const head = await protectedBranch(get, candidate.branch);
+    // A recovery request names the original build's commit. A fresh pilot
+    // still resolves today's head; neither path can borrow another SHA's CI.
+    const targetSha = candidate.sha ?? head;
     const runs = await collection(get,
-      `/repos/${REPOSITORY}/actions/workflows/ci.yml/runs?branch=${candidate.branch}&event=push&head_sha=${head}&status=success`, 'workflow_runs');
-    run = runs.find(item => item.head_sha === head && item.head_branch === candidate.branch);
-    requireCondition(run, 'The current branch head needs successful push CI before a manual pilot.');
+      `/repos/${REPOSITORY}/actions/workflows/ci.yml/runs?branch=${candidate.branch}&event=push&head_sha=${targetSha}&status=success`, 'workflow_runs');
+    run = runs.find(item => item.head_sha === targetSha && item.head_branch === candidate.branch);
+    requireCondition(run, 'The requested manual commit needs successful push CI before release or recovery.');
     run = await get(`/repos/${REPOSITORY}/actions/runs/${run.id}`);
-    requireCondition(run.head_sha === head && run.head_branch === candidate.branch, 'CI changed while resolving the manual target.');
+    requireCondition(run.head_sha === targetSha && run.head_branch === candidate.branch, 'CI changed while resolving the manual target.');
   }
   const result = validateRun(run, workflow.id);
   const currentHead = await protectedBranch(get, result.branch);

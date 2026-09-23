@@ -30,6 +30,28 @@ test('manual dispatch must run from main and target a named release branch', () 
   assert.throws(() => candidateFromEvent('workflow_run', { ...event, repository: { full_name: 'fork/repo' } }, 'refs/heads/main'));
 });
 
+test('manual resume selects its original SHA only when both valid resume fields are supplied', () => {
+  const manual = inputs => ({ repository: event.repository, inputs: { target: 'next', ...inputs } });
+  assert.deepEqual(candidateFromEvent('workflow_dispatch', manual({ resume_sha: sha, resume_run_id: 'cloud-run-42' }), 'refs/heads/main'),
+    { branch: 'next', sha });
+  assert.deepEqual(candidateFromEvent('workflow_dispatch', manual({ resume_sha: '', resume_run_id: '' }), 'refs/heads/main'),
+    { branch: 'next' });
+});
+
+test('manual resume rejects missing or malformed SHA/run ID pairs', () => {
+  for (const inputs of [
+    { resume_sha: sha }, { resume_run_id: 'cloud-run-42' },
+    { resume_sha: sha, resume_run_id: '' }, { resume_sha: '', resume_run_id: 'cloud-run-42' },
+    { resume_sha: 'A'.repeat(40), resume_run_id: 'cloud-run-42' },
+    { resume_sha: 'refs/heads/next', resume_run_id: 'cloud-run-42' },
+    { resume_sha: sha, resume_run_id: '../another-run' },
+    { resume_sha: sha, resume_run_id: 42 }, { resume_sha: null, resume_run_id: null },
+  ]) {
+    assert.throws(() => candidateFromEvent('workflow_dispatch',
+      { repository: event.repository, inputs: { target: 'next', ...inputs } }, 'refs/heads/main'), /resume/i);
+  }
+});
+
 function fixture(overrides = {}) {
   const responses = {
     [`/repos/${repository}`]: { default_branch: 'main' },
@@ -125,4 +147,50 @@ test('manual pilot resolves current protected branch and requires matching succe
     event: { repository: event.repository, inputs: { target: 'next' } }, ref: 'refs/heads/main',
     get: fixture({ [`/repos/${repository}/actions/workflows/ci.yml/runs?branch=next&event=push&head_sha=${sha}&status=success&per_page=100&page=1`]: { workflow_runs: [] } }),
   }), /successful push CI/);
+});
+
+const resumeHead = 'b'.repeat(40);
+const resumeRunList = `/repos/${repository}/actions/workflows/ci.yml/runs?branch=next&event=push&head_sha=${sha}&status=success&per_page=100&page=1`;
+const authorizeResume = get => authorizeRelease({ eventName: 'workflow_dispatch',
+  event: { repository: event.repository, inputs: { target: 'next', resume_sha: sha, resume_run_id: 'cloud-run-42' } },
+  ref: 'refs/heads/main', get });
+
+function resumeFixture(overrides = {}) {
+  const newerRun = { ...run, id: 10, head_sha: resumeHead };
+  return fixture({
+    [`/repos/${repository}/branches/next`]: { protected: true, commit: { sha: resumeHead } },
+    [resumeRunList]: { workflow_runs: [run] },
+    [`/repos/${repository}/compare/${sha}...${resumeHead}`]: { status: 'ahead' },
+    // Both commits have passing CI. Selecting newer CI must not silently
+    // replace the original commit paired with the requested Cloud run.
+    [`/repos/${repository}/actions/workflows/ci.yml/runs?branch=next&event=push&head_sha=${resumeHead}&status=success&per_page=100&page=1`]: { workflow_runs: [newerRun] },
+    [`/repos/${repository}/actions/runs/10`]: newerRun,
+    [`/repos/${repository}/actions/runs/10/jobs?filter=latest&per_page=100&page=1`]: { jobs },
+    [`/repos/${repository}/compare/${resumeHead}...${resumeHead}`]: { status: 'identical' },
+    ...overrides,
+  });
+}
+
+test('manual resume authorizes the original reachable commit after the protected branch advances', async () => {
+  assert.deepEqual(await authorizeResume(resumeFixture()), { branch: 'next', sha, runId: 9, skip: false });
+});
+
+test('manual resume rejects a commit without matching successful push CI', async () => {
+  await assert.rejects(authorizeResume(resumeFixture({ [resumeRunList]: { workflow_runs: [] } })), /successful push CI/);
+});
+
+test('manual resume refreshes CI identity and still requires every successful job', async () => {
+  for (const overrides of [
+    { [`/repos/${repository}/actions/runs/9`]: { ...run, conclusion: 'failure' } },
+    { [`/repos/${repository}/actions/runs/9`]: { ...run, event: 'pull_request' } },
+    { [`/repos/${repository}/actions/runs/9`]: { ...run, head_sha: resumeHead } },
+    { [`/repos/${repository}/actions/runs/9`]: { ...run, head_repository: { full_name: 'fork/repo' } } },
+    { [`/repos/${repository}/actions/runs/9/jobs?filter=latest&per_page=100&page=1`]: { jobs: jobs.map(job => job.name === 'ios-native' ? { ...job, conclusion: 'failure' } : job) } },
+  ]) await assert.rejects(authorizeResume(resumeFixture(overrides)), /CI/);
+});
+
+test('manual resume rejects a commit that is no longer reachable from the protected branch', async () => {
+  await assert.rejects(authorizeResume(resumeFixture({
+    [`/repos/${repository}/compare/${sha}...${resumeHead}`]: { status: 'diverged' },
+  })), /no longer on the protected branch/);
 });
