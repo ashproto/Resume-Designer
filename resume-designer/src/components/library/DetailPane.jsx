@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../ui/button.jsx';
 import { Input } from '../ui/input.jsx';
 import { Label } from '../ui/label.jsx';
@@ -240,8 +241,13 @@ export default function DetailPane({ variant, applications, onAfterDelete, onClo
   const openVariant = () => { loadVariant(variant.id); onClose(); };
 
   const duplicate = () => {
-    const name = generateUniqueVariantName(`${variant.name} (Copy)`, getVariants());
-    createVariant(name, JSON.parse(JSON.stringify(variant.data))); // loads the copy + notifies
+    try {
+      const name = generateUniqueVariantName(`${variant.name} (Copy)`, getVariants());
+      createVariant(name, JSON.parse(JSON.stringify(variant.data))); // loads the copy + notifies
+    } catch (error) {
+      toast.error(`Could not duplicate this résumé: ${error.message} `
+        + 'You can recover its data using Settings → Data → Export Backup, or import a corrected file.');
+    }
   };
 
   const commitRename = () => {
