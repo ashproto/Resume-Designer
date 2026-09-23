@@ -67,12 +67,19 @@ Apple documents product discovery with
 the result must have `displayName: On Paper`, `bundleIdentifier: com.onpaper.app`
 and `containingSchemes: [resume-designer_iOS]`.
 
-The Cloud manifest maps **On Paper** and the existing server label
-`resume-designer_iOS` to the same product UUID. Xcode adds the legacy mapping
-when reopening the project; preserve both until Apple refreshes that label.
-The product UUID and workflow UUID remain unchanged. Local discovery does not
-prove that Apple has refreshed an existing server-side product label; verify
-that separately in Xcode Cloud. No product deletion is part of this rename.
+On 2026-09-23, the empty Cloud product was deleted and recreated after a fresh
+configuration backup and checks confirming zero Cloud runs and uploaded builds.
+Apple's API now reports the product name **On Paper**, with product UUID
+`2987ffd0-f926-472f-b666-a076fdf88fb2`. The Cloud manifest contains only that
+**On Paper** association; its Xcode-generated top-level ID remains
+`7fdce92a-6b2e-4b92-a906-0a6eba3d58bc`. Do not restore the deleted product's
+association or its legacy display-name mapping.
+
+The replacement workflow and GitHub environment now use the new registration;
+see [current TestFlight setup](testflight-automation.md#current-activation-state).
+The App Store Connect app, bundle ID, internal tester group and local Tauri
+identities are unchanged. Cloud signing, upload and TestFlight delivery still
+require the first live pilot.
 
 ## Re-running `tauri ios init` — measured, not assumed
 

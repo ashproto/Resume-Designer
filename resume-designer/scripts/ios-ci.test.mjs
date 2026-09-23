@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,6 +178,75 @@ fs.writeFileSync(path.join(out, 'libon_paper_lib.a'), 'compiled-library');
   writeFileSync(library, 'previous-library');
   assert.notEqual(invoke({ CI_TEST_CARGO_FAIL: '1' }).status, 0);
   assert.equal(readFileSync(library, 'utf8'), 'previous-library');
+});
+
+function diagnosticFixture(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'on-paper-native-diagnostics-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = join(root, 'app');
+  for (const directory of ['scripts', 'dist', 'src-tauri']) mkdirSync(join(fixture, directory), { recursive: true });
+  for (const file of ['ios-ci.mjs', 'ios-ci-swift.sh']) copyFileSync(join(scripts, file), join(fixture, 'scripts', file));
+  writeFileSync(join(fixture, 'dist/index.html'), '<!doctype html>');
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const trace = join(root, 'resolver-calls.jsonl');
+  const canary = 'CI-DIAGNOSTIC-CANARY-DO-NOT-LOG';
+  writeFileSync(join(bin, 'xcrun'), `#!${process.execPath}\n` + `
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.CI_TEST_TRACE, JSON.stringify(args) + '\\n');
+if ((process.env.CI_TEST_FAIL === 'sdk' && args[0] === '--sdk') ||
+    (process.env.CI_TEST_FAIL === 'swift' && args[0] === '--find')) {
+  process.stderr.write(process.env.CI_TEST_CANARY);
+  process.exit(9);
+}
+console.log(args[0] === '--find' ? '/Xcode/swift' : '/Xcode/SDK');
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\nconsole.error('compiler: expected regression diagnostic'); process.exit(12);\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, PLATFORM_NAME: 'iphonesimulator',
+    CONFIGURATION: 'debug', ARCHS: 'arm64', OP_IOS_CI_OUTPUT_DIR: join(root, 'output'),
+    OP_RUST_LIB_ROOT: join(root, 'Externals'), CI_TEST_TRACE: trace, CI_TEST_CANARY: canary };
+  const invoke = overrides => spawnSync(process.execPath, [join(fixture, 'scripts/ios-ci.mjs'), 'native'], {
+    env: { ...env, ...overrides }, encoding: 'utf8',
+  });
+  return { root, trace, canary, invoke };
+}
+
+test('native rejects an unrecognized environment SDK before invoking xcrun', t => {
+  const fixture = diagnosticFixture(t);
+  const result = fixture.invoke({ PLATFORM_NAME: fixture.canary });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Unsupported iOS target or configuration/);
+  assert.ok(!existsSync(fixture.trace), 'the environment value must never reach xcrun');
+  assert.ok(!(result.stdout + result.stderr).includes(fixture.canary));
+});
+
+for (const [failure, diagnostic] of [['sdk', /Cannot locate macOS SDK/], ['swift', /Cannot locate Swift/]]) {
+  test(`native ${failure} failure reports controlled diagnostics without captured tool stderr`, t => {
+    const fixture = diagnosticFixture(t);
+    const result = fixture.invoke({ CI_TEST_FAIL: failure });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, diagnostic);
+    assert.ok(!(result.stdout + result.stderr).includes(fixture.canary));
+  });
+}
+
+test('native filesystem failure does not log the exception path', t => {
+  const fixture = diagnosticFixture(t);
+  const blockedOutput = join(fixture.root, fixture.canary);
+  writeFileSync(blockedOutput, 'not a directory');
+  const result = fixture.invoke({ OP_IOS_CI_OUTPUT_DIR: blockedOutput });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /iOS CI failed/);
+  assert.ok(!(result.stdout + result.stderr).includes(fixture.canary));
+});
+
+test('native compiler output remains inherited on a failed build', t => {
+  const fixture = diagnosticFixture(t);
+  const result = fixture.invoke();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /compiler: expected regression diagnostic/);
+  assert.match(result.stderr, /cargo/i);
 });
 
 test('actual Cloud hooks stop nonrelease invocations before dependency installs or plist writes', () => {

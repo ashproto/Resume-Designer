@@ -7,8 +7,9 @@ to the configured internal TestFlight group. App Store submission is separate.
 
 ## Current activation state
 
-Account setup is configured; the implementation awaits merge and a live pilot.
-Automatic dispatch is **off**
+As of 2026-09-23, account setup is configured. PR #133 is merged with
+`skip-build`; promotion PR #134 is pending review fixes. Promotion to `main`
+and the first live pilot remain outstanding. Automatic dispatch is **off**
 unless the repository variable `IOS_TESTFLIGHT_AUTOMATION_ENABLED` is exactly
 `true`. A successful local archive is not evidence of Cloud signing, upload,
 processing, or TestFlight installation. Complete the pilot below before enabling
@@ -23,22 +24,40 @@ requirement on both `main` and `next`. App Store Connect credentials and the
 verified app/group/workflow IDs are now stored in that environment. The existing Apple/CSC
 secrets are for desktop releases; this lane does not use them.
 
-The App Store Connect record is **OnPaper - Career Workspace** (`6815088694`),
-bundle **`com.onpaper.app`**. The owner deployed the current `SyncUnit` schema to
-the production **`iCloud.com.onpaper.app`** container. Apple's API confirms the
-enabled **On Paper – TestFlight** workflow uses the committed project and shared
-scheme, restricted editing, clean builds, Xcode **27 (27A266a)**, and macOS
-**27 (26A428)**. Its only start condition is manual tags beginning with
-`ios-testflight/`; its sole action is an App Store eligible iOS archive. The
-workflow's internal TestFlight post-action selects **On Paper Internal**, as
-verified in Xcode. API checks confirm that group belongs to this app and has one
-tester. The release controller's workflow validation passes against the live
-Apple metadata. No Cloud runs or uploaded builds existed at this preflight.
-Signing, upload, processing, installation and production device sync still await
-the pilot; API authentication and configuration checks do not establish them.
+The empty Xcode Cloud product was recreated on 2026-09-23 after a fresh
+configuration backup and checks confirming zero Cloud runs and uploaded builds.
+Apple's API now reports its name as **On Paper**. The app, bundle ID and internal
+tester group are unchanged:
 
-Local verification on 2026-09-22 covers the release-readiness and automation
-candidate based on `next` at `75536fcd`:
+| Registration | Verified value |
+| --- | --- |
+| App Store Connect app | **OnPaper - Career Workspace**, `6815088694` |
+| Bundle ID | `com.onpaper.app` |
+| Cloud product | **On Paper**, `2987ffd0-f926-472f-b666-a076fdf88fb2` |
+| Cloud workflow | **On Paper – TestFlight**, `F77BFDD6-479B-44D2-B772-FFDB25F9D40D` |
+| Internal group | **On Paper Internal**, `7d1c1c5e-f6fd-40a1-9339-51b6c255f362` (one tester) |
+
+The replacement workflow restores the previous settings: enabled, restricted
+editing, clean builds, the committed project and shared scheme, Xcode
+**27 (27A266a)** and macOS **27 (26A428)**. Its only start condition is manual
+tags beginning with `ios-testflight/`; no automatic Cloud triggers are enabled.
+Its sole action is an App Store eligible iOS archive. The saved TestFlight
+post-action selects **only On Paper Internal**, verified in Xcode and a
+screenshot. The GitHub environment's `XCODE_CLOUD_WORKFLOW_ID` points to the new
+workflow, and repository automatic dispatch remains `false`.
+
+The owner deployed the current `SyncUnit` schema to the production
+**`iCloud.com.onpaper.app`** container. The Cloud manifest now contains only the
+new **On Paper** product association, retaining its Xcode-generated top-level ID.
+No Cloud runs or uploaded builds exist at this checkpoint, and no TestFlight
+delivery has completed. Signing, upload, processing, installation and production
+device sync still await the pilot; configuration checks do not establish them.
+
+### Historical validation (2026-09-22)
+
+These results cover the release-readiness and automation candidate based on
+`next` at `75536fcd`; they are not a validation report for the latest promotion
+review fixes or the replacement Cloud registration:
 
 | Gate | Evidence |
 | --- | --- |

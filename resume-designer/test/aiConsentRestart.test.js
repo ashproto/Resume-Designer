@@ -32,6 +32,65 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it('does not restore a failed grant after another key fails to flush and consent deletion fails', async () => {
+  files.delete(CONSENT_KEY);
+  files.set('marker', 'present');
+  await restart();
+  backend.write.mockImplementation(async (key, value) => {
+    if (key === 'unrelated-setting') throw new Error('setting unavailable');
+    files.set(key, value);
+  });
+  backend.delete.mockRejectedValue(new Error('deletion unavailable'));
+  const states = [];
+  const unsubscribe = consent.subscribeAIConsent(() => states.push({
+    allowed: consent.hasAIConsent(), pending: consent.isAIConsentRevocationPending(),
+  }));
+  consent.setAIConsentPresenter(async () => true);
+  storage.appStorage.setItem('unrelated-setting', 'changed');
+  await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+  unsubscribe();
+  expect(consent.hasAIConsent()).toBe(false);
+
+  await restart();
+  expect(consent.hasAIConsent()).toBe(false);
+  expect(consent.isAIConsentRevocationPending()).toBe(true);
+  expect(states.at(-1)).toEqual({ allowed: false, pending: true });
+  const presenter = vi.fn(async () => true);
+  consent.setAIConsentPresenter(presenter);
+  await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+  expect(presenter).not.toHaveBeenCalled();
+
+  backend.delete.mockImplementation(async (key) => { files.delete(key); });
+  await consent.revokeAIConsent();
+  await consent.requestAIConsent();
+  expect(presenter).toHaveBeenCalledOnce();
+  expect(consent.hasAIConsent()).toBe(true);
+});
+
+it('retains failed grant cleanup for a later write recovery when deletion stays unavailable', async () => {
+  files.delete(CONSENT_KEY);
+  files.set('marker', 'present');
+  await restart();
+  let grantLanded = false;
+  backend.write.mockImplementation(async (key, value) => {
+    if (key === 'unrelated-setting' || grantLanded) throw new Error('storage unavailable');
+    files.set(key, value);
+    if (key === CONSENT_KEY) grantLanded = true;
+  });
+  backend.delete.mockRejectedValue(new Error('deletion unavailable'));
+  consent.setAIConsentPresenter(async () => true);
+  storage.appStorage.setItem('unrelated-setting', 'changed');
+  await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+  expect(consent.hasAIConsent()).toBe(false);
+
+  backend.write.mockImplementation(async (key, value) => { files.set(key, value); });
+  await expect(storage.appStorage.flush()).resolves.toBe(true);
+  await restart();
+  expect(consent.hasAIConsent()).toBe(false);
+  expect(consent.isAIConsentRevocationPending()).toBe(true);
+  await expect(consent.requestAIConsent()).rejects.toMatchObject({ code: 'AI_CONSENT_STORAGE' });
+});
+
 it('keeps failed revocation denied after a full restart and permits cleanup retry', async () => {
   backend.delete.mockRejectedValue(new Error('deletion unavailable'));
   expect(consent.hasAIConsent()).toBe(true);

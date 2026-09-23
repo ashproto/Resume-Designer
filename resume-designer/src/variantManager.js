@@ -245,7 +245,13 @@ export function deleteCurrentVariant() {
   }
 
   const newCurrentId = deleteVariant(currentVariantId);
-  recoverVariantSelection(newCurrentId);
+  if (!recoverVariantSelection(newCurrentId)) {
+    // Retained malformed copies cannot be edited. Match remote deletion by
+    // opening a fresh résumé, after recovery detaches the deleted document's
+    // autosave and history. If storage refuses it, creation reports the error
+    // and the editor stays cleared rather than accepting unsavable edits.
+    createVariant('My Resume');
+  }
   return { ok: true };
 }
 
