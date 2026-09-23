@@ -10,9 +10,13 @@
  * Single-user data volumes make a per-keystroke linear scan trivially fast.
  */
 
+import { assertResumeData } from './resumeValidation.js';
+
 /** Flatten a variant's data object into one searchable text blob. */
 export function flattenResumeText(data) {
-  if (!data) return '';
+  // Keep unreadable saved copies discoverable by name and linked metadata,
+  // without traversing body shapes that opening the resume would reject.
+  try { assertResumeData(data); } catch { return ''; }
   const parts = [data.name, data.tagline, data.summary, data.tools];
   for (const value of Object.values(data.contact || {})) parts.push(value);
   for (const section of data.sections || []) {
