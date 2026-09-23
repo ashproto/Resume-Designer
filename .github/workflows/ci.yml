@@ -48,7 +48,7 @@ jobs:
         working-directory: resume-designer
 
       - name: Release automation tests (no credentials or network)
-        run: node --test tools/*.test.mjs resume-designer/scripts/ios-ci.test.mjs
+        run: node --test tools/*.test.mjs resume-designer/scripts/ios-*.test.mjs
 
       - name: Build (Vite)
         run: npm run build

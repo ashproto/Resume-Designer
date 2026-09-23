@@ -46,9 +46,19 @@ The generated target's `name` and shared scheme's `BlueprintName` are **On
 Paper**. The generator key and shared scheme filename remain
 `resume-designer_iOS`. This is deliberate: Tauri CLI 2.11.2 selects that
 scheme and finds the target's signing/build configurations using `_iOS` in
-the `XCConfigurationList` comments. The post-generation hook changes only
-the display name and scheme references; it preserves those comments and IDs.
-It fails before writing if the generator no longer produces that contract.
+the `XCConfigurationList` comments. The post-generation hook changes the
+display name and scheme references while preserving those comments and IDs.
+Xcode rewrites the comments to match **On Paper** when saving the project.
+The supported `npm run ios -- build`, `dev` and `run` commands restore the
+legacy configuration-list labels before invoking Tauri, following the target's
+configuration-list UUID and preserving Xcode's settings. The helper accepts
+only the known legacy/On Paper labels and fails before writing if references
+or names no longer match the expected project. `npm run ios:sim` uses this path.
+
+Use `npm run ios -- <command>` for local Tauri iOS work. Direct `npx tauri ios`
+or `cargo tauri ios` commands bypass the repair; if using those commands, first
+run `node scripts/ios-project-name.mjs src-tauri/gen/apple/resume-designer.xcodeproj`
+from `resume-designer/`. The ordinary desktop Tauri commands are unchanged.
 
 Keep the hook when regenerating with either `xcodegen generate` or
 `tauri ios init`. Validate Tauri compatibility when upgrading either tool.
@@ -79,7 +89,7 @@ So the procedure is short:
 ```bash
 cd resume-designer
 git status --short src-tauri/gen/apple     # must be clean first
-npx tauri ios init
+npm run ios -- init
 git diff src-tauri/gen/apple               # read every hunk
 ```
 
@@ -102,7 +112,7 @@ table above is the checklist.
   Whether you get a stub or one fat binary varies by build; search both.
 - **`tauri ios dev` is unusable for simulators** — it misclassifies every one as
   a physical device. Use
-  `npx tauri ios build --debug --target aarch64-sim` plus
+  `npm run ios -- build --debug --target aarch64-sim` plus
   `xcrun simctl install booted "…/build/arm64-sim/On Paper.app"`.
 
 ## Frozen, and not touched by any of this

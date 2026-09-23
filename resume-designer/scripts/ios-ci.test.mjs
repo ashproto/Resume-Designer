@@ -13,7 +13,10 @@ const sha = 'a'.repeat(40);
 const cloudEnv = { CI_XCODE_CLOUD: 'TRUE', CI_TAG: `ios-testflight/next/${sha}`, CI_COMMIT: sha, CI_BUILD_NUMBER: '42' };
 
 const xcodeProject = fileURLToPath(new URL('../src-tauri/gen/apple/resume-designer.xcodeproj/', import.meta.url));
-const committedProject = readFileSync(join(xcodeProject, 'project.pbxproj'), 'utf8');
+// Xcode can save the open working copy while these tests run. Build a canonical
+// fixture from either known label; the autosave regression below tests repair.
+const committedProject = readFileSync(join(xcodeProject, 'project.pbxproj'), 'utf8')
+  .replaceAll('Build configuration list for PBXNativeTarget "On Paper"', 'Build configuration list for PBXNativeTarget "resume-designer_iOS"');
 const committedScheme = readFileSync(join(xcodeProject, 'xcshareddata/xcschemes/resume-designer_iOS.xcscheme'), 'utf8');
 
 test('branding preserves the configuration identities Tauri uses and is stable after regeneration', () => {
@@ -30,13 +33,22 @@ test('branding preserves the configuration identities Tauri uses and is stable a
   assert.match(branded.project, /name = "On Paper";/);
 });
 
+test('branding repairs Xcode-saved configuration labels without changing target identity or settings', () => {
+  const saved = committedProject.replaceAll('Build configuration list for PBXNativeTarget "resume-designer_iOS"', 'Build configuration list for PBXNativeTarget "On Paper"');
+  const repaired = brandIosTarget(saved, committedScheme);
+  const expected = saved.replaceAll('Build configuration list for PBXNativeTarget "On Paper"', 'Build configuration list for PBXNativeTarget "resume-designer_iOS"');
+  assert.deepEqual(repaired, { project: expected, scheme: committedScheme });
+  assert.deepEqual(brandIosTarget(repaired.project, repaired.scheme), repaired);
+  assert.match(repaired.project, /name = "On Paper";/);
+});
+
 test('branding stops before any file writes if generator output loses Tauri or scheme compatibility', t => {
   const root = mkdtempSync(join(tmpdir(), 'on-paper-project-contract-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const schemePath = join(root, 'xcshareddata/xcschemes/resume-designer_iOS.xcscheme');
   mkdirSync(join(root, 'xcshareddata/xcschemes'), { recursive: true });
   for (const [project, scheme, message] of [
-    [committedProject.replaceAll('Build configuration list for PBXNativeTarget "resume-designer_iOS"', 'Build configuration list for PBXNativeTarget "On Paper"'), committedScheme, /Tauri iOS configuration marker/],
+    [committedProject.replace(/Build configuration list for PBXNativeTarget "(?:resume-designer_iOS|On Paper)"/g, 'Build configuration list for PBXNativeTarget "Unknown"'), committedScheme, /Tauri iOS configuration marker/],
     [committedProject, committedScheme.replaceAll('BlueprintIdentifier = "9A022876887F3AE2402D3448"', 'BlueprintIdentifier = "UNRELATED"'), /does not reference the iOS target/],
   ]) {
     writeFileSync(join(root, 'project.pbxproj'), project);
