@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 
 import { ConfirmHost } from '@/components/ui/confirm';
+import { AIConsentHost } from '../src/components/AIConsentHost.jsx';
 import { UpdateNotesHost } from '@/components/ui/updateNotes.jsx';
 import { DeleteVariantThreadsHost } from '../src/components/chat/DeleteVariantThreadsDialog.jsx';
 import { ExperienceDateEditorHost } from '../src/components/experience/ExperienceDateEditorHost.jsx';
@@ -49,6 +50,7 @@ const MOUNTED_AT_STARTUP = [
   ['JobsDialog', JobsDialog],
   ['LibraryDialog', LibraryDialog],
   ['ConfirmHost', ConfirmHost],
+  ['AIConsentHost', AIConsentHost],
   ['UpdateNotesHost', UpdateNotesHost],
   ['DeleteVariantThreadsHost', DeleteVariantThreadsHost],
   ['ExperienceDateEditorHost', ExperienceDateEditorHost],

@@ -11,6 +11,7 @@ import { getActiveJobDescriptions } from './jobDescriptions.js';
 import { trackUsage } from './tokenTrackingService.js';
 import { createStreamAccumulator } from './aiStream.js';
 import { appStorage } from './appStorage.js';
+import { assertAIConsent, requestAIConsent } from './aiConsent.js';
 import {
   toCatalogEntry, CATALOG_SCHEMA_VERSION, deriveFeatured, stripGroupPrefix, CATALOG_SOFT_TTL_MS,
   canOutputText,
@@ -963,6 +964,8 @@ function getResumeContext() {
       context += `${section.title}:\n`;
       if (Array.isArray(section.content)) {
         context += section.content.join('\n') + '\n';
+      } else if (typeof section.content === 'string') {
+        context += section.content + '\n';
       }
       context += '\n';
     }
@@ -1044,8 +1047,14 @@ async function streamOpenRouter(modelId, messages, options = {}, hooks = {}) {
   if (reasoningOn) requestBody.reasoning = { effort: reasoningEffort };
   if (webSearch) requestBody.tools = [{ type: 'openrouter:web_search' }];
 
+  await requestAIConsent({
+    modelIds: requestBody.models || [modelId], feature: feature || 'chat',
+    webSearch: Boolean(webSearch), signal,
+  });
+
   let response;
   try {
+    assertAIConsent();
     response = await fetch(OPENROUTER_ENDPOINT, {
       method: 'POST',
       headers: {

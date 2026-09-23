@@ -1,0 +1,281 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import { cargoBuildPlan, unsignedBuildPlans } from './ios-ci.mjs';
+import { brandIosTarget } from './ios-project-name.mjs';
+
+const scripts = fileURLToPath(new URL('.', import.meta.url));
+const sha = 'a'.repeat(40);
+const cloudEnv = { CI_XCODE_CLOUD: 'TRUE', CI_TAG: `ios-testflight/next/${sha}`, CI_COMMIT: sha, CI_BUILD_NUMBER: '42' };
+
+const xcodeProject = fileURLToPath(new URL('../src-tauri/gen/apple/resume-designer.xcodeproj/', import.meta.url));
+// Xcode can save the open working copy while these tests run. Build a canonical
+// fixture from either known label; the autosave regression below tests repair.
+const committedProject = readFileSync(join(xcodeProject, 'project.pbxproj'), 'utf8')
+  .replaceAll('Build configuration list for PBXNativeTarget "On Paper"', 'Build configuration list for PBXNativeTarget "resume-designer_iOS"');
+const committedScheme = readFileSync(join(xcodeProject, 'xcshareddata/xcschemes/resume-designer_iOS.xcscheme'), 'utf8');
+
+test('branding preserves the configuration identities Tauri uses and is stable after regeneration', () => {
+  const generated = committedProject.replace('\t\t\tname = "On Paper";', '\t\t\tname = "resume-designer_iOS";');
+  const scheme = committedScheme.replaceAll('BlueprintName = "On Paper"', 'BlueprintName = "resume-designer_iOS"');
+  const branded = brandIosTarget(generated, scheme);
+  assert.deepEqual(branded, { project: committedProject, scheme: committedScheme });
+  assert.deepEqual(brandIosTarget(branded.project, branded.scheme), branded);
+  // Tauri finds this list by its comment, then uses these same configuration
+  // IDs for bundle/team/profile synchronization and export signing options.
+  const configSection = text => text.match(/\/\* Begin XCBuildConfiguration section \*\/[\s\S]*?\/\* End XCConfigurationList section \*\//)[0];
+  assert.equal(configSection(branded.project), configSection(generated));
+  assert.match(configSection(branded.project), /Build configuration list for PBXNativeTarget "resume-designer_iOS"/);
+  assert.match(branded.project, /name = "On Paper";/);
+});
+
+test('branding repairs Xcode-saved configuration labels without changing target identity or settings', () => {
+  const saved = committedProject.replaceAll('Build configuration list for PBXNativeTarget "resume-designer_iOS"', 'Build configuration list for PBXNativeTarget "On Paper"');
+  const repaired = brandIosTarget(saved, committedScheme);
+  const expected = saved.replaceAll('Build configuration list for PBXNativeTarget "On Paper"', 'Build configuration list for PBXNativeTarget "resume-designer_iOS"');
+  assert.deepEqual(repaired, { project: expected, scheme: committedScheme });
+  assert.deepEqual(brandIosTarget(repaired.project, repaired.scheme), repaired);
+  assert.match(repaired.project, /name = "On Paper";/);
+});
+
+test('branding stops before any file writes if generator output loses Tauri or scheme compatibility', t => {
+  const root = mkdtempSync(join(tmpdir(), 'on-paper-project-contract-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const schemePath = join(root, 'xcshareddata/xcschemes/resume-designer_iOS.xcscheme');
+  mkdirSync(join(root, 'xcshareddata/xcschemes'), { recursive: true });
+  for (const [project, scheme, message] of [
+    [committedProject.replace(/Build configuration list for PBXNativeTarget "(?:resume-designer_iOS|On Paper)"/g, 'Build configuration list for PBXNativeTarget "Unknown"'), committedScheme, /Tauri iOS configuration marker/],
+    [committedProject, committedScheme.replaceAll('BlueprintIdentifier = "9A022876887F3AE2402D3448"', 'BlueprintIdentifier = "UNRELATED"'), /does not reference the iOS target/],
+  ]) {
+    writeFileSync(join(root, 'project.pbxproj'), project);
+    writeFileSync(schemePath, scheme);
+    const result = spawnSync(process.execPath, [join(scripts, 'ios-project-name.mjs'), root], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+    assert.equal(readFileSync(join(root, 'project.pbxproj'), 'utf8'), project);
+    assert.equal(readFileSync(schemePath, 'utf8'), scheme);
+  }
+});
+
+function gate(overrides = {}) {
+  return spawnSync('/bin/bash', ['-c', 'source "$1/ios-ci-env.sh"; op_ios_ci_cloud_gate', 'test', scripts], {
+    env: { PATH: process.env.PATH, ...cloudEnv, ...overrides }, encoding: 'utf8',
+  });
+}
+
+test('Cloud accepts main and next exact-commit tags', () => {
+  for (const branch of ['main', 'next']) {
+    assert.equal(gate({ CI_TAG: `ios-testflight/${branch}/${sha}` }).status, 0);
+  }
+});
+
+test('Cloud refuses desktop, branch, pull request, mismatched commit and malformed build number before setup', () => {
+  for (const invalid of [
+    { CI_TAG: 'v1.0.0' }, { CI_TAG: 'next' }, { CI_TAG: '' },
+    { CI_TAG: `ios-testflight/feature/${sha}` }, { CI_COMMIT: 'b'.repeat(40) },
+    { CI_TAG: `ios-testflight/next/${sha.slice(0, 7)}` }, { CI_PULL_REQUEST_NUMBER: '12' },
+    { CI_GIT_REF: 'refs/heads/next' }, { CI_BUILD_NUMBER: '0' }, { CI_BUILD_NUMBER: '1;echo bad' },
+  ]) {
+    const result = gate(invalid);
+    assert.notEqual(result.status, 0, JSON.stringify(invalid));
+    assert.match(result.stderr, /refus/i);
+  }
+});
+
+const buildInput = {
+  appRoot: '/repo/resume-designer', outputRoot: '/tmp/isolated', sdkRoot: '/Xcode/iPhone.sdk',
+  macSdkRoot: '/Xcode/MacOSX.sdk', platform: 'iphoneos', configuration: 'release', arch: 'arm64',
+  env: { PATH: '/bin', SDKROOT: '/wrong', CFLAGS: '-isysroot /wrong', RUSTFLAGS: '-L /wrong',
+    FRAMEWORK_SEARCH_PATHS: '/iOS-only', IPHONEOS_DEPLOYMENT_TARGET: '26.0' },
+};
+
+test('device Rust uses locked release staticlib with embedded frontend and isolated output', () => {
+  const plan = cargoBuildPlan(buildInput);
+  assert.deepEqual(plan.args, ['build', '--locked', '--lib', '--target', 'aarch64-apple-ios', '--features', 'tauri/custom-protocol', '--release']);
+  assert.equal(plan.library, '/tmp/isolated/cargo/aarch64-apple-ios/release/libon_paper_lib.a');
+  assert.equal(plan.destination, '/repo/resume-designer/src-tauri/gen/apple/Externals/arm64/release/libapp.a');
+  assert.equal(plan.env.TAURI_IOS_APP_NAME, 'resume-designer');
+  assert.equal(plan.env.TAURI_CONFIG, '{"version":"1.0.0"}');
+});
+
+test('host compiler never inherits target SDK or unscoped framework flags', () => {
+  const { env } = cargoBuildPlan(buildInput);
+  for (const name of ['SDKROOT', 'CFLAGS', 'RUSTFLAGS', 'FRAMEWORK_SEARCH_PATHS']) assert.equal(env[name], undefined, name);
+  assert.equal(env.CFLAGS_aarch64_apple_darwin, '-isysroot "/Xcode/MacOSX.sdk"');
+  assert.equal(env.CXXFLAGS_x86_64_apple_darwin, '-isysroot "/Xcode/MacOSX.sdk"');
+  assert.equal(env.CFLAGS_aarch64_apple_ios, '-isysroot "/Xcode/iPhone.sdk"');
+  assert.equal(env.CXXFLAGS_aarch64_apple_ios, '-isysroot "/Xcode/iPhone.sdk"');
+});
+
+test('simulator debug builds arm64 simulator with embedded frontend', () => {
+  const plan = cargoBuildPlan({ ...buildInput, platform: 'iphonesimulator', configuration: 'debug' });
+  assert.deepEqual(plan.args, ['build', '--locked', '--lib', '--target', 'aarch64-apple-ios-sim', '--features', 'tauri/custom-protocol']);
+  assert.equal(plan.destination, '/repo/resume-designer/src-tauri/gen/apple/Externals/arm64/debug/libapp.a');
+});
+
+test('unsupported platform, device x86 and misspelled configuration fail closed', () => {
+  for (const change of [{ platform: 'macosx' }, { arch: 'x86_64' }, { configuration: 'Releasee' }]) {
+    assert.throws(() => cargoBuildPlan({ ...buildInput, ...change }), /unsupported/i);
+  }
+});
+
+test('default native run compiles simulator then archives unsigned device without a simulator UDID', () => {
+  const plans = unsignedBuildPlans('/repo/resume-designer', '/tmp/unique');
+  assert.equal(plans.length, 2);
+  assert.equal(plans[0].at(-1), 'build');
+  assert.equal(plans[1].at(-1), 'archive');
+  assert.ok(plans[0].includes('generic/platform=iOS Simulator'));
+  assert.ok(plans[1].includes('generic/platform=iOS'));
+  assert.ok(plans[1].includes('/tmp/unique/On Paper.xcarchive'));
+  for (const args of plans) {
+    assert.ok(args.includes('CODE_SIGNING_ALLOWED=NO'));
+    assert.ok(args.includes('OP_IOS_CI=1'));
+    assert.ok(args.includes('OP_IOS_CI_OUTPUT_DIR=/tmp/unique'));
+    assert.ok(!args.includes('-allowProvisioningUpdates'));
+  }
+});
+
+test('real native entry point copies only the produced library to its isolated Xcode link directory', t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'on-paper-native-contract-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = join(root, 'app');
+  for (const directory of ['scripts', 'dist', 'src-tauri']) mkdirSync(join(fixture, directory), { recursive: true });
+  for (const file of ['ios-ci.mjs', 'ios-ci-swift.sh']) copyFileSync(join(scripts, file), join(fixture, 'scripts', file));
+  writeFileSync(join(fixture, 'dist/index.html'), '<!doctype html><title>Fixture</title>');
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  // Cargo and the SDK resolver are the expensive external boundary. The real
+  // entry point still selects env/arguments, handles failure and copies bytes.
+  writeFileSync(join(bin, 'xcrun'), '#!/bin/sh\nprintf "/Xcode/%s.sdk\\n" "$2"\n', { mode: 0o755 });
+  writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\n` + `
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+fs.writeFileSync(process.env.CI_TEST_TRACE, JSON.stringify({ args, env: process.env }));
+if (process.env.CI_TEST_CARGO_FAIL) process.exit(12);
+const out = path.join(process.env.CARGO_TARGET_DIR, args[args.indexOf('--target') + 1], 'debug');
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(path.join(out, 'libon_paper_lib.a'), 'compiled-library');
+`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, PLATFORM_NAME: 'iphonesimulator',
+    CONFIGURATION: 'debug', ARCHS: 'arm64', SDKROOT: '/ios/global/sdk',
+    OP_IOS_CI_OUTPUT_DIR: root, OP_RUST_LIB_ROOT: join(root, 'Externals'), CI_TEST_TRACE: join(root, 'trace.json') };
+  const invoke = overrides => spawnSync(process.execPath, [join(fixture, 'scripts/ios-ci.mjs'), 'native'], {
+    env: { ...env, ...overrides }, encoding: 'utf8',
+  });
+  const result = invoke();
+  assert.equal(result.status, 0, result.stderr);
+  const library = join(root, 'Externals/arm64/debug/libapp.a');
+  assert.equal(readFileSync(library, 'utf8'), 'compiled-library');
+  const trace = JSON.parse(readFileSync(env.CI_TEST_TRACE, 'utf8'));
+  assert.equal(trace.env.SDKROOT, undefined);
+  assert.equal(trace.env.CARGO_TARGET_DIR, join(root, 'cargo'));
+  assert.ok(trace.args.includes('aarch64-apple-ios-sim'));
+  writeFileSync(library, 'previous-library');
+  assert.notEqual(invoke({ CI_TEST_CARGO_FAIL: '1' }).status, 0);
+  assert.equal(readFileSync(library, 'utf8'), 'previous-library');
+});
+
+function diagnosticFixture(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'on-paper-native-diagnostics-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = join(root, 'app');
+  for (const directory of ['scripts', 'dist', 'src-tauri']) mkdirSync(join(fixture, directory), { recursive: true });
+  for (const file of ['ios-ci.mjs', 'ios-ci-swift.sh']) copyFileSync(join(scripts, file), join(fixture, 'scripts', file));
+  writeFileSync(join(fixture, 'dist/index.html'), '<!doctype html>');
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const trace = join(root, 'resolver-calls.jsonl');
+  const canary = 'CI-DIAGNOSTIC-CANARY-DO-NOT-LOG';
+  writeFileSync(join(bin, 'xcrun'), `#!${process.execPath}\n` + `
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.CI_TEST_TRACE, JSON.stringify(args) + '\\n');
+if ((process.env.CI_TEST_FAIL === 'sdk' && args[0] === '--sdk') ||
+    (process.env.CI_TEST_FAIL === 'swift' && args[0] === '--find')) {
+  process.stderr.write(process.env.CI_TEST_CANARY);
+  process.exit(9);
+}
+console.log(args[0] === '--find' ? '/Xcode/swift' : '/Xcode/SDK');
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\nconsole.error('compiler: expected regression diagnostic'); process.exit(12);\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, PLATFORM_NAME: 'iphonesimulator',
+    CONFIGURATION: 'debug', ARCHS: 'arm64', OP_IOS_CI_OUTPUT_DIR: join(root, 'output'),
+    OP_RUST_LIB_ROOT: join(root, 'Externals'), CI_TEST_TRACE: trace, CI_TEST_CANARY: canary };
+  const invoke = overrides => spawnSync(process.execPath, [join(fixture, 'scripts/ios-ci.mjs'), 'native'], {
+    env: { ...env, ...overrides }, encoding: 'utf8',
+  });
+  return { root, trace, canary, invoke };
+}
+
+test('native rejects an unrecognized environment SDK before invoking xcrun', t => {
+  const fixture = diagnosticFixture(t);
+  const result = fixture.invoke({ PLATFORM_NAME: fixture.canary });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Unsupported iOS target or configuration/);
+  assert.ok(!existsSync(fixture.trace), 'the environment value must never reach xcrun');
+  assert.ok(!(result.stdout + result.stderr).includes(fixture.canary));
+});
+
+for (const [failure, diagnostic] of [['sdk', /Cannot locate macOS SDK/], ['swift', /Cannot locate Swift/]]) {
+  test(`native ${failure} failure reports controlled diagnostics without captured tool stderr`, t => {
+    const fixture = diagnosticFixture(t);
+    const result = fixture.invoke({ CI_TEST_FAIL: failure });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, diagnostic);
+    assert.ok(!(result.stdout + result.stderr).includes(fixture.canary));
+  });
+}
+
+test('native filesystem failure does not log the exception path', t => {
+  const fixture = diagnosticFixture(t);
+  const blockedOutput = join(fixture.root, fixture.canary);
+  writeFileSync(blockedOutput, 'not a directory');
+  const result = fixture.invoke({ OP_IOS_CI_OUTPUT_DIR: blockedOutput });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /iOS CI failed/);
+  assert.ok(!(result.stdout + result.stderr).includes(fixture.canary));
+});
+
+test('native compiler output remains inherited on a failed build', t => {
+  const fixture = diagnosticFixture(t);
+  const result = fixture.invoke();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /compiler: expected regression diagnostic/);
+  assert.match(result.stderr, /cargo/i);
+});
+
+test('actual Cloud hooks stop nonrelease invocations before dependency installs or plist writes', () => {
+  const hooks = fileURLToPath(new URL('../src-tauri/gen/apple/ci_scripts/', import.meta.url));
+  for (const hook of ['ci_post_clone.sh', 'ci_pre_xcodebuild.sh']) {
+    const result = spawnSync('/bin/bash', [join(hooks, hook)], {
+      env: { PATH: process.env.PATH, ...cloudEnv, CI_TAG: 'next' }, encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Refusing Xcode Cloud/);
+  }
+});
+
+test('locked swift-rs gets the native package engine while Swift compiler probes stay untouched', t => {
+  const root = mkdtempSync(join(tmpdir(), 'on-paper-swift-contract-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const compiler = join(root, 'real-swift');
+  writeFileSync(compiler, `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)));\n`, { mode: 0o755 });
+  for (const [args, expected] of [
+    [['build', '--sdk', '/Xcode SDK', '-Xswiftc', '-target', '-Xswiftc', 'arm64-apple-ios26.0-simulator'],
+      ['build', '--build-system', 'native', '--sdk', '/Xcode SDK', '-Xswiftc', '-target', '-Xswiftc', 'arm64-apple-ios26.0-simulator']],
+    [['-print-target-info'], ['-print-target-info']],
+  ]) {
+    const result = spawnSync('/bin/bash', [join(scripts, 'ios-ci-swift.sh'), ...args], {
+      env: { ...process.env, OP_IOS_SWIFT_EXEC: compiler }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), expected);
+  }
+  const plan = cargoBuildPlan(buildInput);
+  assert.equal(plan.env.PATH, '/tmp/isolated/swift-bin:/bin');
+});

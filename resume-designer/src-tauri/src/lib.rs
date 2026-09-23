@@ -7,6 +7,8 @@ mod ios_view;
 // see the module docs and docs/ios/swiftui-lifecycle-spike.md.
 #[cfg(target_os = "ios")]
 mod ios_shell;
+#[cfg(target_os = "macos")]
+mod desktop_sync;
 
 // `Manager` is used by the desktop `app.manage(...)` call in `setup` and by the
 // macOS-only Reopen handler below. Gating to `desktop` keeps it out of mobile
@@ -92,6 +94,10 @@ pub fn run() {
                     _ => {}
                 });
             }
+            // The CloudKit transport's host. Registers the callback only; nothing
+            // starts until the page reports its active profile.
+            #[cfg(target_os = "macos")]
+            desktop_sync::install(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -112,6 +118,22 @@ pub fn run() {
             commands::secret::secret_get,
             commands::secret::secret_set,
             commands::bridge::bridge_respond,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_reply,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_report_profile,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_note,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_dirty,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_profiles,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_resume,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_account_profiles,
+            #[cfg(target_os = "macos")]
+            desktop_sync::desktop_sync_suspension,
             #[cfg(desktop)]
             commands::updater::check_update_on_channel,
             #[cfg(desktop)]
@@ -157,6 +179,8 @@ pub fn run() {
             // rest of the session. See commands/bundle_name.rs.
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Exit) {
+                #[cfg(target_os = "macos")]
+                desktop_sync::stop();
                 commands::bundle_name::heal();
             }
 

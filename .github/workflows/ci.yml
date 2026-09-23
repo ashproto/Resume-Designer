@@ -3,21 +3,28 @@ name: CI
 on:
   pull_request:
     branches: [main, next]
+  push:
+    branches: [main, next]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0 # full history so commitlint can read base..head
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: npm
@@ -32,12 +39,16 @@ jobs:
         working-directory: resume-designer
 
       - name: Lint commit messages (commitlint)
+        if: github.event_name == 'pull_request'
         run: npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
         working-directory: resume-designer
 
       - name: Unit tests (Vitest)
         run: npm test
         working-directory: resume-designer
+
+      - name: Release automation tests (no credentials or network)
+        run: node --test tools/*.test.mjs resume-designer/scripts/ios-*.test.mjs
 
       - name: Build (Vite)
         run: npm run build
@@ -51,10 +62,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: npm
@@ -89,3 +102,47 @@ jobs:
 
       - name: clippy
         run: cargo clippy --manifest-path resume-designer/src-tauri/Cargo.toml -- -D warnings
+
+  # Public PR code only reaches ephemeral hosted runners. This job has no
+  # environment, Apple credentials, writable token, or signed artifacts.
+  ios-native:
+    name: ios-native
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: resume-designer/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable action, explicit toolchain below
+        with:
+          toolchain: 1.92.0
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Cache Rust compilation
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: resume-designer/src-tauri
+          key: ios-native-1.92.0-xcode-26.6
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: resume-designer
+
+      - name: Exercise actual Swift snapshot decoder
+        run: npx vitest run test/swiftContract.test.js
+        working-directory: resume-designer
+
+      - name: Compile simulator and archive device app without signing
+        run: bash resume-designer/scripts/ios-ci-build.sh

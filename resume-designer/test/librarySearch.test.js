@@ -37,7 +37,7 @@ const threads = [
 ];
 
 describe('flattenResumeText', () => {
-  it('includes name, sections (list + text), experience bullets, education, tools', () => {
+  it('includes name, list and legacy prose sections, experience bullets, education, tools', () => {
     const text = flattenResumeText(resumeData);
     for (const needle of ['Ash Shah', 'Kubernetes', 'Loves systems.', 'Led a team of 5', 'RISD', 'Blender']) {
       expect(text).toContain(needle);

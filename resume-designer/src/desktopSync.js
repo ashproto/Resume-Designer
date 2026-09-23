@@ -1,0 +1,214 @@
+/**
+ * The desktop half of the sync bridge.
+ *
+ * NOT `window.__opShell` — that is the iOS bridge, and it stays dormant on
+ * desktop. Same shared routes (syncHostRoutes.js), different carrier: Rust
+ * evaluates `window.__opDesktopSync.request(id, json)` on this window when the
+ * Swift transport asks the page something, and the page answers through
+ * `invoke('desktop_sync_reply', { id, json })`, keyed by that id. Id 0 is the
+ * fire-and-forget id: Swift is telling the page something and nothing is
+ * parked, so nothing is replied.
+ *
+ * `invoke` is reached by dynamic import for the same reason appStorage.js does
+ * it: the browser build must not carry a hard Tauri import.
+ */
+
+import { makeSyncHostRoutes } from './sync/syncHostRoutes.js';
+
+/** Fired on `window` when the transport suspends or resumes sync on this device. */
+export const SYNC_SUSPENSION_EVENT = 'rd:sync-suspension-changed';
+
+/**
+ * A fresh Mac's first question, before it has any registry of its own: what
+ * does the account's shared zone hold? iOS asks its native shell; here it is
+ * an async command Swift answers after reading the one registry record, with
+ * its own 8 s ceiling. Bounded here as well: an answer that never comes reads
+ * as unavailable, which mints a starter workspace — never as empty, which
+ * would claim the account has none.
+ */
+export async function askDesktopAccountProfiles(parse) {
+  const unavailable = { status: 'unavailable' };
+  let timer;
+  const ceiling = new Promise((resolve) => { timer = setTimeout(() => resolve(null), 9000); });
+  try {
+    const raw = await Promise.race([tauriInvoke('desktop_sync_account_profiles'), ceiling]);
+    if (raw == null) return unavailable;
+    return parse(raw);
+  } catch (e) {
+    console.warn('[desktopSync] account profiles unavailable', e);
+    return unavailable;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ONE import, shared by every call. Two concurrent first imports of the same
+// module — the start report and the first request racing — is exactly the
+// shape that handed the second caller a different module instance under
+// vitest's mock registry, and one shared promise is the fix in production as
+// well as in the test: the module is resolved once, and every caller awaits
+// the same resolution.
+let corePromise = null;
+const core = () => (corePromise ??= import('@tauri-apps/api/core'));
+const tauriInvoke = async (cmd, args) => (await core()).invoke(cmd, args);
+
+/**
+ * @param {object} deps
+ * @param {Function} deps.collectUnit
+ * @param {Function} deps.collectUnits   every unit this device would push for a profile
+ * @param {Function} deps.unitScopes
+ * @param {Function} deps.applyUnits
+ * @param {Function} deps.resolveConflicts
+ * @param {() => string} deps.getActiveProfileId
+ * @param {() => string[]} deps.listProfileIds  the registry's live ids — the page owns the registry
+ * @param {() => string[]} [deps.listTombstonedProfileIds]  the registry's durably deleted ids
+ * @param {(status: string) => void} [deps.markInitialProfileFetchSettled]  releases first-run work deferred until the first pull
+ * @param {(v: boolean) => void|Promise<boolean>} [deps.setSyncSuspended] mirrors the native marker into the page's durable store
+ * @param {(notify: Function) => void} [deps.setSyncDirtyNotifier]  the model's one notifier slot
+ * @param {(message: string) => void} [deps.note]  a line onto the process's stderr; the
+ *   webview console is invisible when the app is run by path, and "sync did not
+ *   start" is exactly the failure that needs a trace
+ * @returns {Promise<void>} resolves once the transport has been told to start
+ *   (or once it has decided not to) — `invoke` is reached asynchronously.
+ */
+export function initDesktopSync(deps) {
+  // The desktop host has no native sheets to re-project, so `publish` is a
+  // no-op — a constant one, so the thunk the iOS host needs is not needed here.
+  const routes = {
+    ...makeSyncHostRoutes(deps, { publish: () => {} }),
+    // A profile's FULL upload — every unit this device would push for it —
+    // asked when the transport owes one (a workspace's first gated start, an
+    // account change). Desktop-only: over the WebKit bridge iOS asks this
+    // fire-and-forget and the page posts `syncUnits` back; over this bridge
+    // it is a request with an answer, so it does not belong in the shared
+    // table. Echoes the profile id, because the transport may owe more than
+    // one and the answer has to say which it is.
+    syncCollect: ({ profileId }) => {
+      const forProfile = String(profileId ?? '');
+      return { profileId: forProfile, units: deps.collectUnits(forProfile) };
+    },
+  };
+
+  // The registry's live and durably deleted ids, as the page holds them. Told
+  // to the transport at start, and again whenever the SHARED zone lands: that
+  // is the only moment a workspace created on another device becomes known
+  // here, and the running engine takes on its zone from this report
+  // (metadata only — it fetches on its own next pass).
+  const profileReport = () => ({
+    knownProfileIds: deps.listProfileIds(),
+    tombstonedProfileIds: deps.listTombstonedProfileIds?.() ?? [],
+  });
+  const reportProfiles = () => tauriInvoke('desktop_sync_profiles', profileReport())
+    .catch((e) => console.warn('[desktopSync] registry report not handed to the transport', e));
+
+  // The Settings account section renders the paused state from the page's
+  // key; it is told to re-read whenever the transport changes it.
+  const announceSuspension = () => window.dispatchEvent(new CustomEvent(SYNC_SUSPENSION_EVENT));
+  // Native owns suspension; the page key is a mirror that a crash or reload
+  // can leave stale. A query may return after a newer purge/resume notice, so
+  // snapshots carry a revision from the native process. Never roll that back.
+  let suspensionRevision = -1;
+  let suspensionMirror = Promise.resolve();
+  const applySuspension = (snapshot) => {
+    if (typeof snapshot?.suspended !== 'boolean'
+      || !Number.isSafeInteger(snapshot?.revision) || snapshot.revision < 0) {
+      throw new Error('invalid native sync suspension state');
+    }
+    if (snapshot.revision < suspensionRevision) return suspensionMirror;
+    suspensionRevision = snapshot.revision;
+    const stored = deps.setSyncSuspended?.(snapshot.suspended);
+    announceSuspension();
+    suspensionMirror = Promise.resolve(stored).then((ok) => {
+      if (ok === false) throw new Error('could not persist native sync suspension state');
+    });
+    return suspensionMirror;
+  };
+
+  // Things Swift TELLS the page (id 0). Each is a fact about the transport,
+  // and the page decides what to do with it; none of them destroys anything.
+  const notices = {
+    // A purge is the account's owner deleting this app's iCloud data. The
+    // transport has already recorded its own durable suspension and stopped;
+    // this mirrors it into the page's key, which the UI reads. Nothing local
+    // is deleted, and only a person turns sync back on (`resumeAfterPurge`).
+    syncPurged: applySuspension,
+    syncResumed: applySuspension,
+    // Refused or unresolved units. The transport holds them in its durable
+    // ledger and re-offers them at the next drain; logged for the trace.
+    syncRefused: ({ profileId, unitIds }) =>
+      console.warn(`[desktopSync] ${(unitIds ?? []).length} unit(s) refused in ${profileId || 'the shared zone'}; held for the next drain`),
+    syncFailed: ({ failures }) => console.warn('[desktopSync] sync failures', failures),
+    syncLanded: ({ scopes }) => {
+      if ((scopes ?? []).some((scope) => !scope?.profileId)) reportProfiles();
+    },
+    // The first pull settled, or could not: first-run work the page deferred
+    // until fetched content could arrive is released either way.
+    syncInitialProfileFetchSettled: ({ status }) =>
+      deps.markInitialProfileFetchSettled?.(String(status ?? 'unavailable')),
+    syncParked: () => {},
+    syncAccountChanged: () => {},
+    syncState: () => {},
+  };
+
+  // What the page TELLS Swift: units whose bytes reached disk, each with the
+  // workspace they belong to ('' is the open one). iOS posts `syncDirty` over
+  // its WebKit handler; here it is a command. The notifier slot holds one
+  // function and initIOSShell fills it first with one that is a no-op off iOS —
+  // this runs after it and takes the slot. Without this, the Mac never sent an
+  // edit: its only uploads were the one-time full ones.
+  // The open workspace is named HERE, once, for this document: a switch on
+  // desktop reloads the page, so the active pointer can already name the next
+  // workspace while this page still holds the old document's writes. An empty
+  // id resolved later, on the other side of the bridge, would route them wrong.
+  const openProfileId = deps.getActiveProfileId() || '';
+  deps.setSyncDirtyNotifier?.((units) => {
+    const routed = units.map((u) => (u.profileId ? u : { ...u, profileId: openProfileId }));
+    tauriInvoke('desktop_sync_dirty', { units: routed }).catch((e) => {
+      console.warn('[desktopSync] dirty units not handed to the transport', e);
+    });
+  });
+
+  window.__opDesktopSync = {
+    // The explicit action after a purge: the transport re-owes every full
+    // upload, forgets the emptied server's bookkeeping, clears its suspension
+    // and starts again. The page's key is cleared by the `syncResumed` notice.
+    resumeAfterPurge: () => tauriInvoke('desktop_sync_resume'),
+    async request(id, json) {
+      let parsed;
+      try { parsed = JSON.parse(json); } catch { parsed = {}; }
+      const { kind, ...args } = parsed ?? {};
+
+      if (id === 0) {
+        try { await notices[kind]?.(args); } catch (e) { console.warn('[desktopSync] notice failed', kind, e); }
+        return;
+      }
+
+      let reply;
+      try {
+        const route = routes[kind];
+        if (!route) throw new Error(`no route for ${kind}`);
+        reply = { ok: true, value: await route(args) };
+      } catch (e) {
+        // A refusal, not silence: Swift is waiting on this id, and a missing
+        // reply only becomes a failure when its deadline runs out.
+        reply = { ok: false, error: String(e?.message ?? e) };
+      }
+      await tauriInvoke('desktop_sync_reply', { id, json: JSON.stringify(reply) });
+    },
+  };
+
+  // Reconcile BEFORE reporting the profile: a missed resume notice must not
+  // leave the model refusing units when native starts. Always report context,
+  // even while paused, so a fresh host has the profile to resume explicitly.
+  // Native enforces its own suspension gate before any CloudKit operation.
+  const note = deps.note ?? (() => {});
+  return (async () => {
+    const raw = await tauriInvoke('desktop_sync_suspension');
+    await applySuspension(JSON.parse(raw));
+    const profileId = openProfileId;
+    if (!profileId) { note('not starting: no active profile yet'); return; }
+    const { knownProfileIds, tombstonedProfileIds } = profileReport();
+    note(`reporting: profile ${profileId}, ${knownProfileIds.length} known, ${tombstonedProfileIds.length} tombstoned`);
+    await tauriInvoke('desktop_sync_report_profile', { profileId, knownProfileIds, tombstonedProfileIds });
+  })();
+}

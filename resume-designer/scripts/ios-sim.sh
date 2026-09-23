@@ -76,7 +76,7 @@ echo "==> Clearing previous build output (see note 2 above)"
 rm -rf "$APPLE/build/arm64-sim" "$APPLE/build/resume-designer_iOS.xcarchive"
 
 echo "==> Building"
-npx tauri ios build --debug --target aarch64-sim
+npm run ios -- build --debug --target aarch64-sim
 
 echo "==> Installing and launching"
 xcrun simctl terminate "$DEVICE" "$APP_ID" >/dev/null 2>&1 || true

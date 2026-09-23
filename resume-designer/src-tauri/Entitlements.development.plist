@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Identity. Xcode injects these two from the provisioning profile; Tauri
+         signs exactly this file, and without them CloudKit refuses to start
+         ("Trying to initialize a container without an application ID").
+         Both provisioning profiles permit exactly these values. -->
+    <key>com.apple.application-identifier</key>
+    <string>847VH25R7U.com.resumedesigner.app</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>847VH25R7U</string>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Stays OFF. CloudKit does not require the App Sandbox, and the failure
+         reports in the field are all sandboxed apps hitting
+         `deny mach-lookup com.apple.cloudd`. The loopback bridge and the
+         app-support directory both depend on this staying false. -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+    <!-- CloudKit. The container is SHARED with iOS by grant, not by identity:
+         two App IDs, one container. Never the default `iCloud.<bundle id>`,
+         which would be a different, empty container the app connects to
+         cleanly and never sees the phone through. -->
+    <key>com.apple.developer.icloud-services</key>
+    <array><string>CloudKit</string></array>
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array><string>iCloud.com.onpaper.app</string></array>
+    <!-- DEVELOPMENT: this file signs LOCAL builds against the macOS App Development
+         provisioning profile, which permits both. Development and
+         Production are separate data stores, and the phone's data is in Development. Selected by
+         scripts/build-mac-dev.sh through the CLI's config override; never used by CI. -->
+    <!-- Silent CloudKit pushes. CKSyncEngine creates its own database
+         subscription and fetches when the push arrives; the app only has to
+         register for remote notifications (DesktopSyncHost.start) and carry
+         this entitlement, which needs Push Notifications enabled on the App ID
+         and a provisioning profile regenerated after that. Nothing is ever shown
+         to the user; macOS does not prompt for silent pushes. -->
+    <key>com.apple.developer.aps-environment</key>
+    <string>development</string>
+    <key>com.apple.developer.icloud-container-environment</key>
+    <string>Development</string>
+  </dict>
+</plist>

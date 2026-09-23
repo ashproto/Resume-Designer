@@ -34,3 +34,7 @@ npm-debug.log*
 
 # OS files
 Thumbs.db
+
+# Provisioning profile: CI decodes the Developer ID one from a secret, local dev
+# builds copy the Development one in. Per-environment; never committed.
+embedded.provisionprofile

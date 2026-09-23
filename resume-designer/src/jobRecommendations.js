@@ -116,6 +116,10 @@ export function applyRecommendationToStore(sectionName, currentValue, suggestedV
     const skillsSectionIndex = findSkillsSectionIndex(data.sections, sectionName);
     if (!isAddNew && skillsSectionIndex >= 0) {
       const section = data.sections[skillsSectionIndex];
+      if (typeof section.content === 'string' && normalizeText(section.content) === normalizeText(currentValue)) {
+        store.update(`sections[${skillsSectionIndex}].content`, suggestedValue);
+        return true;
+      }
       if (section.content && Array.isArray(section.content)) {
         const normalizedCurrent = normalizeText(currentValue);
         for (let j = 0; j < section.content.length; j++) {
@@ -128,7 +132,7 @@ export function applyRecommendationToStore(sectionName, currentValue, suggestedV
     }
     if (skillsSectionIndex >= 0) {
       const content = data.sections[skillsSectionIndex].content || [];
-      store.update(`sections[${skillsSectionIndex}].content`, [...content, suggestedValue]);
+      store.update(`sections[${skillsSectionIndex}].content`, [...(typeof content === 'string' ? [content] : content), suggestedValue]);
       return true;
     }
   }
@@ -137,6 +141,10 @@ export function applyRecommendationToStore(sectionName, currentValue, suggestedV
     const sectionIndex = findGenericSectionIndex(data.sections, sectionName);
     if (sectionIndex >= 0) {
       const section = data.sections[sectionIndex];
+      if (!isAddNew && typeof section.content === 'string' && normalizeText(section.content) === normalizeText(currentValue)) {
+        store.update(`sections[${sectionIndex}].content`, suggestedValue);
+        return true;
+      }
       if (!isAddNew && section.content && Array.isArray(section.content)) {
         const normalizedCurrent = normalizeText(currentValue);
         for (let j = 0; j < section.content.length; j++) {
@@ -147,7 +155,7 @@ export function applyRecommendationToStore(sectionName, currentValue, suggestedV
         }
       }
       const content = section.content || [];
-      store.update(`sections[${sectionIndex}].content`, [...content, suggestedValue]);
+      store.update(`sections[${sectionIndex}].content`, [...(typeof content === 'string' ? [content] : content), suggestedValue]);
       return true;
     }
   }
@@ -269,6 +277,9 @@ function findInSections(currentValue, sections, type = null) {
     const section = sections[i];
     if (type && section.type !== type) continue;
     if (normalizeText(section.title) === normalizedCurrent) return { path: `sections[${i}].title` };
+    if (typeof section.content === 'string' && normalizeText(section.content) === normalizedCurrent) {
+      return { path: `sections[${i}].content` };
+    }
     if (section.content && Array.isArray(section.content)) {
       for (let j = 0; j < section.content.length; j++) {
         if (normalizeText(section.content[j]) === normalizedCurrent) return { path: `sections[${i}].content[${j}]` };

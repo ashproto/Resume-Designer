@@ -19,6 +19,12 @@ export function normalizeSectionType(type) {
   return 'list';
 }
 
+function sectionDisplayMode(section) {
+  // Older documents can store prose as a scalar, regardless of their type.
+  // Keep the stored type and content intact; only the presentation is prose.
+  return typeof section?.content === 'string' ? 'paragraph' : normalizeSectionType(section?.type);
+}
+
 function splitByBulletSeparators(line) {
   if (line === null || line === undefined) return [];
   return String(line)
@@ -80,6 +86,7 @@ function renderSectionLine(line, mode, variant = 'sidebar') {
 }
 
 function renderSectionContent(section, sIdx, variant = 'sidebar') {
+  if (typeof section.content === 'string') return renderProseSection(section, sIdx);
   const mode = normalizeSectionType(section?.type);
 
   if (mode === 'paragraph') {
@@ -110,7 +117,14 @@ function renderSectionContent(section, sIdx, variant = 'sidebar') {
     .join('');
 }
 
+function renderProseSection(section, sIdx) {
+  // One field, matching the native outline and the stored scalar path. Do not
+  // split bullets/newlines into new items or write through a synthetic [0].
+  return `<p class="section-paragraph" data-editable="sections[${sIdx}].content" data-multiline="true" style="white-space: pre-wrap">${formatInlineMarkdown(section.content)}</p>`;
+}
+
 function renderClassicSectionContent(section, sIdx) {
+  if (typeof section.content === 'string') return renderProseSection(section, sIdx);
   const mode = normalizeSectionType(section?.type);
   if (mode === 'paragraph') {
     return (section.content || [])
@@ -129,6 +143,7 @@ function renderClassicSectionContent(section, sIdx) {
 }
 
 function renderCreativeSectionContent(section, sIdx) {
+  if (typeof section.content === 'string') return renderProseSection(section, sIdx);
   const mode = normalizeSectionType(section?.type);
   if (mode === 'paragraph') {
     return (section.content || [])
@@ -151,7 +166,7 @@ function splitSectionsByMode(sections = []) {
   const skills = [];
 
   sections.forEach((section, sIdx) => {
-    if (normalizeSectionType(section?.type) === 'skills') {
+    if (sectionDisplayMode(section) === 'skills') {
       skills.push({ section, sIdx });
     } else {
       lists.push({ section, sIdx });
@@ -407,7 +422,7 @@ function renderStackedVerticalSections(data) {
   // Render highlights first (full width)
   lists.forEach(({ section, sIdx }) => {
     html += `
-      <div class="section stacked-vertical-section highlight-section" data-section-id="${section.id || sIdx}">
+      <div class="section stacked-vertical-section highlight-section" data-section-id="${escapeHtmlRaw(String(section.id || sIdx))}">
         <h2 class="section-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h2>
         <div class="stacked-vertical-content">
           ${renderSectionContent(section, sIdx, 'stacked')}
@@ -419,7 +434,7 @@ function renderStackedVerticalSections(data) {
   // Render skills below (full width)
   skills.forEach(({ section, sIdx }) => {
     html += `
-      <div class="section stacked-vertical-section skill-section" data-section-id="${section.id || sIdx}">
+      <div class="section stacked-vertical-section skill-section" data-section-id="${escapeHtmlRaw(String(section.id || sIdx))}">
         <h2 class="section-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h2>
         <div class="stacked-vertical-content">
           ${renderSectionContent(section, sIdx, 'stacked')}
@@ -506,11 +521,11 @@ function renderStackedSections(data) {
     if (data.sections) {
       for (let sIdx = 0; sIdx < data.sections.length; sIdx++) {
         const section = data.sections[sIdx];
-        const sectionClass = normalizeSectionType(section?.type) === 'skills'
+        const sectionClass = sectionDisplayMode(section) === 'skills'
           ? 'stacked-skill-section'
           : 'stacked-skill-section highlight-section';
         html += `
-          <div class="${sectionClass}" data-section-id="${section.id || sIdx}">
+          <div class="${sectionClass}" data-section-id="${escapeHtmlRaw(String(section.id || sIdx))}">
             <h3 class="section-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h3>
             <div class="stacked-skill-content">
               ${renderSectionContent(section, sIdx, 'stacked')}
@@ -544,12 +559,12 @@ function renderSidebar(data) {
   if (data.sections) {
     const { sidebar } = partitionSectionsByArea(data.sections);
     for (const { section, sIdx } of sidebar) {
-      const mode = normalizeSectionType(section?.type);
+      const mode = sectionDisplayMode(section);
 
       if (mode !== 'skills') {
         // Render as block-level content (bullets or paragraphs)
         html += `
-          <div class="sidebar-section" data-section-id="${section.id || sIdx}">
+          <div class="sidebar-section" data-section-id="${escapeHtmlRaw(String(section.id || sIdx))}">
             <h3 class="sidebar-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h3>
             <div class="sidebar-content">
               ${renderSectionContent(section, sIdx)}
@@ -567,7 +582,7 @@ function renderSidebar(data) {
           .join(SKILL_SEPARATOR);
 
         html += `
-          <div class="sidebar-section" data-section-id="${section.id || sIdx}">
+          <div class="sidebar-section" data-section-id="${escapeHtmlRaw(String(section.id || sIdx))}">
             <h3 class="sidebar-title" data-editable="sections[${sIdx}].title">${escapeHtml(section.title)}</h3>
             <div class="sidebar-content sidebar-skills">
               ${allSkills}

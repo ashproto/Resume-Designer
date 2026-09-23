@@ -22,6 +22,7 @@ import { getActiveProfileId, listProfiles, purgeTombstonedProfiles } from '../pr
 // key from it on every edit, so parking a loser for that variant has to go
 // through it — see parkLoser.
 import { store, CHANGE_TYPES } from '../store.js';
+import { assertResumeData } from '../resumeValidation.js';
 // The four modules that hold their whole key in memory the way the store holds
 // the loaded document — see KEY_OWNERS below.
 import {
@@ -279,18 +280,18 @@ function isFieldValue(value) {
  * write (mergeData) and the in-memory adoption (store.adoptDocument) must
  * accept exactly the same units or they disagree about what this device holds —
  * see `applyUnits`, which refuses on this before `mergeData` is reached — and
- * `parkLoser` unwraps the same way, version-history entries holding the
- * document too.
+ * `parkLoser` unwraps the same way, but may retain malformed data as a recovery
+ * copy. Such a copy must never become the saved/open document through sync.
  */
-function resumeDocument(payload) {
-  let record;
+function resumeDocument(payload, { recoveryCopy = false } = {}) {
   try {
-    record = JSON.parse(payload);
+    const document = JSON.parse(payload)?.data;
+    if (!document || typeof document !== 'object') return null;
+    if (!recoveryCopy) assertResumeData(document);
+    return document;
   } catch {
     return null;
   }
-  const document = record?.data;
-  return document && typeof document === 'object' ? document : null;
 }
 
 /**
@@ -1808,7 +1809,7 @@ export async function resolveConflicts(conflicts) {
   // save conflict was merged and durably flushed and then never acted on; worse
   // than a missed apply, because the transport keeps the SERVER's change tag on
   // this answer, so nothing re-delivers it.
-  if (durable) reconcileRemoteDeletions();
+  if (durable) await reconcileRemoteDeletions();
   // Same discard as `applyUnits`, and reached the same way: `accumulate` runs on
   // this path, so a tombstone can populate the reaction flags here too. Wired
   // into only the one caller the report named, a conflict-path tombstone that
@@ -1969,7 +1970,9 @@ export function parkLoser(unitId, payload, profileId = '') {
   const variantId = unitId.slice(RESUME_UNIT_PREFIX.length);
   if (!variantId) return false;
 
-  const data = resumeDocument(payload);
+  // A losing copy remains recoverable even when a renderer cannot open it.
+  // History marks it as sync-conflict, which ordinary Undo/Redo skips.
+  const data = resumeDocument(payload, { recoveryCopy: true });
   if (!data) return false;
 
   const entry = {

@@ -46,6 +46,8 @@ import { ChangelogHistory } from './ChangelogHistory.jsx';
 import { AccountSection } from './settings/AccountSection.jsx';
 import { exportFullBackupWithFeedback, importBackupFromFile, importLegacyElectronWithFeedback } from '../backupFlow.js';
 import { getBridgeToken } from '../bridge.js';
+import { hasAIConsent, isAIConsentRevocationPending, requestAIConsent, revokeAIConsent, subscribeAIConsent } from '../aiConsent.js';
+import { PrivacyPolicyContent } from './PrivacyPolicyContent.jsx';
 
 // Settings panel — composed from genuine shadcn primitives following shadcn's own
 // settings/forms patterns: a left nav rail (ghost items, terracotta-tinted active
@@ -147,6 +149,22 @@ function UsageTable({ headers, rows }) {
 export default function SettingsDialog() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState('general');
+  const [aiSharing, setAISharing] = useState(hasAIConsent);
+  const [aiRevocationPending, setAIRevocationPending] = useState(isAIConsentRevocationPending);
+  const [aiSharingBusy, setAISharingBusy] = useState(false);
+  useEffect(() => subscribeAIConsent(() => {
+    setAISharing(hasAIConsent());
+    setAIRevocationPending(isAIConsentRevocationPending());
+  }), []);
+  const changeAISharing = async () => {
+    setAISharingBusy(true);
+    try {
+      if (hasAIConsent() || isAIConsentRevocationPending()) await revokeAIConsent();
+      else await requestAIConsent();
+    } catch (error) {
+      if (error?.code !== 'AI_CONSENT_DECLINED') toast.error(error.message);
+    } finally { setAISharingBusy(false); }
+  };
 
   // Form/display state, seeded from the services each time the dialog opens.
   const [apiKey, setApiKey] = useState('');
@@ -200,6 +218,8 @@ export default function SettingsDialog() {
   // Seed all fields from persisted state.
   const seed = useCallback(() => {
     const s = getSettings();
+    setAISharing(hasAIConsent());
+    setAIRevocationPending(isAIConsentRevocationPending());
     setApiKey(s.openrouterKey || '');
     setKeyDirty(false);
     setAutoFallback(!!s.autoFallback);
@@ -235,9 +255,8 @@ export default function SettingsDialog() {
   // Describe where the key actually lands, rather than claiming a keychain the
   // browser build does not have. Deliberately platform-neutral on desktop: this
   // reads the same whether the backend is the macOS Keychain or Windows
-  // Credential Manager. In the browser there is no keychain, so the key is held
-  // for the session and never written down — say that plainly, since it means
-  // the user has to enter it again next time.
+  // Credential Manager. The browser uses encrypted storage when available,
+  // with the failure and memory-only states described separately below.
   // Say so up front when the keychain faulted. Otherwise the first the user
   // hears of it is a failed save after they have typed a key in.
   const readOnlyKeychain = isReadOnly();
@@ -585,6 +604,10 @@ export default function SettingsDialog() {
                   <SettingRow label="Version">
                     <Badge variant="secondary">On Paper {version}</Badge>
                   </SettingRow>
+                  <details className="mt-4 text-sm">
+                    <summary className="cursor-pointer font-medium">Privacy policy</summary>
+                    <div className="mt-4"><PrivacyPolicyContent /></div>
+                  </details>
                 </section>
               </div>
             )}
@@ -592,6 +615,16 @@ export default function SettingsDialog() {
             {/* AI */}
             {tab === 'api-keys' && (
               <div className="space-y-6">
+                <section className="space-y-3">
+                  <SectionHeader title="AI data sharing" description={aiRevocationPending
+                    ? 'Paused for this session. Retry stopping AI sharing to save the change before closing the app.'
+                    : aiSharing
+                    ? 'Allowed on this device. You can stop future requests without removing your saved work.'
+                    : 'Review which information goes to OpenRouter and model providers before using AI.'} />
+                  <Button variant="outline" disabled={aiSharingBusy} onClick={changeAISharing}>
+                    {aiRevocationPending ? 'Retry stopping AI sharing' : aiSharing ? 'Stop AI sharing' : 'Review AI data sharing'}
+                  </Button>
+                </section>
                 <section className="space-y-2">
                   <Label htmlFor="settings-openrouter-key">OpenRouter API key</Label>
                   <div className="flex gap-2">

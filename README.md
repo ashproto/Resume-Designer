@@ -21,7 +21,7 @@
 
 **On Paper, formerly Resume Designer**, is a private career workspace for resumes and job applications. You keep **one profile** — your full work history, skills, education, and projects — and shape it into a focused resume for each role you go after. An optional AI assistant (powered by your own [OpenRouter](https://openrouter.ai) key) helps you draft, rewrite, and tailor content to a job description, and every AI edit is shown as an inline diff you approve or reject.
 
-Your resume data never leaves your machine except for the AI calls you explicitly make — there's no account, no backend, and no telemetry.
+Your work is stored on your device. On Apple platforms, it can also sync through your own iCloud account. Optional AI requests send the relevant content to OpenRouter and its model providers; On Paper has no required account or analytics service.
 
 ## Features
 
@@ -79,13 +79,14 @@ The AI features are optional and **use your own [OpenRouter](https://openrouter.
 2. Paste it into On Paper when prompted (or in Settings).
 3. Pick a model and start chatting or tailoring.
 
-Your key is stored locally on your device and is sent only to OpenRouter to make the AI requests you trigger. You only pay OpenRouter for what you use; everything else in the app works without a key.
+Native apps store your key in the operating system’s credential store. On Apple devices, it can sync through iCloud Keychain within the app’s access group; the iPhone/iPad and Mac apps use separate groups. The key is sent to OpenRouter to authorize AI requests. You pay OpenRouter for usage; editing and exporting work without a key.
 
 ## Privacy & data
 
-- **Local-first:** resumes, profile, and settings live on your device — the desktop app stores them as plain files under its application-support folder; the browser build uses browser local storage.
-- **No account, no backend, no analytics.** Network use is limited to three things: the AI requests you make to OpenRouter; the desktop app's automatic update check on launch (GitHub Releases); and **web fonts for the resume document** — a Google-Fonts typography pairing loads from `fonts.googleapis.com` / `fonts.gstatic.com` only while it's the selected style. Choose a **system-font pairing** in Settings and the app makes zero font requests; its own UI fonts (Geist) are always bundled. (The desktop update check runs regardless; the browser build checks for neither updates nor telemetry.)
-- Export a full **JSON backup** any time, and import it on another machine.
+- **Local storage and iCloud:** native apps save workspace data on your device; the browser uses browser storage. On iPhone, iPad, and Mac, CloudKit can also copy resumes, profiles, jobs, chats, settings, and history to your own iCloud account. Sync can run automatically. The developer does not operate a server that receives these documents.
+- **Optional AI sharing:** after your permission, AI features send relevant messages, resume/profile content, job descriptions, or imported text to OpenRouter and downstream model providers. Fallback and web search can involve additional providers. Their retention and training policies vary; bringing your own key does not guarantee zero retention. You can withdraw permission for future AI requests in Settings.
+- **Other network requests:** the app fetches OpenRouter’s model list; desktop updates and release notes use GitHub; Google-hosted document fonts load for saved or selected styles, including the default pairing. Choose system fonts to avoid new Google font downloads for that style. Interface fonts are bundled. Outside services receive normal connection information; the app has no advertising or analytics service.
+- **Backups and deletion:** export a **JSON backup** in Settings and import it on another device. New backups exclude the API key but contain personal app data. Deleting a document or profile does not erase every history, iCloud, provider, or backup copy. See the [privacy policy](website/privacy.html) for storage, deletion, and support details; the same notice is available inside the app.
 
 ## Run from source
 

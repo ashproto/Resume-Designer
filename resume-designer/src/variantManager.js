@@ -17,6 +17,7 @@ import { store, generateId, EMPTY_RESUME } from './store.js';
 import { storageErrorToast } from './storageToast.js';
 import { assignGroupIds, groupExperience } from './experienceGroups.js';
 import { notify as notifyUser } from './native.js';
+import { assertResumeData } from './resumeValidation.js';
 import {
   getVariants,
   getCurrentVariantId,
@@ -101,12 +102,16 @@ export function initVariants(onVariantChange) {
   currentVariantId = getCurrentVariantId();
 
   if (currentVariantId) {
-    if (!loadVariant(currentVariantId)) {
-      // Dangling pointer: the persisted current id references a variant that
-      // no longer exists, so loadVariant bailed before its notify(). Publish
-      // the real list anyway so the header recovers instead of keeping the
-      // stale pre-init (empty) snapshot.
-      notify();
+    const selected = getVariants()[currentVariantId];
+    const problem = selected ? variantProblem(selected) : null;
+    if (problem || !selected) {
+      // A malformed import from an older version must not prevent the shell
+      // from starting. Keep its original data/history for backup, but never
+      // render it or attach the autosave writer to it.
+      recoverVariantSelection();
+      if (problem) reportInvalidVariant(problem);
+    } else {
+      loadVariant(currentVariantId);
     }
   } else {
     // No persisted selection yet; still publish an initial snapshot so any
@@ -117,8 +122,46 @@ export function initVariants(onVariantChange) {
   return currentVariantId;
 }
 
+function variantProblem(variant) {
+  try {
+    assertResumeData(variant.data);
+    return null;
+  } catch (error) {
+    return error.message;
+  }
+}
+
+function reportInvalidVariant(problem) {
+  void notifyUser({
+    title: 'Could not open this résumé', type: 'error',
+    message: `${problem} The saved copy has been kept unchanged. `
+      + 'You can recover its data with Export Backup in Settings, or import a corrected file.',
+  });
+}
+
 export function getCurrentId() {
   return currentVariantId;
+}
+
+/**
+ * Move off an unreadable or deleted document without leaving its autosave
+ * writer or editable contents active. Damaged copies stay available in backup.
+ * Returns the selected id, or null after clearing the editor if none is usable.
+ */
+export function recoverVariantSelection(preferredId = null, excludedIds = []) {
+  const candidates = getVariantList().filter((variant) => !excludedIds.includes(variant.id));
+  const preferred = candidates.find((variant) => variant.id === preferredId);
+  const replacement = preferred && !variantProblem(preferred)
+    ? preferred : candidates.find((variant) => !variantProblem(variant));
+  if (replacement && loadVariant(replacement.id)) return replacement.id;
+
+  currentVariantId = null;
+  setCurrentVariantId(null);
+  initPersistence(null);
+  store.setData(null, true);
+  onVariantChangeCallback?.(null);
+  notify();
+  return null;
 }
 
 // --- CRUD --------------------------------------------------------------------
@@ -134,6 +177,12 @@ export function loadVariant(id) {
   const variant = variants[id];
   if (!variant) return false;
 
+  const problem = variantProblem(variant);
+  if (problem) {
+    reportInvalidVariant(problem);
+    return false;
+  }
+
   currentVariantId = id;
   setCurrentVariantId(id);
   store.setData(variant.data, true, id);
@@ -148,8 +197,9 @@ export function loadVariant(id) {
 }
 
 export function createVariant(name, data = null) {
-  const id = generateId('variant');
   const variantData = data || JSON.parse(JSON.stringify(EMPTY_RESUME));
+  assertResumeData(variantData);
+  const id = generateId('variant');
 
   // saveVariant reports whether the write landed (false on the browser
   // passthrough's storage quota) and loadVariant returns false when the
@@ -195,10 +245,12 @@ export function deleteCurrentVariant() {
   }
 
   const newCurrentId = deleteVariant(currentVariantId);
-  if (newCurrentId) {
-    loadVariant(newCurrentId); // notifies
-  } else {
-    notify();
+  if (!recoverVariantSelection(newCurrentId)) {
+    // Retained malformed copies cannot be edited. Match remote deletion by
+    // opening a fresh résumé, after recovery detaches the deleted document's
+    // autosave and history. If storage refuses it, creation reports the error
+    // and the editor stays cleared rather than accepting unsavable edits.
+    createVariant('My Resume');
   }
   return { ok: true };
 }

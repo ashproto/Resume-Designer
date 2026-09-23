@@ -544,10 +544,27 @@ struct ShellSnapshot: Decodable, Equatable {
     /// refusal arrives afterwards — and the toast that carries it on desktop
     /// renders under this sheet.
     var saveFailed: Bool
+    var aiSharingAllowed: Bool
+    var aiSharingRevocationPending: Bool
+    var privacyPolicy: OPPrivacyPolicy?
+
+    var aiSharingStatus: String {
+      if aiSharingRevocationPending { return "Paused — change not saved" }
+      return aiSharingAllowed ? "Allowed on this device" : "Not allowed"
+    }
+
+    var aiSharingActionTitle: String {
+      if aiSharingRevocationPending { return "Retry stopping AI sharing" }
+      return aiSharingAllowed ? "Stop AI sharing" : "Review AI data sharing"
+    }
+
+    // A failed deletion has already paused requests, but must be retried as a
+    // revocation. Negating `aiSharingAllowed` alone would grant permission.
+    var aiSharingActionAllows: Bool { !aiSharingAllowed && !aiSharingRevocationPending }
 
     static let empty = Settings(
       theme: "system", hasApiKey: false, autoFallback: false, syncEnabled: false, version: "",
-      saveFailed: false
+      saveFailed: false, aiSharingAllowed: false, aiSharingRevocationPending: false, privacyPolicy: nil
     )
   }
 
@@ -597,6 +614,28 @@ extension ShellSnapshot {
     diff = try values.decodeIfPresent(DiffReview.self, forKey: .diff)
     document = try values.decodeIfPresent(DocumentOutline.self, forKey: .document)
     design = try values.decodeIfPresent(Design.self, forKey: .design)
+  }
+}
+
+extension ShellSnapshot.Settings {
+  private enum CodingKeys: String, CodingKey {
+    case theme, hasApiKey, autoFallback, syncEnabled, version, saveFailed
+    case aiSharingAllowed, aiSharingRevocationPending, privacyPolicy
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    theme = try values.decode(String.self, forKey: .theme)
+    hasApiKey = try values.decode(Bool.self, forKey: .hasApiKey)
+    autoFallback = try values.decode(Bool.self, forKey: .autoFallback)
+    syncEnabled = try values.decode(Bool.self, forKey: .syncEnabled)
+    version = try values.decode(String.self, forKey: .version)
+    saveFailed = try values.decode(Bool.self, forKey: .saveFailed)
+    // During an update, an older cached page may omit these newer fields.
+    // Missing permission stays off while the rest of the snapshot remains usable.
+    aiSharingAllowed = try values.decodeIfPresent(Bool.self, forKey: .aiSharingAllowed) ?? false
+    aiSharingRevocationPending = try values.decodeIfPresent(Bool.self, forKey: .aiSharingRevocationPending) ?? false
+    privacyPolicy = try values.decodeIfPresent(OPPrivacyPolicy.self, forKey: .privacyPolicy)
   }
 }
 
@@ -1343,6 +1382,17 @@ final class ShellModel: ObservableObject {
     evaluate(type, extra) { reply in
       guard let onResult else { return }
       onResult((reply?["ok"] as? Bool) == true)
+    }
+  }
+
+  /// Allow time for a human decision; the JS presenter owns its five-minute limit.
+  func changeAISharing(_ allowed: Bool, completion: @escaping @MainActor (String) -> Void) {
+    evaluateAsync("setAISharing", ["value": allowed ? "true" : "false"]) { reply in
+      guard (reply?["ok"] as? Bool) == true, let message = reply?["result"] as? String else {
+        completion("Could not save that permission. Open Settings and try again.")
+        return
+      }
+      completion(message)
     }
   }
 
@@ -2465,6 +2515,10 @@ extension ShellModel {
 /// pair suspends on the bridge, and the engine awaits them: the whole point of
 /// `syncDidFetch`'s answer is that the transport must not move on before it has
 /// one.
+///
+/// Tasks created here must detach: CloudKit marks its delegate task with a
+/// task-local that an ordinary `Task` inherits. Returning from the callback or
+/// hopping to the main actor does not clear it before a later engine call.
 extension ShellModel: OPSyncHost {
   /// The unit as the page holds it RIGHT NOW, asked at send time.
   func syncUnit(withId id: String, inProfile profileId: String) async -> SyncUnit? {
@@ -2790,7 +2844,7 @@ extension ShellModel: OPSyncHost {
       // that will refetch it.
       if failure.needsDurableRetry, let unitId = failure.unitId {
         let profileId = failure.profileId
-        Task { @MainActor [weak self] in
+        Task.detached { @MainActor [weak self] in
           await self?.deferSync([unitId], inProfile: profileId.isEmpty ? nil : profileId)
         }
       }
@@ -2815,10 +2869,10 @@ extension ShellModel: OPSyncHost {
     }
 
     guard !recover.isEmpty else { return }
-    // Deferred, not inline: this runs inside the engine's event handling and
-    // `send` re-enters the engine. The task puts it on a later main-actor turn,
-    // once the event these failures belong to has been fully handled.
-    Task { @MainActor [weak self] in
+    // Detaching clears CloudKit's delegate task-local before `send` re-enters
+    // the engine. An ordinary task inherits that mark even when it runs after
+    // this callback has returned; a later main-actor turn alone is not enough.
+    Task.detached { @MainActor [weak self] in
       // "" is the open workspace, which is what `sendSync` already means by nil
       // — the same convention the `syncDirty` handler follows.
       for (profileId, unitIds) in recover {
@@ -2866,9 +2920,8 @@ extension ShellModel: OPSyncHost {
   /// "not resent" stays true across a launch. Settings explains why and offers
   /// the explicit action that re-owes every full upload before clearing it.
   ///
-  /// Deferred onto a later main-actor turn, like every other host callback that
-  /// re-enters the transport: this is called from inside the engine's event
-  /// handling and the work below cancels the engine's operations.
+  /// Detached from CloudKit's delegate task-local before cancelling the engine's
+  /// operations. Main-actor isolation alone does not leave that callback context.
   func syncDidPurgeFromICloud() {
     // BEFORE the hop, not inside `applyICloudPurge`, and this is the whole of
     // why it is written here: a kill between the engine's event and that later
@@ -2878,7 +2931,7 @@ extension ShellModel: OPSyncHost {
     // answer comes back as an expired token rather than as `.userDeletedZone` —
     // the account owner's instruction read as ordinary staleness, and undone.
     setSyncSuspended(true)
-    Task { @MainActor [weak self] in await self?.applyICloudPurge() }
+    Task.detached { @MainActor [weak self] in await self?.applyICloudPurge() }
   }
 }
 
@@ -2902,6 +2955,12 @@ private final class SnapshotBridge: NSObject, WKScriptMessageHandler {
     }
 
     switch body["kind"] as? String {
+    case "aiConsent":
+      guard let request = try? JSONDecoder().decode(OPAIConsentRequest.self, from: data) else { return }
+      Task { @MainActor in OPShell.presentAIConsent(request) }
+    case "aiConsentCancel":
+      guard let requestId = body["requestId"] as? String else { return }
+      Task { @MainActor in OPShell.cancelAIConsent(requestId) }
     case "syncAccountProfiles":
       Task { @MainActor in await self.model?.answerAccountProfilesRequest() }
     case "profilesResolved":
@@ -2935,6 +2994,9 @@ private final class SnapshotBridge: NSObject, WKScriptMessageHandler {
       // life of a document.
       let profileId = body["profileId"] as? String ?? ""
       Task { @MainActor in
+        // The prior document's request endpoint no longer exists. WebKit can
+        // reclaim it without delivering pagehide, so retire its native sheet.
+        OPShell.cancelAIConsent()
         OPShell.lockWebViewZoom()
         await self.model?.startSync(profileId: profileId)
       }
@@ -3008,6 +3070,54 @@ final class OPShell: NSObject {
   /// inference about SwiftUI's storage.
   @MainActor private static var model: ShellModel?
   @MainActor private static var bridge: SnapshotBridge?
+
+  @MainActor private static var aiConsent: (id: String, controller: UIViewController)?
+
+  /// Present above chat, jobs, or onboarding; a web dialog is hidden below them.
+  @MainActor
+  static func presentAIConsent(_ request: OPAIConsentRequest) {
+    guard let webView = model?.webView else { return }
+    let reply: (Bool) -> Void = { [weak webView] allowed in
+      guard let bytes = try? JSONSerialization.data(withJSONObject: [request.requestId, allowed]),
+            let args = String(data: bytes, encoding: .utf8) else { return }
+      webView?.evaluateJavaScript("window.__opAIConsent?.answer(...\(args))", completionHandler: nil)
+    }
+    guard aiConsent == nil, let root = webView.window?.rootViewController else {
+      reply(false)
+      return
+    }
+    let host = UIHostingController(rootView: OPAIConsentView(request: request, decide: { _ in }))
+    host.rootView = OPAIConsentView(request: request) { [weak host] allowed in
+      guard aiConsent?.id == request.requestId else { return }
+      aiConsent = nil
+      host?.dismiss(animated: true) { reply(allowed) }
+    }
+    host.isModalInPresentation = true
+    host.modalPresentationStyle = .pageSheet
+    aiConsent = (request.requestId, host)
+    var presenter = root
+    while let next = presenter.presentedViewController, !next.isBeingDismissed { presenter = next }
+    let target = presenter
+    let present = {
+      guard aiConsent?.id == request.requestId else { return }
+      guard target.viewIfLoaded?.window != nil else {
+        aiConsent = nil
+        reply(false)
+        return
+      }
+      target.present(host, animated: true)
+    }
+    if let transition = target.transitionCoordinator {
+      transition.animate(alongsideTransition: nil) { _ in present() }
+    } else { present() }
+  }
+
+  @MainActor
+  static func cancelAIConsent(_ requestId: String? = nil) {
+    guard let pending = aiConsent, requestId == nil || pending.id == requestId else { return }
+    aiConsent = nil
+    pending.controller.dismiss(animated: true)
+  }
 
   /// The launch cover's view tag, so it can be found and removed idempotently.
   private static let launchCoverTag = 0x0_C0FFEE
@@ -4822,11 +4932,78 @@ private struct SettingsSaveWarning: View {
   }
 }
 
+struct OPPrivacyPolicy: Decodable, Equatable {
+  struct Section: Decodable, Equatable {
+    let title: String
+    let paragraphs: [String]
+  }
+  let title: String
+  let date: String
+  let sections: [Section]
+}
+
+struct OPAIConsentRequest: Decodable {
+  let requestId: String
+  let title: String
+  let message: String
+  let policy: OPPrivacyPolicy
+}
+
+private struct OPPrivacyPolicyView: View {
+  let policy: OPPrivacyPolicy
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 20) {
+        Text("Last updated \(policy.date)").font(.footnote).foregroundStyle(.secondary)
+        ForEach(policy.sections.indices, id: \.self) { index in
+          VStack(alignment: .leading, spacing: 8) {
+            Text(policy.sections[index].title).font(.headline)
+            ForEach(policy.sections[index].paragraphs.indices, id: \.self) { paragraph in
+              Text(policy.sections[index].paragraphs[paragraph]).textSelection(.enabled)
+            }
+          }
+        }
+        Link("Contact support", destination: URL(string: "https://github.com/ashproto/Resume-Designer/issues")!)
+      }.padding()
+    }
+    .navigationTitle(policy.title)
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+private struct OPAIConsentView: View {
+  let request: OPAIConsentRequest
+  let decide: (Bool) -> Void
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+          Text(request.title).font(.title2.bold())
+          Text(request.message)
+          NavigationLink("Privacy policy") { OPPrivacyPolicyView(policy: request.policy) }
+        }.padding()
+      }
+      .navigationTitle("AI data sharing")
+      .navigationBarTitleDisplayMode(.inline)
+      .safeAreaInset(edge: .bottom) {
+        VStack(spacing: 12) {
+          Button("Allow AI sharing") { decide(true) }
+            .buttonStyle(.borderedProminent).controlSize(.large)
+          Button("Not now", role: .cancel) { decide(false) }
+        }.frame(maxWidth: .infinity).padding().background(.regularMaterial)
+      }
+    }
+    .interactiveDismissDisabled()
+  }
+}
+
 private struct SettingsSheet: View {
   @ObservedObject var model: ShellModel
   @Environment(\.dismiss) private var dismiss
 
   @State private var apiKeyDraft = ""
+  @State private var aiSharingBusy = false
+  @State private var aiSharingError = ""
   @State private var apiKeyFocused = false
   /// Guards the destructive remove behind one confirmation. The key cannot be
   /// read back out of the keychain to show, so a mis-tap is only recoverable by
@@ -4927,6 +5104,18 @@ private struct SettingsSheet: View {
             } message: {
               Text("The AI assistant will stop working until you add a key again. Everything else is unaffected. This also removes it from your other devices.")
             }
+          LabeledContent("AI data sharing", value: settings.aiSharingStatus)
+          Button(settings.aiSharingActionTitle) {
+            aiSharingBusy = true
+            model.changeAISharing(settings.aiSharingActionAllows) { error in
+              aiSharingBusy = false
+              aiSharingError = error
+            }
+          }
+          .disabled(aiSharingBusy)
+          if !aiSharingError.isEmpty {
+            Text(aiSharingError).font(.footnote).foregroundStyle(.red)
+          }
         } header: {
           Text("AI")
         } footer: {
@@ -5014,6 +5203,9 @@ private struct SettingsSheet: View {
 
         Section("About") {
           LabeledContent("On Paper", value: settings.version.isEmpty ? "—" : settings.version)
+          if let policy = settings.privacyPolicy {
+            NavigationLink("Privacy policy") { OPPrivacyPolicyView(policy: policy) }
+          }
         }
       }
       .navigationTitle("Settings")
