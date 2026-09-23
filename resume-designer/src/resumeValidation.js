@@ -42,7 +42,10 @@ export function assertResumeData(data, { requireIdentity = false } = {}) {
   list(data.sections, 'sections', (section, path) => {
     object(section, path);
     textFields(section, ['id', 'title', 'type', 'area'], `${path}.`);
-    list(section.content, `${path}.content`, text);
+    // Older documents and the native editor also support one scalar prose
+    // field. Its type is optional; preserve its shape and validate every item
+    // only when the content is list-backed.
+    if (typeof section.content !== 'string') list(section.content, `${path}.content`, text);
   });
   list(data.experience, 'experience', (entry, path) => {
     object(entry, path);

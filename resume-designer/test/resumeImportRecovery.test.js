@@ -37,7 +37,7 @@ describe('résumé JSON import validation', () => {
     ['education[0]', { education: [{ school: 'University' }] }],
     ['sections', { sections: { title: 'Skills' } }],
     ['sections[0]', { sections: [null] }],
-    ['sections[0].content', { sections: [{ title: 'Skills', content: 'JavaScript' }] }],
+    ['sections[0].content', { sections: [{ title: 'Skills', content: { text: 'JavaScript' } }] }],
     ['sections[0].content[0]', { sections: [{ content: [{}] }] }],
     ['experience', { experience: 'Engineer' }],
     ['experience[0]', { experience: [null] }],

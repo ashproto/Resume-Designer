@@ -10,7 +10,7 @@ const resumeData = {
   summary: 'Designer who ships.',
   sections: [
     { id: 's1', title: 'Skills', type: 'list', content: ['Figma', 'Kubernetes'] },
-    { id: 's2', title: 'About', type: 'paragraph', content: ['Loves systems.'] },
+    { id: 's2', title: 'About', type: 'text', content: 'Loves systems.' },
   ],
   experience: [
     { id: 'e1', title: 'Design Lead', company: 'Acme', dates: '2020–2024', bullets: ['Led a team of 5', 'Shipped the flagship app'] },
@@ -37,7 +37,7 @@ const threads = [
 ];
 
 describe('flattenResumeText', () => {
-  it('includes name, list and paragraph sections, experience bullets, education, tools', () => {
+  it('includes name, list and legacy prose sections, experience bullets, education, tools', () => {
     const text = flattenResumeText(resumeData);
     for (const needle of ['Ash Shah', 'Kubernetes', 'Loves systems.', 'Led a team of 5', 'RISD', 'Blender']) {
       expect(text).toContain(needle);
