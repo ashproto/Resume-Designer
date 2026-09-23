@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 let persistence;
 let variants;
 let store;
+let emptyResume;
 let renderResumeForLayout;
 
 const valid = () => ({
@@ -20,7 +21,7 @@ beforeEach(async () => {
   vi.stubGlobal('alert', vi.fn());
   persistence = await import('../src/persistence.js');
   variants = await import('../src/variantManager.js');
-  ({ store } = await import('../src/store.js'));
+  ({ store, EMPTY_RESUME: emptyResume } = await import('../src/store.js'));
   ({ renderResumeForLayout } = await import('../src/renderer.js'));
 });
 
@@ -171,26 +172,45 @@ describe('recovering selection after the open résumé is deleted', () => {
     expect(persistence.loadFromStorage().variants.open.deletedAt).toBeTruthy();
   }
 
+  it('still refuses to delete the last live résumé', () => {
+    const current = variants.createVariant('Only résumé', valid());
+    const before = localStorage.getItem('resume-designer-data');
+    const openBefore = JSON.stringify(store.getData());
+    expect(variants.deleteCurrentVariant()).toEqual({ ok: false, reason: 'last-variant' });
+    expect(localStorage.getItem('resume-designer-data')).toBe(before);
+    expect(variants.getCurrentId()).toBe(current);
+    expect(persistence.getCurrentVariantId()).toBe(current);
+    expect(JSON.stringify(store.getData())).toBe(openBefore);
+  });
+
   it('skips a damaged local deletion replacement and saves later edits to a healthy résumé', () => {
     const damaged = seed({ healthyReplacement: true });
     expect(variants.deleteCurrentVariant()).toEqual({ ok: true });
     expectEditableReplacement('good');
     expect(persistence.getVariants().bad).toEqual(damaged);
+    expect(Object.keys(persistence.getVariants()).sort()).toEqual(['bad', 'good']);
   });
 
-  it('clears the deleted document when local deletion leaves only damaged saved résumés', () => {
+  it('creates an editable fresh résumé when local deletion leaves only damaged saved résumés', () => {
     const damaged = seed();
+    const damagedHistory = '{"history":[],"historyIndex":-1}';
+    localStorage.setItem('resume-designer-history-bad', damagedHistory);
     store.update('summary', 'An edit awaiting autosave');
     expect(store.canUndo()).toBe(true);
     expect(variants.deleteCurrentVariant()).toEqual({ ok: true });
-    expect(variants.getCurrentId()).toBeNull();
-    expect(persistence.getCurrentVariantId()).toBeNull();
-    expect(store.getData()).toBeNull();
+    const replacement = variants.getCurrentId();
+    expect(replacement).toBeTruthy();
+    expect(replacement).not.toBe('open');
+    expect(replacement).not.toBe('bad');
+    expect(persistence.getVariants()[replacement].name).toBe('My Resume');
+    expect(store.getData()).toEqual(emptyResume);
     expect(store.isLoadedVariant('open')).toBe(false);
-    expect(store.getHistoryLength()).toBe(0);
+    expect(store.getHistoryLength()).toBe(1);
     expect(store.undo()).toBe(false);
-    expect(store.getData()).toBeNull();
+    expect(store.getData()).toEqual(emptyResume);
+    expectEditableReplacement(replacement);
     expect(persistence.getVariants().bad).toEqual(damaged);
+    expect(localStorage.getItem('resume-designer-history-bad')).toBe(damagedHistory);
   });
 
   it('skips a damaged remote deletion replacement and saves later edits to a healthy résumé', async () => {
@@ -212,23 +232,29 @@ describe('recovering selection after the open résumé is deleted', () => {
     expect(persistence.getVariants().bad).toEqual(damaged);
   });
 
-  it('clears the deleted document before trying a fresh résumé if that save fails', async () => {
-    seed();
+  it.each(['local', 'remote'])('clears the deleted document after %s deletion if the fresh résumé save fails', async (source) => {
+    const damaged = seed();
+    let freshSaveRefused = false;
     const originalSet = Storage.prototype.setItem;
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
       // The incoming tombstone and cleared pointer can land, but the larger
       // fresh résumé cannot — the same boundary as browser storage quota.
       if (key === 'resume-designer-data'
         && Object.values(JSON.parse(value).variants).some((variant) => variant.name === 'My Resume')) {
+        freshSaveRefused = true;
         throw new DOMException('quota exceeded', 'QuotaExceededError');
       }
       return originalSet.call(this, key, value);
     });
-    await deleteRemotely();
+    if (source === 'local') expect(variants.deleteCurrentVariant()).toEqual({ ok: true });
+    else await deleteRemotely();
+    expect(freshSaveRefused).toBe(true);
     expect(variants.getCurrentId()).toBeNull();
     expect(persistence.getCurrentVariantId()).toBeNull();
     expect(store.getData()).toBeNull();
     expect(store.isLoadedVariant('open')).toBe(false);
     expect(Object.keys(persistence.getVariants())).toEqual(['bad']);
+    expect(persistence.getVariants().bad).toEqual(damaged);
+    expect(persistence.loadFromStorage().variants.open.deletedAt).toBeTruthy();
   });
 });
