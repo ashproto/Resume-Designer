@@ -96,11 +96,11 @@ function beginRequest({ modelIds = [], feature = 'chat', webSearch = false }) {
       })), current.controller.signal);
     } catch { throw consentError(); }
     if (allowed !== true || started !== generation || current.controller.signal.aborted) throw consentError();
+    // Restore guards defer writes and still allow an empty flush to succeed.
+    // Refuse before attempting a grant, so there is no grant to clean up.
+    if (appStorage.isRestoreGuardActive()) throw consentError('AI_CONSENT_STORAGE');
     savingConsent = true;
     try {
-      // Restore guards defer writes and still allow an empty flush to succeed.
-      // A deferred grant is not permission and must not be acknowledged.
-      if (appStorage.isRestoreGuardActive()) throw consentError('AI_CONSENT_STORAGE');
       appStorage.setItem(CONSENT_KEY, JSON.stringify({
         revision: AI_CONSENT_DISCLOSURE.revision, accepted: true,
         acceptedAt: new Date().toISOString(),
@@ -110,9 +110,9 @@ function beginRequest({ modelIds = [], feature = 'chat', webSearch = false }) {
       paused = false;
     } catch (error) {
       if (started === generation) {
-        paused = true;
-        appStorage.removeItem(CONSENT_KEY);
-        await appStorage.flush();
+        // A different key can fail the flush after this grant reached disk.
+        // Use durable denial and retryable cleanup, just as for revocation.
+        await revokeAIConsent();
       }
       throw error?.code ? error : consentError('AI_CONSENT_STORAGE');
     } finally {
