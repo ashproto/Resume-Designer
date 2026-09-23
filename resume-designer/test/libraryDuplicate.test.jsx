@@ -19,6 +19,7 @@ let onError;
 beforeEach(() => {
   localStorage.clear();
   initVariants(() => {});
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800);
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     disconnect() {}
@@ -34,6 +35,7 @@ afterEach(() => {
   cleanup();
   store.saveNow();
   window.removeEventListener('error', onError);
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -73,20 +75,29 @@ describe('duplicating a résumé from the Library', () => {
     expect(screen.getByRole('heading', { name: 'Damaged résumé' })).toBeTruthy();
   });
 
-  it('still creates and selects a valid copy with a unique name', () => {
-    const original = createVariant('Healthy résumé', valid());
-    saveVariant('existing-copy', 'Healthy résumé (Copy)', valid());
+  it.each([
+    ['current', valid()],
+    ['legacy scalar prose', {
+      ...valid(), customMetadata: { keep: true },
+      sections: [{ title: 'About', area: 'sidebar', type: 'text', content: 'First line.\nSecond line.', custom: 'retained' }],
+    }],
+  ])('still previews, copies and selects a %s résumé with a unique name', (_shape, data) => {
+    const original = createVariant('Healthy résumé', data);
+    saveVariant('existing-copy', 'Healthy résumé (Copy)', data);
     openLibrary();
+    if (data.sections.length) {
+      expect(document.querySelector('.resume')?.textContent).toContain(data.sections[0].content);
+    }
 
     fireEvent.click(screen.getByRole('button', { name: 'Duplicate', exact: true }));
 
     const copy = getVariants()[getCurrentId()];
     expect(copy.id).not.toBe(original);
     expect(copy.name).toBe('Healthy résumé (Copy) (2)');
-    expect(copy.data).toEqual(valid());
-    expect(getVariants()[original].data).toEqual(valid());
+    expect(copy.data).toEqual(data);
+    expect(getVariants()[original].data).toEqual(data);
     expect(getCurrentVariantId()).toBe(copy.id);
-    expect(store.getData()).toEqual(valid());
+    expect(store.getData()).toEqual(data);
     expect(toast.error).not.toHaveBeenCalled();
     expect(uncaught).toEqual([]);
   });

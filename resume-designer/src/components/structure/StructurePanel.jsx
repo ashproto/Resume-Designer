@@ -157,18 +157,21 @@ function SectionContentList({ sectionIndex, content }) {
       ids={ids}
       onReorder={(from, to) => store.moveInArray(`sections[${sectionIndex}].content`, from, to)}
     >
-      {content.map((item, i) => (
-        <SortableItem key={ids[i]} id={ids[i]} className="flex items-center gap-1.5">
-          <DragHandle />
-          <Input
-            type="text" className="h-8 flex-1"
-            data-field={`sections[${sectionIndex}].content[${i}]`}
-            defaultValue={item}
-            onChange={(e) => writeField(`sections[${sectionIndex}].content[${i}]`, e.target.value)}
-          />
-          <RowDeleteButton onClick={() => store.removeFromArray(`sections[${sectionIndex}].content`, i)} />
-        </SortableItem>
-      ))}
+      {content.map((item, i) => {
+        const ContentField = item.includes('\n') ? Textarea : Input;
+        return (
+          <SortableItem key={ids[i]} id={ids[i]} className="flex items-center gap-1.5">
+            <DragHandle />
+            <ContentField
+              type="text" className="h-8 flex-1"
+              data-field={`sections[${sectionIndex}].content[${i}]`}
+              defaultValue={item}
+              onChange={(e) => writeField(`sections[${sectionIndex}].content[${i}]`, e.target.value)}
+            />
+            <RowDeleteButton onClick={() => store.removeFromArray(`sections[${sectionIndex}].content`, i)} />
+          </SortableItem>
+        );
+      })}
       <AddRowButton label="Add item" onClick={() => store.addToArray(`sections[${sectionIndex}].content`, 'New item')} />
     </SortableList>
   );
@@ -202,7 +205,8 @@ function currentIndexOf(path, item, fallbackIndex) {
 }
 
 function SectionItem({ section, index, activeLayout }) {
-  const type = ['skills', 'paragraph'].includes(section?.type) ? section.type : 'list';
+  const isProse = typeof section.content === 'string';
+  const type = isProse ? 'paragraph' : ['skills', 'paragraph'].includes(section?.type) ? section.type : 'list';
   const removeSection = async () => {
     const ok = await confirmDestructive({
       title: 'Delete this section?',
@@ -251,7 +255,16 @@ function SectionItem({ section, index, activeLayout }) {
               <SegmentedItem
                 key={t} size="xs"
                 active={type === t}
-                onClick={() => store.update(`sections[${index}].type`, t)}
+                onClick={() => {
+                  if (isProse && t !== 'paragraph') {
+                    // Convert only on an explicit display change, keeping the
+                    // complete prose as one item and retaining section metadata.
+                    const current = store.get(`sections[${index}]`);
+                    store.update(`sections[${index}]`, { ...current, type: t, content: [current.content] });
+                  } else {
+                    store.update(`sections[${index}].type`, t);
+                  }
+                }}
               >
                 {label}
               </SegmentedItem>
@@ -264,7 +277,13 @@ function SectionItem({ section, index, activeLayout }) {
           This template uses a single column, so Area has no visible effect here.
         </p>
       )}
-      <SectionContentList sectionIndex={index} content={section.content || []} />
+      {isProse ? (
+        <Textarea
+          data-field={`sections[${index}].content`}
+          defaultValue={section.content}
+          onChange={(e) => writeField(`sections[${index}].content`, e.target.value)}
+        />
+      ) : <SectionContentList sectionIndex={index} content={section.content || []} />}
     </SortableItem>
   );
 }

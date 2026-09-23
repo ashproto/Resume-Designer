@@ -434,12 +434,12 @@ function getContextOptions(element, path, _text) {
   }
   
   // Check if this is a section item
-  const sectionMatch = path.match(/sections\[(\d+)\]\.content\[(\d+)\]/);
+  const sectionMatch = path.match(/^sections\[(\d+)\]\.content(?:\[(\d+)\])?$/);
   if (sectionMatch) {
     const sectionIndex = parseInt(sectionMatch[1]);
     const section = data?.sections?.[sectionIndex];
     
-    if (section?.content && section.content.length > 1) {
+    if (typeof section?.content === 'string' || section?.content?.length > 1) {
       options.push({
         action: 'add',
         type: 'section',
@@ -564,6 +564,8 @@ function formatSection(section) {
     } else {
       text += section.content.join(' • ');
     }
+  } else if (typeof section.content === 'string') {
+    text += section.content;
   }
   return text;
 }
@@ -957,24 +959,74 @@ function finishEditing(element) {
 // company name inside its own bullet — so this was not an exotic case.
 const EMPHASIS_MARKERS = { strong: '**', b: '**', em: '_', i: '_', u: '++' };
 
-export function serializeEmphasis(el) {
+export function serializeEmphasis(el, { preserveLineBreaks = false } = {}) {
+  return serializeEmphasisWithSelection(el, { preserveLineBreaks }).text.trim();
+}
+
+// Formatting shortcuts replace the DOM with a raw markdown string. Map the
+// selection during that same serialization so browser-created line breaks and
+// existing emphasis count toward its offsets instead of disappearing.
+function serializeEmphasisWithSelection(el, { preserveLineBreaks = false, range = null } = {}) {
+  const atBoundary = (node, offset, position, result) => {
+    if (range?.startContainer === node && range.startOffset === offset) result.start = position;
+    if (range?.endContainer === node && range.endOffset === offset) result.end = position;
+  };
+  const children = (node) => {
+    const result = { text: '', start: null, end: null };
+    for (const [index, child] of Array.from(node.childNodes).entries()) {
+      const block = preserveLineBreaks && /^(DIV|P)$/.test(child.nodeName);
+      if (block && result.text && !result.text.endsWith('\n')) result.text += '\n';
+      atBoundary(node, index, result.text.length, result);
+      const part = walk(child);
+      for (const edge of ['start', 'end']) {
+        if (part[edge] !== null) result[edge] = result.text.length + part[edge];
+      }
+      result.text += part.text;
+      if (block && child.nextSibling && !result.text.endsWith('\n')) result.text += '\n';
+    }
+    atBoundary(node, node.childNodes.length, result.text.length, result);
+    return result;
+  };
   const walk = (node) => {
-    if (node.nodeType === 3) return node.nodeValue || '';
-    if (node.nodeType !== 1) return '';
-    const inner = Array.from(node.childNodes).map(walk).join('');
+    const leaf = { text: '', start: null, end: null };
+    if (node.nodeType === 3) {
+      leaf.text = node.nodeValue || '';
+      if (range?.startContainer === node) leaf.start = range.startOffset;
+      if (range?.endContainer === node) leaf.end = range.endOffset;
+      return leaf;
+    }
+    if (node.nodeType !== 1) return leaf;
+    if (preserveLineBreaks && node.tagName === 'BR') {
+      leaf.text = '\n';
+      atBoundary(node, 0, 0, leaf);
+      return leaf;
+    }
+    const result = children(node);
     const marker = EMPHASIS_MARKERS[node.tagName.toLowerCase()];
-    if (!marker) return inner;
+    if (!marker) return result;
     // Markers hug the text, not the spaces around it: "**bold **next" is not
     // emphasis to any reader of the stored string, and WebKit is happy to put
     // a trailing space inside the tag it creates.
-    const [, lead, body, trail] = inner.match(/^(\s*)([\s\S]*?)(\s*)$/);
-    return body ? `${lead}${marker}${body}${marker}${trail}` : inner;
+    const [, lead, body, trail] = result.text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+    if (body) {
+      for (const edge of ['start', 'end']) {
+        const offset = result[edge];
+        if (offset !== null && offset >= lead.length) {
+          result[edge] += marker.length * (offset > lead.length + body.length ? 2 : 1);
+        }
+      }
+      result.text = `${lead}${marker}${body}${marker}${trail}`;
+    }
+    return result;
   };
-  return Array.from(el.childNodes).map(walk).join('').trim();
+  return children(el);
 }
 
 // Extract the edited value, preserving format for special content types
 export function extractEditedValue(element, path) {
+  if (/^sections\[\d+\]\.content$/.test(path)) {
+    return serializeEmphasis(element, { preserveLineBreaks: true });
+  }
   // Check for skill tags (rendered as separate spans that need to be joined with •)
   const skillTags = element.querySelectorAll('.skill-tag, .skill-tag-inline');
   if (skillTags.length > 0) {
@@ -1166,9 +1218,16 @@ function toggleMarkerInEditable(editable, marker) {
   const range = selection.getRangeAt(0);
   if (!editable.contains(range.commonAncestorContainer)) return;
 
-  const start = getTextOffset(editable, range.startContainer, range.startOffset);
-  const end = getTextOffset(editable, range.endContainer, range.endOffset);
-  const result = toggleMarkdownMarker(editable.textContent || '', start, end, marker);
+  const isScalarSection = /^sections\[\d+\]\.content$/.test(editable.dataset.editable);
+  const serialized = isScalarSection
+    ? serializeEmphasisWithSelection(editable, { preserveLineBreaks: true, range })
+    : {
+      text: editable.textContent || '',
+      start: getTextOffset(editable, range.startContainer, range.startOffset),
+      end: getTextOffset(editable, range.endContainer, range.endOffset),
+    };
+  if (serialized.start === null || serialized.end === null) return;
+  const result = toggleMarkdownMarker(serialized.text, serialized.start, serialized.end, marker);
 
   editable.textContent = result.value;
   setSelectionInEditable(editable, result.start, result.end);

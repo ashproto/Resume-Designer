@@ -74,7 +74,7 @@ describe('deep search with retained damaged resumes', () => {
   it.each([
     ['education', { education: 'University' }],
     ['section', { sections: [null] }],
-    ['section content', { sections: [{ content: 'body-marker' }] }],
+    ['section content', { sections: [{ content: { text: 'body-marker' } }] }],
     ['experience', { experience: {} }],
     ['experience entry', { experience: [null] }],
     ['bullets', { experience: [{ bullets: {} }] }],

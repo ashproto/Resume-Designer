@@ -964,6 +964,8 @@ function getResumeContext() {
       context += `${section.title}:\n`;
       if (Array.isArray(section.content)) {
         context += section.content.join('\n') + '\n';
+      } else if (typeof section.content === 'string') {
+        context += section.content + '\n';
       }
       context += '\n';
     }

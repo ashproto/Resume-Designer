@@ -2009,6 +2009,8 @@ function generateMarkdown(data) {
         } else {
           md += section.content.join(' • ') + '\n';
         }
+      } else if (typeof section.content === 'string') {
+        md += section.content + '\n';
       }
       md += '\n';
     }
