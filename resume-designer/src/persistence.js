@@ -5,6 +5,7 @@
 
 import { store, generateId } from './store.js';
 import { parseResume } from './parser.js';
+import { assertResumeData } from './resumeValidation.js';
 import { isTauri, isIOSPlatform, stageTextForShare, notify } from './native.js';
 // The share sheet, for the exports iOS cannot download. `iosShell` does not
 // import this module, so the edge only goes one way.
@@ -2125,10 +2126,7 @@ export async function importFromJSON(file) {
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target.result);
-        // Basic validation
-        if (!data.name || !data.contact) {
-          throw new Error('Invalid resume JSON format');
-        }
+        assertResumeData(data, { requireIdentity: true });
         resolve(data);
       } catch (err) {
         reject(new Error('Failed to parse JSON: ' + err.message));

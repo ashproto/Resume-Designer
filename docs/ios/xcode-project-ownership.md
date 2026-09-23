@@ -15,18 +15,19 @@ src-tauri/gen/*
 
 Build output inside the Apple project is excluded by the project's own
 `src-tauri/gen/apple/.gitignore`, which Tauri generates and we keep:
-`build/`, `Externals/`, `xcuserdata/`. Committed set: **33 files** — the
+`build/`, `Externals/`, `xcuserdata/`. Committed source includes the
 xcodeproj, `project.yml`, the app icons, the Info plist, the entitlements, the
-launch storyboard, `main.mm` and its bindings header.
+launch storyboard, `main.mm` and its bindings header. The Cloud hooks in
+`ci_scripts/` are also maintained source; build/tool downloads stay ignored.
 
 ## What is hand-maintained
 
-**`project.yml` is the only file to edit.** `resume-designer.xcodeproj` is
-derived from it by `xcodegen generate`, so never hand-edit the pbxproj — the
-next regeneration would silently discard the edit.
+**Edit `project.yml` and the maintained generator hook, not the pbxproj.**
+`resume-designer.xcodeproj` is derived by `xcodegen generate`, including its
+`postGenCommand` in `scripts/ios-project-name.mjs`. Manual pbxproj edits are
+discarded by the next regeneration.
 
-Five things in `project.yml` are ours. Each is commented `HAND-MAINTAINED` in
-place:
+These parts of `project.yml` are maintained here:
 
 | Block | Why it exists |
 |---|---|
@@ -35,6 +36,43 @@ place:
 | `Externals: excludes: ["**/*.a"]` | `Externals` is empty when `tauri ios init` first runs and holds the 365 MB `libapp.a` afterwards. Without the exclude, a later `xcodegen generate` copies that static library into the app bundle's Resources. It is *linked* via the `libapp.a` dependency; it must never be a resource. |
 | `DEVELOPMENT_TEAM: "847VH25R7U"` | Tauri writes this straight into the pbxproj and never records it in `project.yml`, so `xcodegen generate` drops it and device builds stop signing. Simulator builds don't care; device builds do. |
 | the `Shell` group name | Cosmetic — keeps the shell separate from generated `Sources` in Xcode's navigator. |
+| `OP_RUST_LIB_ROOT` and library search/output paths | CI links its own static library from isolated output; it must not overwrite a developer's existing `Externals/libapp.a`. The default remains the local Tauri path. |
+| conditional `Build Rust Code` phase | Xcode Cloud invokes Xcode without a parent Tauri CLI options server. `OP_IOS_CI=1` or Cloud selects the locked Cargo helper; the regular local Tauri command is preserved. See [TestFlight automation](testflight-automation.md). |
+| `options.postGenCommand` | Sets the visible Xcode target name to **On Paper**, which Xcode Cloud uses during product discovery. Preserves the legacy target IDs, scheme name and configuration-list comments required by the local Tauri CLI. |
+
+## Xcode and Xcode Cloud naming
+
+The generated target's `name` and shared scheme's `BlueprintName` are **On
+Paper**. The generator key and shared scheme filename remain
+`resume-designer_iOS`. This is deliberate: Tauri CLI 2.11.2 selects that
+scheme and finds the target's signing/build configurations using `_iOS` in
+the `XCConfigurationList` comments. The post-generation hook changes the
+display name and scheme references while preserving those comments and IDs.
+Xcode rewrites the comments to match **On Paper** when saving the project.
+The supported `npm run ios -- build`, `dev` and `run` commands restore the
+legacy configuration-list labels before invoking Tauri, following the target's
+configuration-list UUID and preserving Xcode's settings. The helper accepts
+only the known legacy/On Paper labels and fails before writing if references
+or names no longer match the expected project. `npm run ios:sim` uses this path.
+
+Use `npm run ios -- <command>` for local Tauri iOS work. Direct `npx tauri ios`
+or `cargo tauri ios` commands bypass the repair; if using those commands, first
+run `node scripts/ios-project-name.mjs src-tauri/gen/apple/resume-designer.xcodeproj`
+from `resume-designer/`. The ordinary desktop Tauri commands are unchanged.
+
+Keep the hook when regenerating with either `xcodegen generate` or
+`tauri ios init`. Validate Tauri compatibility when upgrading either tool.
+Apple documents product discovery with
+`xcodebuild -project resume-designer.xcodeproj -describeAllArchivableProducts -json`;
+the result must have `displayName: On Paper`, `bundleIdentifier: com.onpaper.app`
+and `containingSchemes: [resume-designer_iOS]`.
+
+The Cloud manifest maps **On Paper** and the existing server label
+`resume-designer_iOS` to the same product UUID. Xcode adds the legacy mapping
+when reopening the project; preserve both until Apple refreshes that label.
+The product UUID and workflow UUID remain unchanged. Local discovery does not
+prove that Apple has refreshed an existing server-side product label; verify
+that separately in Xcode Cloud. No product deletion is part of this rename.
 
 ## Re-running `tauri ios init` — measured, not assumed
 
@@ -51,7 +89,7 @@ So the procedure is short:
 ```bash
 cd resume-designer
 git status --short src-tauri/gen/apple     # must be clean first
-npx tauri ios init
+npm run ios -- init
 git diff src-tauri/gen/apple               # read every hunk
 ```
 
@@ -74,16 +112,16 @@ table above is the checklist.
   Whether you get a stub or one fat binary varies by build; search both.
 - **`tauri ios dev` is unusable for simulators** — it misclassifies every one as
   a physical device. Use
-  `npx tauri ios build --debug --target aarch64-sim` plus
+  `npm run ios -- build --debug --target aarch64-sim` plus
   `xcrun simctl install booted "…/build/arm64-sim/On Paper.app"`.
 
 ## Frozen, and not touched by any of this
 
-Bundle identifier `com.resumedesigner.app` (Tauri derives the app-data
-directory from it, so changing it factory-resets every user), the Cargo package
-name `resume-designer`, and every `resume-designer-*` / `resume-*` storage key.
-The Xcode project name and target name are `resume-designer` for the same
-reason; only `PRODUCT_NAME` is branded **On Paper**.
+Desktop bundle identifier `com.resumedesigner.app`, iOS bundle identifier
+`com.onpaper.app`, the Cargo package name `resume-designer`, and every
+`resume-designer-*` / `resume-*` storage key remain unchanged. The Xcode
+project filename and legacy scheme are preserved for Tauri compatibility;
+the visible target and `PRODUCT_NAME` are **On Paper**.
 
 ## Reverting pbxproj churn: the test that is NOT sufficient
 

@@ -4,6 +4,7 @@
  */
 
 import { appStorage } from './appStorage.js';
+import { assertResumeData } from './resumeValidation.js';
 // The ONE guarded path-write primitive. store.update is reachable with
 // AI-supplied paths (applyChangeToStore routes every accepted change here), so
 // the __proto__/constructor/prototype segment guard must hold at this layer
@@ -222,8 +223,8 @@ function createStore() {
   // existing history behind their own undo.
   //
   // Skipped entries stay exactly where they are in the array —
-  // getHistoryEntries still lists them and restoreToEntry still restores them,
-  // which is the entire point of keeping them. Only the traversal narrows.
+  // getHistoryEntries still lists them and restoreToEntry can restore a valid
+  // copy. Damaged copies stay recoverable in backup, without being adopted.
   //
   // Doing it here rather than at each place such an entry can be inserted is
   // what makes the rule hold everywhere at once: at historyIndex 0 there is no
@@ -236,15 +237,30 @@ function createStore() {
   const isForeign = (entry) => entry?.origin != null && entry.origin !== deviceOrigin();
   const isOwnStep = (entry) => !isParked(entry) && !isForeign(entry);
   // The index undo/redo would move to from `from`, or -1 when there is none.
+  // Damaged legacy steps must not strand healthy snapshots beyond them. Skip
+  // them during traversal while retaining the original entries for recovery.
   const undoTarget = (from) => {
     let i = from - 1;
-    while (i >= 0 && !isOwnStep(history[i])) i -= 1;
+    while (i >= 0 && (!isOwnStep(history[i]) || !canRestoreHistoryEntry(i))) i -= 1;
     return i;
   };
   const redoTarget = (from) => {
     let i = from + 1;
-    while (i < history.length && !isOwnStep(history[i])) i += 1;
+    while (i < history.length && (!isOwnStep(history[i]) || !canRestoreHistoryEntry(i))) i += 1;
     return i < history.length ? i : -1;
+  };
+
+  // History can contain malformed legacy data or an archived sync loser.
+  // Validate before changing the index, document, dirty flag or save timer;
+  // keeping the entry for recovery must not let it poison the live résumé.
+  const canRestoreHistoryEntry = (index) => {
+    if (!Number.isInteger(index) || index < 0 || index >= history.length) return false;
+    try {
+      assertResumeData(history[index]?.data);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   return {
@@ -262,6 +278,20 @@ function createStore() {
     setData(newData, skipSave = false, variantId = null) {
       data = deepClone(migrateSectionAreas(newData));
       isDirty = false;
+
+      // Clearing a deleted/unreadable document must also detach its identity
+      // and undo history. Otherwise sync still sees it as open, or Undo brings
+      // its contents back into an editor with no writable résumé behind it.
+      if (newData === null) {
+        currentVariantId = null;
+        history.length = 0;
+        historyIndex = -1;
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = null;
+        this.emit('dataLoaded', null);
+        this.emit('historyChanged', { canUndo: false, canRedo: false });
+        return;
+      }
       
       // Track current variant for history persistence
       if (variantId) {
@@ -662,18 +692,18 @@ function createStore() {
     // Check if undo is available (parked sync conflicts are not undo steps —
     // see isParked)
     canUndo() {
-      return undoTarget(historyIndex) >= 0;
+      return canRestoreHistoryEntry(undoTarget(historyIndex));
     },
 
     // Check if redo is available
     canRedo() {
-      return redoTarget(historyIndex) >= 0;
+      return canRestoreHistoryEntry(redoTarget(historyIndex));
     },
 
     // Undo last change
     undo() {
       const target = undoTarget(historyIndex);
-      if (target < 0) return false;
+      if (!canRestoreHistoryEntry(target)) return false;
 
       isUndoRedoAction = true;
       historyIndex = target;
@@ -691,7 +721,7 @@ function createStore() {
     // Redo last undone change
     redo() {
       const target = redoTarget(historyIndex);
-      if (target < 0) return false;
+      if (!canRestoreHistoryEntry(target)) return false;
 
       isUndoRedoAction = true;
       historyIndex = target;
@@ -727,7 +757,7 @@ function createStore() {
     
     // Restore to a specific history entry
     restoreToEntry(index) {
-      if (index < 0 || index >= history.length) return false;
+      if (!canRestoreHistoryEntry(index)) return false;
       
       isUndoRedoAction = true;
       historyIndex = index;
