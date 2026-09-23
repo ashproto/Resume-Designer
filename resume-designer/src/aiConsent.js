@@ -53,10 +53,13 @@ export function hasAIConsent() {
   } catch { return false; }
 }
 
-// A failed deletion can leave the previous grant on disk even though this
-// session has no permission. Settings must keep offering to retry that deletion.
+// When the denial write succeeds, failed deletion leaves it on disk. Settings
+// must offer cleanup retry even after process-local flags reset on relaunch.
 export function isAIConsentRevocationPending() {
-  return revocationPending;
+  if (revocationPending) return true;
+  try {
+    return JSON.parse(appStorage.getItem(CONSENT_KEY))?.revocationPending === true;
+  } catch { return false; }
 }
 
 export function setAIConsentPresenter(nextPresenter) {
@@ -123,7 +126,7 @@ function beginRequest({ modelIds = [], feature = 'chat', webSearch = false }) {
 /** Called at every inference boundary, including retries and fallback attempts. */
 export async function requestAIConsent({ signal, ...details } = {}) {
   if (signal?.aborted) throw new DOMException('AI request stopped.', 'AbortError');
-  if (revocationPending) throw revocationError();
+  if (isAIConsentRevocationPending()) throw revocationError();
   if (hasAIConsent()) return;
   const current = pending || beginRequest(details);
   current.consumers += 1;
@@ -149,6 +152,17 @@ export async function revokeAIConsent() {
   revocationPending = true;
   pending?.controller.abort();
   announce();
+  if (appStorage.isRestoreGuardActive()) throw revocationError();
+  try {
+    // Commit denial BEFORE deleting: a failed deletion must not resurrect an
+    // accepted grant on the next launch. Separate flushes prevent coalescing
+    // this write away. If writing fails, still try deleting the old grant.
+    appStorage.setItem(CONSENT_KEY, JSON.stringify({
+      revision: AI_CONSENT_DISCLOSURE.revision, accepted: false,
+      revocationPending: true,
+    }));
+    await appStorage.flush();
+  } catch { /* Deletion can succeed even when storage cannot accept a write. */ }
   try {
     appStorage.removeItem(CONSENT_KEY);
     if (appStorage.isRestoreGuardActive() || !(await appStorage.flush())) throw revocationError();
