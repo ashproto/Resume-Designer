@@ -12,7 +12,8 @@
  */
 
 import { generateId } from './store.js';
-import { appStorage } from './appStorage.js';
+import { appStorage, getProfileMapping } from './appStorage.js';
+import { mapKey } from './profileKeys.js';
 import { storageErrorToast } from './storageToast.js';
 
 const STORAGE_KEY = 'resume-designer-applications';
@@ -208,6 +209,7 @@ export function getApplication(id) {
  * drafts, which have no appliedAt at all. createdAt/updatedAt always reflect
  * when the record itself was created, never the backdated date.
  * Strict callers can opt into synchronous write errors, then await appStorage.flush().
+ * registerRollback receives an undo callback for a failed durability check.
  */
 export function addApplication({
   variantId,
@@ -217,7 +219,8 @@ export function addApplication({
   status = 'prepared',
   notes = '',
   appliedAt,
-} = {}, { throwOnFailure = false } = {}) {
+} = {}, { throwOnFailure = false, registerRollback } = {}) {
+  const profile = registerRollback ? getProfileMapping() : null;
   const now = new Date().toISOString();
   const safeStatus = APPLICATION_STATUSES.includes(status) ? status : 'prepared';
   const appliedStamp = safeStatus === 'prepared' ? null : (appliedAt || now);
@@ -243,6 +246,23 @@ export function addApplication({
     applications = applications.filter((entry) => entry !== app);
     throw error;
   }
+  registerRollback?.(() => {
+    const active = getProfileMapping() === profile;
+    const current = applications.find((entry) => entry.id === app.id);
+    if (active && current && current !== app) return false;
+    const key = active ? STORAGE_KEY : mapKey(profile, STORAGE_KEY);
+    const stored = applicationsIn(appStorage.getItem(key));
+    const remaining = stored?.filter((entry) => entry.id !== app.id);
+    const changed = stored && remaining.length !== stored.length;
+    // Use the current collection, not a pre-request snapshot: another
+    // application may have been accepted while this write was pending.
+    if (changed) appStorage.setItem(key, JSON.stringify(remaining));
+    if (active && current === app) {
+      applications = applications.filter((entry) => entry !== app);
+      notify();
+    }
+    return Boolean(changed);
+  });
   notify();
   return app;
 }

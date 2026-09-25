@@ -73,14 +73,22 @@ export function createBridgeRouter(deps) {
   let pendingRevocations = 0;
 
   async function persistMutation(write, message) {
+    let rollback;
+    let commit;
     try {
       if (typeof deps.flush !== 'function') throw new Error('Storage is unavailable');
-      // An overlapping answer upsert mutates the same cached object. Keep this
-      // response bound to the write being flushed, not a later unsaved edit.
-      const result = structuredClone(write());
+      // Keep this response bound to the write being flushed, even if a later
+      // edit changes a mutable application before storage settles.
+      const result = structuredClone(write((undo, accept) => { rollback = undo; commit = accept; }));
       if (await deps.flush() !== true) throw new Error('Storage write did not reach disk');
+      commit?.();
       return result;
     } catch (cause) {
+      try {
+        // Replace the queued collection as well as its owner cache. If the
+        // corrective write also fails, appStorage retains it for recovery.
+        if (rollback?.()) await deps.flush();
+      } catch { /* Preserve the original storage failure; never acknowledge it. */ }
       throw Object.assign(new Error(message, { cause }), { status: 507, code: 'storage_full' });
     }
   }
@@ -292,7 +300,7 @@ export function createBridgeRouter(deps) {
         const variant = findVariant(deps.getVariants(), variantId);
         if (!variant) return json(404, { error: `no resume with id ${variantId}` });
         assertAuthorized();
-        const application = await persistMutation(() => deps.addApplication({
+        const application = await persistMutation((registerRollback) => deps.addApplication({
           variantId,
           variantName: variant.name,
           jobSnapshot: {
@@ -301,7 +309,7 @@ export function createBridgeRouter(deps) {
           },
           status: 'applied',
           notes: typeof parsed.notes === 'string' ? parsed.notes : '',
-        }, { throwOnFailure: true }), 'Could not save the application');
+        }, { throwOnFailure: true, registerRollback }), 'Could not save the application');
         assertAuthorized();
         if (deps.writesSuspended?.()) return importInProgress();
         return json(201, { application });
@@ -316,7 +324,7 @@ export function createBridgeRouter(deps) {
         if (!question || !answer) return json(400, { error: 'question and answer are required' });
         assertAuthorized();
         const saved = await persistMutation(
-          () => deps.saveLearnedAnswer(question, answer, { throwOnFailure: true }),
+          (registerRollback) => deps.saveLearnedAnswer(question, answer, { throwOnFailure: true, registerRollback }),
           'Could not save the reusable answer',
         );
         assertAuthorized();

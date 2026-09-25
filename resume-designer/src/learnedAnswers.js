@@ -10,12 +10,17 @@
  */
 
 import { generateId } from './store.js';
-import { appStorage } from './appStorage.js';
+import { appStorage, getProfileMapping } from './appStorage.js';
+import { mapKey } from './profileKeys.js';
 import { storageErrorToast } from './storageToast.js';
 
 const STORAGE_KEY = 'resume-designer-learned-answers';
 
 let answers = [];
+// A newer failed upsert must not restore a predecessor whose own request was
+// rejected while the newer value was in flight. Weak keys retain no history
+// after the live answer and any pending rollback closures release it.
+const answerWrites = new WeakMap();
 
 /** Lowercase, strip punctuation, collapse whitespace — the upsert key. */
 export function normalizeQuestion(q) {
@@ -121,36 +126,61 @@ export function getAllLearnedAnswers() {
 /**
  * Upsert by normalized question. Throws on empty question/answer.
  * Strict callers opt into synchronous write errors, then await appStorage.flush().
+ * registerRollback receives undo and commit callbacks for that durability check.
  */
-export function saveLearnedAnswer(question, answer, { throwOnFailure = false } = {}) {
+export function saveLearnedAnswer(question, answer, { throwOnFailure = false, registerRollback } = {}) {
   const q = String(question ?? '').trim();
   const a = String(answer ?? '').trim();
   if (!q) throw new Error('learned answer needs a question');
   if (!a) throw new Error('learned answer needs an answer');
   const normalized = normalizeQuestion(q);
   const now = new Date().toISOString();
+  const profile = registerRollback ? getProfileMapping() : null;
   const existing = answers.find((e) => e.normalized === normalized);
-  if (existing) {
-    const previous = { ...existing };
-    existing.question = q;
-    existing.answer = a;
-    existing.updatedAt = now;
-    try {
-      save(throwOnFailure);
-    } catch (error) {
-      Object.assign(existing, previous);
-      throw error;
-    }
-    return existing;
-  }
-  const entry = { id: generateId('ans'), question: q, normalized, answer: a, createdAt: now, updatedAt: now };
-  answers.push(entry);
+  // Replacement identity distinguishes this upsert from a newer one, even
+  // when both have identical text and timestamps within the same millisecond.
+  const entry = existing
+    ? { ...existing, question: q, answer: a, updatedAt: now }
+    : { id: generateId('ans'), question: q, normalized, answer: a, createdAt: now, updatedAt: now };
+  if (existing) answers = answers.map((value) => value === existing ? entry : value);
+  else answers.push(entry);
   try {
     save(throwOnFailure);
   } catch (error) {
-    answers = answers.filter((answer) => answer !== entry);
+    answers = existing
+      ? answers.map((value) => value === entry ? existing : value)
+      : answers.filter((value) => value !== entry);
     throw error;
   }
+  const written = JSON.stringify(entry);
+  const undo = { previous: existing, rejected: false };
+  if (registerRollback) answerWrites.set(entry, undo);
+  registerRollback?.(() => {
+    undo.rejected = true;
+    const active = getProfileMapping() === profile;
+    if (active && answers.find((value) => value.id === entry.id) !== entry) return false;
+    const key = active ? STORAGE_KEY : mapKey(profile, STORAGE_KEY);
+    const stored = answersIn(appStorage.getItem(key));
+    const index = stored?.findIndex((value) => value.id === entry.id) ?? -1;
+    if (index < 0 || JSON.stringify(stored[index]) !== written) return false;
+    let previous = undo.previous;
+    while (previous && answerWrites.get(previous)?.rejected) {
+      previous = answerWrites.get(previous).previous;
+    }
+    if (previous) stored[index] = previous;
+    else stored.splice(index, 1);
+    appStorage.setItem(key, JSON.stringify(stored));
+    if (active) {
+      answers = previous
+        ? answers.map((value) => value === entry ? previous : value)
+        : answers.filter((value) => value !== entry);
+    }
+    return true;
+  }, () => {
+    // A durable value is a valid rollback target on its own; release older
+    // versions instead of retaining the entire answer history through it.
+    undo.previous = undefined;
+  });
   return entry;
 }
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBridgeRouter } from '../src/bridgeRoutes.js';
-import { appStorage, initAppStorage, __resetAppStorageForTests } from '../src/appStorage.js';
+import { appStorage, initAppStorage, __resetAppStorageForTests, setProfileMapping } from '../src/appStorage.js';
 import { addApplication, getAllApplications, initApplications } from '../src/applications.js';
 import { saveLearnedAnswer, getAllLearnedAnswers, initLearnedAnswers } from '../src/learnedAnswers.js';
 
@@ -63,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   __resetAppStorageForTests();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe.each(ENDPOINTS)('$path durable acknowledgement', (endpoint) => {
@@ -120,6 +121,24 @@ describe.each(ENDPOINTS)('$path durable acknowledgement', (endpoint) => {
     expect(failed).toMatchObject({ status: 507, body: { code: 'storage_full' } });
     expect(failed.body[endpoint.responseKey]).toBeUndefined();
     expect(disk.files.has(endpoint.key)).toBe(false);
+  });
+
+  it('rolls back a failed queued save so a retry persists exactly one record', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let rejectWrites = true;
+    const disk = backend(async (files, key, value) => {
+      if (rejectWrites) throw new Error('Disk is full');
+      files.set(key, value);
+    });
+    await initAppStorage({ backend: disk });
+    const handle = router();
+    expect((await handle(request(endpoint))).status).toBe(507);
+    expect(endpoint.read()).toEqual([]);
+    expect(JSON.parse(appStorage.getItem(endpoint.key))).toEqual([]);
+    rejectWrites = false;
+    const saved = await handle(request(endpoint));
+    expect(saved.status).toBe(201);
+    expect(JSON.parse(disk.files.get(endpoint.key))).toEqual([saved.body[endpoint.responseKey]]);
   });
 
   it('does not acknowledge an unavailable durability check', async () => {
@@ -186,22 +205,232 @@ describe.each(ENDPOINTS)('$path durable acknowledgement', (endpoint) => {
   );
 });
 
-it('retries a failed answer upsert to disk even when the in-memory answer already matches', async () => {
+it('does not resurrect a rejected application during an unrelated later flush', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  let rejectWrites = true;
+  let rejectWrites = false;
   const disk = backend(async (files, key, value) => {
     if (rejectWrites) throw new Error('Disk is full');
     files.set(key, value);
   });
   await initAppStorage({ backend: disk });
-  const endpoint = ENDPOINTS[1];
-  const handle = router();
-  expect((await handle(request(endpoint))).status).toBe(507);
-  expect(getAllLearnedAnswers()).toHaveLength(1);
+  const existing = addApplication({ variantId: 'existing', notes: 'Keep this application' });
+  await appStorage.flush();
+  rejectWrites = true;
+  expect((await router()(request(ENDPOINTS[0]))).status).toBe(507);
   rejectWrites = false;
-  const saved = await handle(request(endpoint));
+  appStorage.setItem('resume-zoom', '1.5');
+  expect(await appStorage.flush()).toBe(true);
+  expect(getAllApplications()).toEqual([existing]);
+  expect(JSON.parse(disk.files.get(ENDPOINTS[0].key))).toEqual([existing]);
+  expect(disk.files.get('resume-zoom')).toBe('1.5');
+});
+
+it('preserves an overlapping accepted application when another application is rejected', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let release;
+  const pendingWrite = new Promise((resolve) => { release = resolve; });
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  const disk = backend(async (files, key, value) => {
+    const entries = JSON.parse(value);
+    if (entries.some((entry) => entry.jobSnapshot.title === 'Rejected')) throw new Error('Write rejected');
+    firstStarted();
+    await pendingWrite;
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  const handle = router();
+  const endpoint = ENDPOINTS[0];
+  const accepted = handle(request(endpoint));
+  await started;
+  const rejected = handle(request({ ...endpoint, payload: { ...endpoint.payload, title: 'Rejected' } }));
+  release();
+  expect((await rejected).status).toBe(507);
+  const saved = await accepted;
   expect(saved.status).toBe(201);
-  expect(JSON.parse(disk.files.get(endpoint.key))).toEqual([saved.body.answer]);
+  await appStorage.flush();
+  expect(getAllApplications()).toEqual([saved.body.application]);
+  expect(JSON.parse(disk.files.get(endpoint.key))).toEqual([saved.body.application]);
+});
+
+it('restores the previous answer after a rejected queued upsert', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const disk = backend(async (files, key, value) => {
+    if (JSON.parse(value).some((entry) => entry.answer === 'Two weeks')) throw new Error('Write rejected');
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  const original = saveLearnedAnswer('Notice period?', 'Four weeks');
+  await appStorage.flush();
+  expect((await router()(request(ENDPOINTS[1]))).status).toBe(507);
+  await appStorage.flush();
+  expect(getAllLearnedAnswers()).toEqual([original]);
+  expect(JSON.parse(disk.files.get(ENDPOINTS[1].key))).toEqual([original]);
+});
+
+it.each(['Six weeks', 'Two weeks'])('preserves the newer answer %s when an older queued upsert is rejected', async (answer) => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.useFakeTimers({ toFake: ['Date'] });
+  let release;
+  const pendingWrite = new Promise((resolve) => { release = resolve; });
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  let attempts = 0;
+  const disk = backend(async (files, key, value) => {
+    attempts += 1;
+    if (attempts <= 2) {
+      firstStarted();
+      await pendingWrite;
+      throw new Error('Write rejected');
+    }
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  const rejected = router()(request(ENDPOINTS[1]));
+  await started;
+  const newer = saveLearnedAnswer('Notice period?', answer);
+  release();
+  expect((await rejected).status).toBe(507);
+  await appStorage.flush();
+  expect(getAllLearnedAnswers()).toEqual([newer]);
+  expect(JSON.parse(disk.files.get(ENDPOINTS[1].key))).toEqual([newer]);
+});
+
+it.each([undefined, 'Four weeks'])('does not restore an earlier rejected answer after two failures (prior: %s)', async (prior) => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let release;
+  const pendingWrite = new Promise((resolve) => { release = resolve; });
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  let rejectWrites = false;
+  const disk = backend(async (files, key, value) => {
+    if (rejectWrites) {
+      firstStarted();
+      await pendingWrite;
+      throw new Error('Write rejected');
+    }
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  const original = prior ? saveLearnedAnswer('Notice period?', prior) : null;
+  await appStorage.flush();
+  rejectWrites = true;
+  const handle = router();
+  const endpoint = ENDPOINTS[1];
+  const first = handle(request(endpoint));
+  await started;
+  const second = handle(request({ ...endpoint, payload: { ...endpoint.payload, answer: 'Six weeks' } }));
+  release();
+  expect((await first).status).toBe(507);
+  expect((await second).status).toBe(507);
+  expect(getAllLearnedAnswers()).toEqual(original ? [original] : []);
+  rejectWrites = false;
+  await appStorage.flush();
+  expect(JSON.parse(disk.files.get(endpoint.key))).toEqual(original ? [original] : []);
+});
+
+it('preserves a newer acknowledged answer when an earlier failure is reported later', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let rejectWrites = true;
+  const disk = backend(async (files, key, value) => {
+    if (rejectWrites) throw new Error('Write rejected');
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  let failureObserved;
+  const failed = new Promise((resolve) => { failureObserved = resolve; });
+  let reportFailure;
+  const pendingFailure = new Promise((resolve) => { reportFailure = resolve; });
+  let calls = 0;
+  const handle = router({ flush: async () => {
+    calls += 1;
+    const first = calls === 1;
+    const durable = await appStorage.flush();
+    if (first) {
+      failureObserved();
+      await pendingFailure;
+    }
+    return durable;
+  } });
+  const endpoint = ENDPOINTS[1];
+  const rejected = handle(request(endpoint));
+  await failed;
+  rejectWrites = false;
+  const accepted = await handle(request({ ...endpoint, payload: { ...endpoint.payload, answer: 'Six weeks' } }));
+  expect(accepted.status).toBe(201);
+  reportFailure();
+  expect((await rejected).status).toBe(507);
+  expect(getAllLearnedAnswers()).toEqual([accepted.body.answer]);
+  expect(JSON.parse(disk.files.get(endpoint.key))).toEqual([accepted.body.answer]);
+});
+
+it.each(['commit', 'abort'])('keeps rejected-write rollback behind an import guard until %s', async (outcome) => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let release;
+  const pendingWrite = new Promise((resolve) => { release = resolve; });
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  let attempts = 0;
+  const disk = backend(async (files, key, value) => {
+    attempts += 1;
+    if (attempts <= 2) {
+      firstStarted();
+      await pendingWrite;
+      throw new Error('Write rejected');
+    }
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  const endpoint = ENDPOINTS[0];
+  const rejected = router()(request(endpoint));
+  await started;
+  const beforeImport = appStorage.getItem(endpoint.key);
+  const imported = [{ id: 'imported-app', variantId: 'imported-resume' }];
+  appStorage.setItem(endpoint.key, JSON.stringify(imported));
+  appStorage.beginRestoreGuard(new Map([[endpoint.key, beforeImport]]), [endpoint.key]);
+  release();
+  expect((await rejected).status).toBe(507);
+  appStorage.clearPreRestoreSnapshot();
+  expect(JSON.parse(appStorage.getItem(endpoint.key))).toEqual(imported);
+  appStorage.endRestoreGuard();
+  if (outcome === 'commit') appStorage.discardDeferredWrites();
+  else {
+    appStorage.setItem(endpoint.key, beforeImport);
+    appStorage.flushDeferredWrites();
+  }
+  await appStorage.flush();
+  expect(JSON.parse(disk.files.get(endpoint.key))).toEqual(outcome === 'commit' ? imported : []);
+});
+
+it('rolls back the original profile without replacing the newly active profile', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let release;
+  const pendingWrite = new Promise((resolve) => { release = resolve; });
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  let attempts = 0;
+  const disk = backend(async (files, key, value) => {
+    attempts += 1;
+    if (attempts <= 2) {
+      firstStarted();
+      await pendingWrite;
+      throw new Error('Write rejected');
+    }
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  setProfileMapping('profile1');
+  const rejected = router()(request(ENDPOINTS[0]));
+  await started;
+  setProfileMapping('profile2');
+  initApplications();
+  const other = addApplication({ variantId: 'other-profile' });
+  release();
+  expect((await rejected).status).toBe(507);
+  await appStorage.flush();
+  expect(getAllApplications()).toEqual([other]);
+  expect(JSON.parse(disk.files.get('resume-p--profile2--resume-designer-applications'))).toEqual([other]);
+  expect(JSON.parse(disk.files.get('resume-p--profile1--resume-designer-applications'))).toEqual([]);
 });
 
 it('preserves the previous answer when a strict upsert hits the localStorage quota', async () => {

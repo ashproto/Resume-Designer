@@ -391,7 +391,7 @@ describe('POST /applications', () => {
       jobSnapshot: { title: 'Staff Engineer', company: 'Acme' },
       status: 'applied',
       notes: 'via extension',
-    }, { throwOnFailure: true });
+    }, { throwOnFailure: true, registerRollback: expect.any(Function) });
     expect(res.body.application.id).toBe('app-1');
   });
   it('400s a missing variantId and 404s an unknown one', async () => {
@@ -436,7 +436,9 @@ describe('POST /profile/answers', () => {
       body: JSON.stringify({ profileContextId: 'context-1', question: 'Notice period?', answer: '4 weeks' }),
     });
     expect(res.status).toBe(201);
-    expect(deps.saveLearnedAnswer).toHaveBeenCalledWith('Notice period?', '4 weeks', { throwOnFailure: true });
+    expect(deps.saveLearnedAnswer).toHaveBeenCalledWith('Notice period?', '4 weeks', {
+      throwOnFailure: true, registerRollback: expect.any(Function),
+    });
   });
   it('400s empty question or answer', async () => {
     for (const body of [

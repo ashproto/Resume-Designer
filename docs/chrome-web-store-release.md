@@ -30,9 +30,10 @@ The owner reports **0.1.3 uploaded**, the exact Additional instructions pasted, 
 
 Promotion PR #139 exposed a durable-save acknowledgement bug and five workflow
 cache-poisoning warnings. The candidate now awaits disk persistence for Companion
-answer/application saves and rechecks pairing after the wait. The workflow
+answer/application saves, rolls back rejected mutations without losing newer
+accepted changes, and rechecks pairing after the wait. The workflow
 resolves trusted release provenance before checkout and denies cache access.
-Local verification: **2,088 desktop tests/130 files**, **90 release-automation
+Local verification: **2,100 desktop tests/130 files**, **90 release-automation
 tests**, lint and production build pass. The Store ZIP remains **0.1.4** with the
 same digest above. Fresh CI, CodeQL, bot review and the resulting desktop release
 remain gates; earlier beta artifacts do not validate these changes.
