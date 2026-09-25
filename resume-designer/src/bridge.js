@@ -9,6 +9,7 @@
  */
 
 import { appStorage } from './appStorage.js';
+import { isIOSPlatform } from './native.js';
 import { store } from './store.js';
 import { createBridgeRouter } from './bridgeRoutes.js';
 import {
@@ -26,6 +27,7 @@ import {
   generateResumeChangesForData,
   getDefaultModelId,
 } from './aiService.js';
+import { getCompanionModels } from './companionModels.js';
 import { createCompanionJobActions } from './companionJobActions.js';
 import { createCompanionPairing } from './companionPairing.js';
 import { loadVariant } from './variantManager.js';
@@ -50,8 +52,53 @@ function ensureBridgeToken() {
   return token;
 }
 
+let revocationInFlight = null;
+
+function revocationError() {
+  return Object.assign(new Error('Could not save disconnection. Try again.'), {
+    status: 503,
+    code: 'pairing_unavailable',
+  });
+}
+
+export async function revokeBridgePairing(invalidateGrants = () => {}) {
+  if (revocationInFlight) return revocationInFlight;
+  if (store.areSavesSuspended()) throw revocationError();
+  const previousToken = getBridgeToken();
+  invalidateGrants();
+
+  revocationInFlight = (async () => {
+    try {
+      const nextToken = crypto.randomUUID();
+      appStorage.setItem(TOKEN_KEY, nextToken);
+      if (await appStorage.flush() !== true || store.areSavesSuspended()
+        || getBridgeToken() !== nextToken) {
+        throw revocationError();
+      }
+    } catch {
+      // Keep retry possible if disk persistence failed. Never tell the client
+      // its old token was durably revoked when a restart could still restore it.
+      try {
+        appStorage.setItem(TOKEN_KEY, previousToken);
+        await appStorage.flush();
+      } catch {
+        // The caller still receives an explicit failure if rollback also fails.
+      }
+      throw revocationError();
+    } finally {
+      // Include grants created while the durable write was pending.
+      invalidateGrants();
+    }
+  })();
+  try {
+    await revocationInFlight;
+  } finally {
+    revocationInFlight = null;
+  }
+}
+
 export async function initBridge({ profileId = null } = {}) {
-  if (!IS_TAURI) return;
+  if (!IS_TAURI || isIOSPlatform()) return;
   ensureBridgeToken();
 
   // A new opaque context on every app boot invalidates extension work after
@@ -78,15 +125,22 @@ export async function initBridge({ profileId = null } = {}) {
   const pairing = createCompanionPairing({
     ensureToken: ensureBridgeToken,
     flush: () => appStorage.flush(),
-    confirmPairing: () => confirmNative(
-      'Allow the Resume Designer Companion extension to read your local résumés, use your configured AI, and save tailored résumés, answers, and application records?',
-      {
-        title: 'Connect browser extension',
-        kind: 'info',
-        okLabel: 'Connect',
-        cancelLabel: 'Cancel',
-      },
-    ),
+    confirmPairing: async () => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const window = getCurrentWindow();
+      await window.show();
+      await window.unminimize();
+      await window.setFocus();
+      return confirmNative(
+        'Allow On Paper Companion to read your local resumes, use your configured AI, and save tailored resumes, answers, and application records?',
+        {
+          title: 'Connect browser extension',
+          kind: 'info',
+          okLabel: 'Connect',
+          cancelLabel: 'Cancel',
+        },
+      );
+    },
   });
 
   const jobActions = createCompanionJobActions({
@@ -127,8 +181,11 @@ export async function initBridge({ profileId = null } = {}) {
     addApplication,
     saveLearnedAnswer,
     complete: completeForBridge,
+    getAiModels: getCompanionModels,
     exportVariantPdf,
     claimPairing: pairing.claim,
+    requestPairing: pairing.request,
+    revokePairing: () => revokeBridgePairing(pairing.revokeAll),
     analyzeJobFit: jobActions.analyzeJobFit,
     createTailoredResume: jobActions.createTailoredResume,
     // Reject persisting writes while a destructive import is mid-flight — the

@@ -81,7 +81,7 @@ describe('buildReviewItems', () => {
 
   it('marks only non-resume file mappings as manual and preserves string checkboxes', () => {
     const descriptors = [
-      descriptor('consent', { type: 'checkbox', label: 'Consent' }),
+      descriptor('consent', { type: 'checkbox', label: 'Available immediately?' }),
       descriptor('resume', { type: 'file', label: 'Upload resume' }),
       descriptor('cover', { type: 'file', label: 'Cover letter' }),
     ];
@@ -165,11 +165,22 @@ describe('buildReviewItems', () => {
   });
 });
 
+describe('AI draft review', () => {
+  it('preserves draft attribution and fills the reviewed narrative', () => {
+    const items = buildReviewItems([
+      descriptor('motivation', { type: 'textarea', label: 'What interests you about this role?' }),
+    ], { fields: [mapped('motivation', 'A grounded draft.', 0.8, 'draft')] });
+    expect(items[0]).toMatchObject({ aiDraft: true, source: 'draft', needsHuman: false });
+    items[0].value = 'My reviewed answer.';
+    expect(buildFillPayload(items)).toEqual({ fields: [{ field_id: 'motivation', value: 'My reviewed answer.' }], warnings: [] });
+  });
+});
+
 describe('buildFillPayload', () => {
   it('keeps reviewed values in order and reports empty/manual needs-human items locally', () => {
     const items = buildReviewItems([
       descriptor('name', { label: 'Full name' }),
-      descriptor('consent', { type: 'checkbox', label: 'Consent' }),
+      descriptor('consent', { type: 'checkbox', label: 'Available immediately?' }),
       descriptor('notice', { label: 'Notice period' }),
       descriptor('cover', { type: 'file', label: 'Cover letter' }),
       descriptor('resume', { type: 'file', label: 'Resume' }),

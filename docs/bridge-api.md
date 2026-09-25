@@ -24,36 +24,43 @@ start (it logs and gives up); the app itself is unaffected.
 
 ## Authentication and pairing
 
-Every endpoint except `GET /health` and `POST /pairing/claim` requires a bearer
-token:
+Every endpoint except `GET /health`, `POST /pairing/request`, and
+`POST /pairing/claim` requires a bearer token:
 
 ```
 Authorization: Bearer <token>
 ```
 
-The token is a per-install random UUID. Normal users do not copy it. When the
-user chooses **Open and connect**, the extension creates a
-one-time verifier and opens a `resume-designer://companion/pair` link containing
-only its SHA-256 challenge, a random request id, and the protocol version. The
-app asks the user to approve access. After approval, the extension exchanges
-the verifier at `POST /pairing/claim`, verifies the returned token against
-`GET /resumes`, and only then stores it in memory-backed
-`chrome.storage.session`. It is never persisted to Chrome local/sync storage
-and is cleared on extension reload/update/disable or browser restart. The token
-never appears in the deep link.
+The token is a per-install random UUID. **Open and connect** first checks the
+loopback bridge. When a compatible app is already running and advertises
+`pairing.request`, the extension sends a one-time SHA-256 challenge to
+`POST /pairing/request`. The app foregrounds its window and asks for explicit
+approval. The request returns only `202 {"pending":true}`; the token is available
+only from `POST /pairing/claim` after approval and proof of the verifier.
+
+If the app is unavailable or lacks that capability, the extension opens a
+`resume-designer://companion/pair` link containing the challenge, random request
+ID, and protocol version. This cold-launch path needs the installed app's OS
+URL-handler registration. Merely running an uninstalled development/demo bundle
+does not guarantee that registration. Once a compatible bridge responds, the
+same request/approval flow is available without relying on deep-link delivery.
+
+The extension verifies a claimed token against `GET /resumes` and stores it only
+in memory-backed `chrome.storage.session`. It is never persisted to Chrome
+local/sync storage and is cleared on extension reload/update/disable or browser
+restart. Neither the durable token nor the one-time verifier appears in a deep
+link; the verifier remains inside the extension until the proof exchange.
 
 The masked token remains available under **Settings → Data → Companion
 extension** as an advanced recovery/troubleshooting path. Treat it like a
 password — anyone with the token and local machine access can drive the app.
 
-The token is part of the backup-owned keyspace, so **full backups include it**:
-restoring a backup on the same machine preserves authentication for the current
-browser session. A later browser session repeats the approval flow, but never
-requires manual token copying. The server is loopback-only, so the token is
-useless without local access to the machine running Resume Designer. After
-**replace-importing** a backup taken on a different install, the old token may
-stop authenticating; the extension then returns to the same approval-based
-pairing flow. Manual copying is only the fallback.
+The desktop token is explicitly included in `BACKUP_FIXED_KEYS` and
+`BACKUP_SHARED_KEYS`, so **full app backups include it**. Restoring a full backup
+can restore that backup's pairing token, including an older token. The API key
+is separate: it stays in the system keychain and is excluded from backups.
+A changed pairing token invalidates the current browser session; the extension
+then asks for approval again or offers manual pairing.
 
 A missing or wrong token on any authenticated route returns:
 
@@ -81,13 +88,13 @@ HTTP 401
   `X-Content-Type-Options: nosniff`.
 - The native bridge accepts at most **16 in-flight requests**. Additional
   requests fail immediately with
-  `503 {"error":"Resume Designer is handling too many companion requests","code":"bridge_busy"}`
+  `503 {"error":"On Paper is handling too many companion requests","code":"bridge_busy"}`
   rather than accumulating unbounded work inside the app.
 - Because every request round-trips through the running app's JavaScript (see
   [Design notes](#design-notes)), the app must be **running and unlocked**. If
   the webview does not answer in time the server returns
   `504 {"error":"the app did not answer in time — is On Paper running and unlocked?"}`.
-  Timeouts: **2 s** for `/health` and `/pairing/claim`, **180 s** for `/ai/*`
+  Timeouts: **2 s** for `/health`, `/pairing/request`, and `/pairing/claim`, **180 s** for `/ai/*`
   and any `…/pdf` path (model latency / PDF render), **30 s** for everything
   else.
 - If the app window is unavailable to receive the request at all, the server
@@ -115,6 +122,7 @@ HTTP 401
 | Status | Meaning |
 | ------ | ------- |
 | `200`  | OK (GET routes, `POST /ai/complete`) |
+| `202`  | Native pairing approval requested; no token returned |
 | `201`  | Created (`POST /applications`, `POST /profile/answers`) |
 | `400`  | Invalid JSON body, non-UTF-8 request body, or request-body validation failed |
 | `401`  | Missing/invalid bearer token |
@@ -123,6 +131,7 @@ HTTP 401
 | `409`  | Stale/missing `profileContextId`, or reuse of a tailoring idempotency key with a different request |
 | `413`  | Request body exceeds 1 MiB |
 | `425`  | Pairing approval is still pending |
+| `429`  | Another native pairing approval is open or requests are too frequent |
 | `500`  | Unhandled error inside the router (e.g. PDF export failed), or the Rust-side bridge state lock is poisoned |
 | `502`  | AI upstream failed (`/ai/complete`), or app window unavailable |
 | `503`  | Bridge concurrency limit reached (`code: "bridge_busy"`), or a destructive import suspended profile-sensitive routes (`code: "profile_changed"`) |
@@ -137,8 +146,7 @@ In the examples below, `$TOKEN` is the pairing token from Settings.
 
 ### `GET /health`
 
-Liveness probe. **Public** — one of two routes that do not require a token (the
-other is the one-time pairing claim). Use it to confirm the bridge is up and
+Liveness probe. **Public**, as are the pairing request and one-time claim. Use it to confirm the bridge is up and
 to read the app version. It remains
 available while a destructive backup import suspends profile-sensitive routes.
 
@@ -153,9 +161,12 @@ available while a destructive backup import suspends profile-sensitive routes.
   "capabilities": [
     "app.launch",
     "pairing.challenge",
+    "pairing.request",
+    "pairing.revoke",
     "profile.context",
     "resume.pdf",
     "ai.complete",
+    "ai.models",
     "ai.job-fit",
     "ai.tailored-resume",
     "profile.answers",
@@ -166,7 +177,7 @@ available while a destructive backup import suspends profile-sensitive routes.
 
 Clients must validate `app`, `protocolVersion`, and their required capability
 set before sending a stored bearer token. A different response on the fixed
-port is not Resume Designer; an older protocol/capability set requires an app
+port is not On Paper; an older protocol/capability set requires an app
 update.
 
 ```bash
@@ -175,12 +186,49 @@ curl -s http://127.0.0.1:17872/health
 
 ---
 
+### `POST /pairing/request`
+
+Start native approval in an already-running app. Public, but the native HTTP
+boundary accepts only `POST` with `Content-Type: application/json` (an optional
+charset is allowed) and an `Origin` of `chrome-extension://<32 a–p characters>`.
+The fixed loopback Host check also applies. Ordinary web origins, absent/null
+origins, simple form/text posts, and preflights are rejected with `403`; no CORS
+access is enabled. Local processes can forge HTTP headers, so these checks do
+not replace native approval or the verifier proof.
+
+**Request**
+
+```json
+{
+  "protocolVersion": "2",
+  "requestId": "a-random-base64url-request-id",
+  "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "clientId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+All fields are strings. The request ID must be 16–128 base64url characters,
+the challenge exactly 43, and the client ID a Chrome extension ID. Duplicate
+requests with the same ID/challenge reuse their existing grant and never open
+another prompt. Only one approval dialog may be pending; new HTTP attempts
+must be at least five seconds apart. Approval follows the same 60-second grant
+TTL and one-time proof validation as deep-link pairing.
+
+**Response** `202`: `{"pending":true}`. Never contains a bearer token.
+
+**Errors:** `400 invalid_pairing_request`; `403` for disallowed HTTP request
+origin/type; `409 invalid_pairing_request` for a reused ID with another
+challenge; `429 pairing_busy`; `503 profile_changed` during destructive import.
+
+---
+
 ### `POST /pairing/claim`
 
 One-time unauthenticated exchange used only after the app receives a valid
-`resume-designer://companion/pair` link and the user approves it. The verifier
+`POST /pairing/request` or a valid `resume-designer://companion/pair` link
+and the user approves it. The verifier
 must be 43–128 base64url characters and hash to the challenge registered by the
-deep link. Grants expire after 60 seconds and are deleted after the first
+pairing request. Grants expire after 60 seconds and are deleted after the first
 successful claim or a rejection.
 
 **Request**
@@ -203,6 +251,16 @@ successful claim or a rejection.
 unknown, expired, wrong-verifier, or replayed claims; `425
 {"code":"pairing_pending"}` while the confirmation is open; `503
 {"code":"pairing_unavailable"}` if the app cannot make the token durable.
+
+---
+
+### `POST /pairing/revoke`
+
+Authenticated. Rotate the app's install token, invalidate pending grants, and
+wait for durable storage before returning `200 {"ok":true}`. Failure returns
+`503 pairing_unavailable` and must not be presented as successful revocation.
+The extension still forgets its own session token and consent on disconnect,
+and distinguishes local disconnection from acknowledged app-wide revocation.
 
 ---
 
@@ -323,6 +381,29 @@ render exceeds 180 s.
 
 ---
 
+### `GET /ai/models`
+
+Authenticated cached model catalog; no provider request and no API key in the
+response. The app supplies text-capable cached models, featured/offline
+fallbacks, custom models, and currently configured defaults.
+
+```json
+{
+  "models": [{"id":"provider/model-slug","name":"Model name"}],
+  "defaults": {"mapping":"provider/model-slug","analysis":"provider/model-slug","tailoring":"provider/model-slug"},
+  "autoFallback": false
+}
+```
+
+All three AI POST endpoints below accept an optional `model` string (maximum
+256 characters) from this catalog. Invalid/unknown values return
+`400 invalid_model` before AI runs. Omission uses the app's existing action
+default. An explicit model selects the primary model without changing those
+preferences; the app's automatic provider fallback setting still applies.
+The `ai.models` health capability identifies this API.
+
+---
+
 ### `POST /ai/complete`
 
 Run a one-shot completion through the app's configured AI (OpenRouter model set
@@ -375,7 +456,7 @@ model does not respond within 180 s.
 ### `POST /ai/job-fit`
 
 Analyze one explicitly selected résumé against a normalized job description
-using the app's configured analysis model, reasoning setting, OpenRouter key,
+using the selected primary model or app analysis default, reasoning setting, OpenRouter key,
 and usage tracking.
 
 **Request**
@@ -444,7 +525,9 @@ submits the application page.
 }
 ```
 
-`requestId` must be a UUIDv4 and is the idempotency key. Retrying it returns
+`requestId` must be a UUIDv4 and is the idempotency key. An explicit `model`
+is included in the request fingerprint; reusing an ID with another model is
+a conflict. Retrying it returns
 the already-created `companion-<requestId>` variant rather than generating a
 duplicate. Generated paths are allowlisted against the résumé schema;
 prototype keys, excessive nesting/arrays/text, unknown roots, and unsafe array
@@ -537,7 +620,7 @@ while a destructive backup import is waiting for the app reload.
 
 ### `POST /profile/answers`
 
-Save a learned question/answer pair (notice period, work authorization, etc.) to
+Save a learned question/answer pair (for example, notice period) to
 the active profile. Upserts by a normalized form of the question, so re-saving
 the same question updates the existing answer in that profile. Returned by every
 `GET /resumes/:id` in `learnedAnswers`.
@@ -607,6 +690,36 @@ platforms that otherwise start a second one, then shows, unminimizes, and
 focuses the main window. The extension never launches the app merely because
 its side panel opened; launch happens after an explicit connect or app-backed
 action.
+
+### Extension cancellation, time bounds, and review binding
+
+These are internal runtime messages, not additional HTTP endpoints:
+
+- `connection.check` is read-only: health and authenticated résumé access. It
+  never opens an app or starts native approval.
+- `app.open` probes first, requests approval through a running app when
+  supported, and uses a deep link only when needed. Its full attempt is capped
+  at 85 seconds, including OS launch, HTTP calls, and poll delays.
+- `pairing.cancel` returns `{"cancelled":true}` after invalidating the pending
+  attempt and cancelling its requests. It preserves existing credentials and
+  consent. A late automatic response cannot overwrite a manual connection.
+  The native consent dialog may still need to be dismissed in the app.
+- Extension HTTP deadlines cover headers and response-body reading: 4 seconds
+  for health/pairing, 185 seconds for AI actions/PDF, 30 seconds otherwise
+  (including model catalog). These are client bounds in addition to the
+  server's per-handler timeouts.
+- `page.scan` preserves the sanitized content `page.url` and adds the trusted
+  Chrome tab ID (`page.tabId`) and full URL (`page.tabUrl`). The full URL stays
+  in the local review context and is not sent to AI. `page.fill`
+  requires the original immutable `reviewContext:{page,descriptors}`. The
+  background checks tab ID/URL before PDF export and immediately before
+  sending values; content code checks page/job/field identity again. A changed
+  tab or application fails with `stale_review` and requires a fresh review.
+
+The panel ignores late results from cancelled attempts. A sequence of missing
+pairing grants is reported as `pairing_not_received`; an approval that was seen
+pending but times out is `pairing_timeout`. These conditions offer manual
+pairing rather than leaving an indefinitely disabled panel.
 
 ### Single writer — everything round-trips through the app's JS
 

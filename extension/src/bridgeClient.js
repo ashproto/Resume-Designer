@@ -30,6 +30,8 @@ function classifyHttpError(status, message, data) {
   if (typeof data?.code === 'string' && data.code) {
     const retryableByCode = {
       pairing_pending: true,
+      pairing_busy: true,
+      invalid_model: false,
       pairing_rejected: false,
       pairing_not_found: false,
       pairing_unavailable: true,
@@ -85,7 +87,7 @@ function responseTooLargeError() {
 function validateHealth(data) {
   if (data?.ok !== true || data?.app !== BRIDGE_APP_ID) {
     throw new BridgeError(
-      'Another service is using the Resume Designer companion port',
+      'Another service is using the On Paper companion port',
       { code: 'port_conflict', retryable: false },
     );
   }
@@ -97,7 +99,7 @@ function validateHealth(data) {
     || REQUIRED_CAPABILITIES.some((capability) => !capabilities.has(capability))
   ) {
     throw new BridgeError(
-      'Resume Designer must be updated to work with this companion extension',
+      'On Paper must be updated to work with this companion extension',
       { code: 'app_update_required', retryable: false },
     );
   }
@@ -111,7 +113,7 @@ function declaredContentLength(response) {
   return Number(rawLength);
 }
 
-async function readTextWithinLimit(response, maxBytes) {
+async function readTextWithinLimit(response, maxBytes, signal) {
   const contentLength = declaredContentLength(response);
   if (contentLength !== null && contentLength > maxBytes) {
     try {
@@ -131,6 +133,9 @@ async function readTextWithinLimit(response, maxBytes) {
   }
 
   const reader = response.body.getReader();
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
   const decoder = new TextDecoder();
   const parts = [];
   let totalBytes = 0;
@@ -154,16 +159,17 @@ async function readTextWithinLimit(response, maxBytes) {
     }
     parts.push(decoder.decode());
   } finally {
+    signal?.removeEventListener('abort', cancel);
     reader.releaseLock();
   }
 
   return parts.join('');
 }
 
-async function readResponse(response, maxBytes) {
+async function readResponse(response, maxBytes, signal) {
   const text = maxBytes === undefined
     ? await response.text()
-    : await readTextWithinLimit(response, maxBytes);
+    : await readTextWithinLimit(response, maxBytes, signal);
 
   if (!text) return { text, data: null };
 
@@ -186,14 +192,16 @@ export function createBridgeClient({
   fetchImpl = globalThis.fetch,
   getToken = async () => null,
   baseUrl = BRIDGE_BASE_URL,
+  requestTimeoutMs,
 } = {}) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
 
-  async function request(path, {
+  async function performRequest(path, {
     method = 'GET',
     payload,
     authenticated = true,
     maxResponseBytes,
+    signal,
   } = {}) {
     const headers = new Headers({ Accept: 'application/json' });
 
@@ -208,7 +216,7 @@ export function createBridgeClient({
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    const options = { method, headers };
+    const options = { method, headers, signal };
     if (payload !== undefined) {
       const body = JSON.stringify(payload);
       if (new TextEncoder().encode(body).byteLength > MAX_REQUEST_BODY_BYTES) {
@@ -229,12 +237,12 @@ export function createBridgeClient({
     } catch (error) {
       if (error instanceof BridgeError) throw error;
       throw new BridgeError(
-        error instanceof Error && error.message ? error.message : 'Unable to reach Resume Designer',
+        error instanceof Error && error.message ? error.message : 'Unable to reach On Paper',
         { code: 'network_error', retryable: true },
       );
     }
 
-    const { text, data } = await readResponse(response, maxResponseBytes);
+    const { text, data } = await readResponse(response, maxResponseBytes, signal);
     if (!response.ok) {
       const message = responseMessage(response, text, data);
       throw new BridgeError(message, {
@@ -254,14 +262,52 @@ export function createBridgeClient({
     return data;
   }
 
+  async function request(path, options = {}) {
+    const controller = new AbortController();
+    const timeoutMs = requestTimeoutMs ?? (
+      path === '/health' || path.startsWith('/pairing/') ? 4_000
+        : (path.startsWith('/ai/') && path !== '/ai/models') || path.endsWith('/pdf') ? 185_000 : 30_000
+    );
+    let timer;
+    let cancel;
+    const interrupted = new Promise((_, reject) => {
+      cancel = () => {
+        reject(new BridgeError('Request cancelled', { code: 'request_cancelled', retryable: false }));
+        controller.abort();
+      };
+      options.signal?.addEventListener('abort', cancel, { once: true });
+      timer = setTimeout(() => {
+        reject(new BridgeError('On Paper took too long to respond. Try again.', {
+          code: 'app_timeout', retryable: true,
+        }));
+        controller.abort();
+      }, timeoutMs);
+      if (options.signal?.aborted) cancel();
+    });
+    try {
+      if (options.signal?.aborted) return await interrupted;
+      return await Promise.race([
+        performRequest(path, { ...options, signal: controller.signal }), interrupted,
+      ]);
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', cancel);
+    }
+  }
+
   const resumePath = (id) => `/resumes/${encodeURIComponent(String(id))}`;
 
   return {
-    health: async () => validateHealth(await request('/health', { authenticated: false })),
-    claimPairing: (payload) => request('/pairing/claim', {
-      method: 'POST', payload, authenticated: false,
+    health: async (options = {}) => validateHealth(await request('/health', { ...options, authenticated: false })),
+    claimPairing: (payload, options = {}) => request('/pairing/claim', {
+      ...options, method: 'POST', payload, authenticated: false,
     }),
-    listResumes: () => request('/resumes'),
+    requestPairing: (payload, options = {}) => request('/pairing/request', {
+      ...options, method: 'POST', payload, authenticated: false,
+    }),
+    revokePairing: () => request('/pairing/revoke', { method: 'POST', payload: {} }),
+    listResumes: (options = {}) => request('/resumes', options),
+    getAIModels: () => request('/ai/models', { maxResponseBytes: MAX_AI_RESPONSE_BYTES }),
     getResume: (id) => request(resumePath(id)),
     getPdf: (id) => request(`${resumePath(id)}/pdf`),
     complete: (payload) => request('/ai/complete', {

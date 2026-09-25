@@ -1,6 +1,6 @@
 {
-  "name": "resume-designer-companion-extension",
-  "version": "0.1.0",
+  "name": "on-paper-companion-extension",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "engines": {

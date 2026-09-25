@@ -1,3 +1,5 @@
+import { experienceScalarWrite } from './changeApply.js';
+
 export const MAX_JOB_DESCRIPTION_BYTES = 64 * 1024;
 
 const MAX_JOB_TITLE_CHARS = 300;
@@ -241,6 +243,14 @@ function applyChange(target, path, value) {
   if (!segments || !isWritableChange(target, segments, value)) return false;
   validateBoundedAiValue(value);
 
+  // Keep companion tailoring aligned with the editor and AI review surfaces:
+  // date display edits clear structured dates, and grouped company edits fan out.
+  const rewrittenExperience = experienceScalarWrite(target.experience, path, value);
+  if (rewrittenExperience) {
+    target.experience = rewrittenExperience;
+    return true;
+  }
+
   let owner = target;
   for (let index = 0; index < segments.length - 1; index += 1) {
     const segment = segments[index];
@@ -284,8 +294,8 @@ function resumeSummary(variant) {
   return { id: variant.id, name: variant.name, updatedAt: variant.updatedAt };
 }
 
-async function requestFingerprint(resumeId, job) {
-  const bytes = new TextEncoder().encode(JSON.stringify({ resumeId, job }));
+async function requestFingerprint(resumeId, job, model) {
+  const bytes = new TextEncoder().encode(JSON.stringify({ resumeId, job, ...(model ? { model } : {}) }));
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -310,12 +320,12 @@ export function createCompanionJobActions(deps) {
     return variant;
   }
 
-  async function analyzeJobFit({ resumeId, job }) {
+  async function analyzeJobFit({ resumeId, job, model: selectedModel }) {
     ensureAvailable();
     const variant = selectedVariant(resumeId);
     const normalizedJob = normalizeJob(job);
     const settings = deps.getSettings();
-    const model = modelFor(settings, 'analysisModel', deps.getDefaultModelId());
+    const model = selectedModel || modelFor(settings, 'analysisModel', deps.getDefaultModelId());
     let result;
     try {
       result = await deps.analyzeResumeDataAgainstJobs(
@@ -332,14 +342,14 @@ export function createCompanionJobActions(deps) {
     return { resumeId: variant.id, analysis: validateAnalysis(result) };
   }
 
-  async function createTailoredResume({ resumeId, requestId, job }) {
+  async function createTailoredResume({ resumeId, requestId, job, model: selectedModel }) {
     if (!REQUEST_ID_PATTERN.test(requestId ?? '')) {
       throw actionError(400, 'invalid_request_id', 'requestId must be a UUID');
     }
 
     ensureAvailable();
     const normalizedJob = normalizeJob(job);
-    const fingerprint = await requestFingerprint(resumeId, normalizedJob);
+    const fingerprint = await requestFingerprint(resumeId, normalizedJob, selectedModel);
     const variantId = `companion-${requestId}`;
     const existing = ownVariant(deps.getVariants(), variantId);
     if (existing) {
@@ -368,7 +378,7 @@ export function createCompanionJobActions(deps) {
     const operation = (async () => {
       const base = selectedVariant(resumeId);
       const settings = deps.getSettings();
-      const model = modelFor(settings, 'tailorModel', deps.getDefaultModelId());
+      const model = selectedModel || modelFor(settings, 'tailorModel', deps.getDefaultModelId());
       let generated;
       try {
         generated = await deps.generateResumeChangesForData(

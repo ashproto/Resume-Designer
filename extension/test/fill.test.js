@@ -60,6 +60,90 @@ function makeFilesAssignable(input) {
 }
 
 describe('fillForm', () => {
+  it.each([['hidden', ''], ['inert', ''], ['aria-hidden', 'true'], ['style', 'display:none'], ['style', 'visibility:hidden'], ['style', 'visibility:collapse']])('leaves an upload untouched when its ancestor becomes %s=%s after review', (attribute, value) => {
+    const document = new JSDOM('<form><div id="step"><label>Resume <input type="file" style="display:none" accept="application/pdf"></label></div></form>').window.document;
+    const descriptors = scanForm(document);
+    const input = document.querySelector('input');
+    makeFilesAssignable(input);
+    document.querySelector('#step').setAttribute(attribute, value);
+    const result = fillForm([{ field_id: descriptors[0].field_id, value: '__resume_pdf__' }], {
+      root: document, expectedDescriptors: descriptors,
+      pdf: { filename: 'resume.pdf', pdfBase64: 'JVBERg==' }, dataTransferFactory: fakeDataTransferFactory,
+    });
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toHaveLength(1);
+    expect(input.files).toHaveLength(0);
+  });
+
+  it('still attaches the reviewed resume through a directly hidden native file input', () => {
+    const document = new JSDOM('<form><label>Resume <input type="file" hidden style="display:none" aria-hidden="true" accept="application/pdf"></label></form>').window.document;
+    const descriptors = scanForm(document);
+    const input = document.querySelector('input');
+    makeFilesAssignable(input);
+    const result = fillForm([{ field_id: descriptors[0].field_id, value: '__resume_pdf__' }], {
+      root: document, expectedDescriptors: descriptors,
+      pdf: { filename: 'resume.pdf', pdfBase64: 'JVBERg==' }, dataTransferFactory: fakeDataTransferFactory,
+    });
+    expect(result.filled).toEqual([descriptors[0].field_id]);
+    expect(input.files).toHaveLength(1);
+  });
+
+  it.each(['text', 'file'])('revalidates a later %s field after an earlier fill changes its purpose', (kind) => {
+    const document = new JSDOM(`<form><label>Name <input id="name"></label><label id="target-label">${kind === 'file' ? 'Resume' : 'Portfolio'} <input id="target" type="${kind === 'file' ? 'file' : 'url'}"></label></form>`).window.document;
+    const descriptors = scanForm(document);
+    const target = document.querySelector('#target');
+    if (kind === 'file') makeFilesAssignable(target);
+    document.querySelector('#name').addEventListener('input', () => {
+      document.querySelector('#target-label').firstChild.textContent = kind === 'file' ? 'Portfolio attachment ' : 'Reference email ';
+      if (kind === 'text') target.type = 'email';
+    });
+    const result = fillForm([
+      { field_id: descriptors[0].field_id, value: 'Jordan' },
+      { field_id: descriptors[1].field_id, value: kind === 'file' ? '__resume_pdf__' : 'https://example.com/portfolio' },
+    ], {
+      root: document,
+      expectedDescriptors: structuredClone(descriptors),
+      pdf: { filename: 'resume.pdf', pdfBase64: 'JVBERg==' },
+      dataTransferFactory: fakeDataTransferFactory,
+    });
+    expect(result.filled).toEqual([descriptors[0].field_id]);
+    expect(result.unfilled).toEqual([{ field_id: descriptors[1].field_id, reason: expect.stringMatching(/changed since the review/) }]);
+    if (kind === 'file') expect(target.files).toHaveLength(0);
+    else expect(target.value).toBe('');
+  });
+
+  it.each(['disabled', 'readonly', 'hidden'])('does not overwrite a field that became %s after review', (state) => {
+    const document = new JSDOM('<form><label>Name <input value="original"></label></form>').window.document;
+    const [field] = scanForm(document);
+    const input = document.querySelector('input');
+    input.setAttribute(state, '');
+    const result = fillForm([{ field_id: field.field_id, value: 'replacement' }], { root: document });
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toHaveLength(1);
+    expect(input.value).toBe('original');
+  });
+
+  it('preserves values when a draft exceeds maxlength or an option was disabled', () => {
+    const document = new JSDOM('<form><label>Summary <textarea maxlength="8">original</textarea></label><label>Office <select><option value="home">Home</option><option value="away">Away</option></select></label></form>').window.document;
+    const [summary, office] = scanForm(document);
+    document.querySelector('option[value="away"]').disabled = true;
+    const result = fillForm([{ field_id: summary.field_id, value: 'An excessively long draft' }, { field_id: office.field_id, value: 'away' }], { root: document });
+    expect(result.filled).toEqual([]);
+    expect(document.querySelector('textarea').value).toBe('original');
+    expect(document.querySelector('select').value).toBe('home');
+  });
+
+  it('does not attach a PDF to a resume upload accepting only another format', () => {
+    const document = new JSDOM('<form><label>Resume <input type="file" accept=".doc,.docx"></label></form>').window.document;
+    const [field] = scanForm(document);
+    const input = document.querySelector('input');
+    makeFilesAssignable(input);
+    const result = fillForm([{ field_id: field.field_id, value: '__resume_pdf__' }], { root: document, pdf: { filename: 'resume.pdf', pdfBase64: 'JVBERg==' }, dataTransferFactory: fakeDataTransferFactory });
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled[0].reason).toMatch(/PDF/i);
+    expect(input.files).toHaveLength(0);
+  });
+
   it('uses native value setters and bubbling input/change events for text and textarea fields', () => {
     const document = new JSDOM(`
       <form>
@@ -113,7 +197,7 @@ describe('fillForm', () => {
   it('reports browser-sanitized number and date values as unfilled without erasing prior values', () => {
     const document = new JSDOM(`
       <form>
-        <label>Salary <input type="number" value="120000"></label>
+        <label>Years of experience <input type="number" value="120000"></label>
         <label>Start date <input type="date" value="2026-08-01"></label>
       </form>
     `).window.document;
@@ -145,7 +229,7 @@ describe('fillForm', () => {
   it('fills browser-valid number and date values and dispatches native events', () => {
     const document = new JSDOM(`
       <form>
-        <label>Salary <input type="number" value="120000"></label>
+        <label>Years of experience <input type="number" value="120000"></label>
         <label>Start date <input type="date" value="2026-08-01"></label>
       </form>
     `).window.document;
@@ -228,9 +312,13 @@ describe('fillForm', () => {
     expect(events.map(({ type }) => type)).toEqual(['input', 'change', 'input', 'change']);
   });
 
-  it('fills a Greenhouse Yes/No checkbox pair as one exclusive choice', () => {
+  it('fills a non-sensitive Greenhouse Yes/No checkbox pair as one exclusive choice', () => {
     const document = loadFixture('greenhouse');
-    const workAuthorization = fieldByLabel(document, 'Work authorization');
+    document.querySelector('fieldset legend').textContent = 'Available to relocate';
+    for (const checkbox of document.querySelectorAll('[name="work_authorization"]')) {
+      checkbox.name = 'relocate';
+    }
+    const workAuthorization = fieldByLabel(document, 'Available to relocate');
     const yes = document.querySelector('#authorized-yes');
     const no = document.querySelector('#authorized-no');
     const events = eventLog(document.querySelector('form'));
@@ -447,7 +535,7 @@ describe('fillForm', () => {
     const document = new JSDOM(`
       <form>
         <div class="application-section">
-          <span>Send me updates</span>
+          <span>Has a portfolio</span>
           <input type="checkbox" name="updates" tabindex="-1">
           <div class="unrelated-actions">
             <button type="button">Yes</button>
@@ -456,7 +544,7 @@ describe('fillForm', () => {
         </div>
       </form>
     `).window.document;
-    const field = fieldByLabel(document, 'Send me updates');
+    const field = fieldByLabel(document, 'Has a portfolio');
     const checkbox = document.querySelector('input[type="checkbox"]');
 
     expect(fillForm([

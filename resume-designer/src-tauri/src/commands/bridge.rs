@@ -28,7 +28,7 @@ const MAX_BODY_BYTES: usize = 1_048_576; // 1 MiB
 /// of threads during the bridge's deliberately long AI/PDF timeout window.
 const MAX_IN_FLIGHT_REQUESTS: usize = 16;
 const BRIDGE_BUSY_BODY: &str =
-    r#"{"error":"Resume Designer is handling too many companion requests","code":"bridge_busy"}"#;
+    r#"{"error":"On Paper is handling too many companion requests","code":"bridge_busy"}"#;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -89,7 +89,7 @@ pub struct BridgePending(pub Mutex<HashMap<u64, SyncSender<JsResponse>>>);
 /// during a cold app launch, so they fail quickly if the webview has not
 /// installed its bridge listener yet instead of blocking a poll for 30s.
 fn timeout_for_path(path: &str) -> Duration {
-    if path == "/health" || path == "/pairing/claim" {
+    if path == "/health" || path == "/pairing/claim" || path == "/pairing/request" {
         Duration::from_secs(2)
     } else if path.starts_with("/ai/") || path.ends_with("/pdf") {
         Duration::from_secs(180)
@@ -198,6 +198,18 @@ fn respond_json(request: tiny_http::Request, status: u16, body: &str) {
     let _ = request.respond(response);
 }
 
+/// This unauthenticated endpoint may show native consent. Reject ordinary
+/// web-page/form requests before forwarding: only an extension JSON fetch can
+/// initiate it. No CORS headers are added; the pairing proof is still required.
+fn is_allowed_pairing_request(origin: Option<&str>, content_type: Option<&str>) -> bool {
+    let extension_id = origin.and_then(|value| value.strip_prefix("chrome-extension://"));
+    let json = content_type
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
+    json && extension_id
+        .is_some_and(|id| id.len() == 32 && id.bytes().all(|byte| (b'a'..=b'p').contains(&byte)))
+}
+
 fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
     let host = request
         .headers()
@@ -225,6 +237,24 @@ fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
 
     let method = request.method().as_str().to_string();
     let path = request.url().split('?').next().unwrap_or("").to_string();
+    if path == "/pairing/request" {
+        let header = |name: &str| {
+            request
+                .headers()
+                .iter()
+                .find(|header| header.field.as_str().as_str().eq_ignore_ascii_case(name))
+                .map(|header| header.value.as_str())
+        };
+        if method != "POST" || !is_allowed_pairing_request(header("Origin"), header("Content-Type"))
+        {
+            respond_json(
+                request,
+                403,
+                r#"{"error":"pairing requires an extension JSON request"}"#,
+            );
+            return;
+        }
+    }
     let authorization = request
         .headers()
         .iter()
@@ -284,6 +314,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pairing_request_rejects_web_origins_and_simple_form_posts() {
+        let origin = format!("chrome-extension://{}", "a".repeat(32));
+        assert!(is_allowed_pairing_request(
+            Some(&origin),
+            Some("application/json")
+        ));
+        assert!(is_allowed_pairing_request(
+            Some(&origin),
+            Some("application/json; charset=utf-8")
+        ));
+        for invalid in [
+            None,
+            Some("null"),
+            Some("https://example.com"),
+            Some("http://127.0.0.1:17872"),
+            Some("chrome-extension://short"),
+            Some("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"),
+            Some("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz"),
+        ] {
+            assert!(!is_allowed_pairing_request(
+                invalid,
+                Some("application/json")
+            ));
+        }
+        for invalid in [
+            None,
+            Some("text/plain"),
+            Some("application/x-www-form-urlencoded"),
+            Some("multipart/form-data"),
+        ] {
+            assert!(!is_allowed_pairing_request(Some(&origin), invalid));
+        }
+    }
+
+    #[test]
     fn timeout_is_long_for_ai_and_pdf_and_short_for_connection_polling() {
         assert_eq!(timeout_for_path("/ai/complete"), Duration::from_secs(180));
         assert_eq!(
@@ -293,6 +358,7 @@ mod tests {
         assert_eq!(timeout_for_path("/resumes"), Duration::from_secs(30));
         assert_eq!(timeout_for_path("/health"), Duration::from_secs(2));
         assert_eq!(timeout_for_path("/pairing/claim"), Duration::from_secs(2));
+        assert_eq!(timeout_for_path("/pairing/request"), Duration::from_secs(2));
     }
 
     #[test]
@@ -347,7 +413,7 @@ mod tests {
         assert_eq!(parsed["code"], "bridge_busy");
         assert_eq!(
             parsed["error"],
-            "Resume Designer is handling too many companion requests"
+            "On Paper is handling too many companion requests"
         );
     }
 

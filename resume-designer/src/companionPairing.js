@@ -66,6 +66,8 @@ export function createCompanionPairing({
   flush = async () => true,
 } = {}) {
   const pending = new Map();
+  let approvalInFlight = false;
+  let lastRequestAt = -Infinity;
 
   function prune() {
     const current = now();
@@ -87,6 +89,8 @@ export function createCompanionPairing({
       return null;
     }
 
+    if (approvalInFlight) return null;
+
     while (pending.size >= maxPending) {
       pending.delete(pending.keys().next().value);
     }
@@ -98,6 +102,7 @@ export function createCompanionPairing({
     };
     pending.set(parsed.requestId, grant);
 
+    approvalInFlight = true;
     try {
       const approved = await confirmPairing({
         requestId: parsed.requestId,
@@ -108,9 +113,38 @@ export function createCompanionPairing({
       }
     } catch {
       if (pending.get(parsed.requestId) === grant) grant.status = 'rejected';
+    } finally {
+      approvalInFlight = false;
     }
 
     return { kind: 'pair', requestId: parsed.requestId };
+  }
+
+  function request({ protocolVersion, requestId, challenge, clientId } = {}) {
+    if (![protocolVersion, requestId, challenge, clientId].every((value) => typeof value === 'string')
+      || protocolVersion !== PROTOCOL_VERSION || !REQUEST_ID_PATTERN.test(requestId ?? '')
+      || !CHALLENGE_PATTERN.test(challenge ?? '') || !/^[a-p]{32}$/.test(clientId ?? '')) {
+      return json(400, { error: 'valid pairing challenge and extension ID are required', code: 'invalid_pairing_request' });
+    }
+    prune();
+    const existing = pending.get(requestId);
+    if (existing) {
+      return constantTimeEqual(existing.challenge, challenge)
+        ? json(202, { pending: true })
+        : json(409, { error: 'pairing request ID is already in use', code: 'invalid_pairing_request' });
+    }
+    if (approvalInFlight || now() - lastRequestAt < 5_000) {
+      return json(429, { error: 'Finish the current pairing request in On Paper, then try again.', code: 'pairing_busy' });
+    }
+    lastRequestAt = now();
+    const url = new URL('resume-designer://companion/pair');
+    for (const [key, value] of Object.entries({ protocolVersion, requestId, challenge, clientId })) {
+      url.searchParams.set(key, value);
+    }
+    // registerUrl installs the challenge synchronously, then awaits native
+    // approval. HTTP returns only pending; the proof-protected claim is separate.
+    void registerUrl(url.href);
+    return json(202, { pending: true });
   }
 
   async function claim({ requestId, verifier } = {}) {
@@ -123,6 +157,7 @@ export function createCompanionPairing({
     if (!grant) return notFound();
 
     const actualChallenge = await challengeFor(verifier);
+    if (pending.get(requestId) !== grant) return notFound();
     if (!constantTimeEqual(grant.challenge, actualChallenge)) return notFound();
     if (grant.status === 'pending' || grant.status === 'claiming') {
       return json(425, { error: 'pairing approval is pending', code: 'pairing_pending' });
@@ -162,6 +197,8 @@ export function createCompanionPairing({
 
   return {
     claim,
+    request,
+    revokeAll: () => pending.clear(),
     pendingCount: () => {
       prune();
       return pending.size;

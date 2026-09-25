@@ -12,6 +12,8 @@ describe('isPackageAffectingPath', () => {
       'extension/package.json',
       'extension/package-lock.json',
       'extension/sidepanel.html',
+      'extension/privacy.html',
+      'extension/privacy.css',
       'extension/vite.config.js',
       'extension/icons/128.png',
       'extension/src/sidepanel/App.jsx',

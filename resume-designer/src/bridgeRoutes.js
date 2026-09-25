@@ -15,9 +15,12 @@ export const COMPANION_PROTOCOL_VERSION = 2;
 export const COMPANION_CAPABILITIES = Object.freeze([
   'app.launch',
   'pairing.challenge',
+  'pairing.request',
+  'pairing.revoke',
   'profile.context',
   'resume.pdf',
   'ai.complete',
+  'ai.models',
   'ai.job-fit',
   'ai.tailored-resume',
   'profile.answers',
@@ -77,7 +80,7 @@ export function createBridgeRouter(deps) {
       });
     }
 
-    if (method === 'POST' && path === '/pairing/claim') {
+    if (method === 'POST' && ['/pairing/claim', '/pairing/request'].includes(path)) {
       let claim;
       try {
         claim = body ? JSON.parse(body) : {};
@@ -88,6 +91,10 @@ export function createBridgeRouter(deps) {
         return json(400, { error: 'JSON body must be an object' });
       }
       try {
+        if (path === '/pairing/request') {
+          if (deps.writesSuspended?.()) return importInProgress();
+          return await deps.requestPairing(claim);
+        }
         return await deps.claimPairing(claim);
       } catch (error) {
         return json(500, { error: error?.message || 'pairing failed' });
@@ -112,12 +119,21 @@ export function createBridgeRouter(deps) {
     }
 
     try {
+      if (method === 'POST' && path === '/pairing/revoke') {
+        await deps.revokePairing();
+        return json(200, { ok: true });
+      }
+
       // A destructive import updates appStorage before the success-modal reload,
       // while several module caches still describe the previous profile. Treat
       // the whole window as an invalid context: even reads could otherwise mix
       // restored data with stale learned answers or let an old review fill.
       if (deps.writesSuspended?.() && isProfileSensitiveRequest(method, path)) {
         return importInProgress();
+      }
+
+      if (method === 'GET' && path === '/ai/models') {
+        return json(200, deps.getAiModels());
       }
 
       if (method === 'GET' && path === '/resumes') {
@@ -161,6 +177,20 @@ export function createBridgeRouter(deps) {
         });
       }
 
+      let modelOptions = {};
+      if (method === 'POST' && ['/ai/complete', '/ai/job-fit', '/ai/tailored-resume'].includes(path)) {
+        if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) {
+          return profileChanged();
+        }
+        if (parsed.model !== undefined) {
+          if (typeof parsed.model !== 'string' || !parsed.model || parsed.model.length > 256
+            || !deps.getAiModels().models.some((model) => model.id === parsed.model)) {
+            return json(400, { error: 'Choose an available AI model', code: 'invalid_model' });
+          }
+          modelOptions = { model: parsed.model };
+        }
+      }
+
       if (method === 'POST' && path === '/ai/complete') {
         if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) {
           return profileChanged();
@@ -171,6 +201,7 @@ export function createBridgeRouter(deps) {
         if (!valid) return json(400, { error: 'messages must be a non-empty array of {role, content}' });
         try {
           const text = await deps.complete(messages, {
+            ...modelOptions,
             systemPrompt: parsed.systemPrompt,
             reasoningEffort: parsed.reasoningEffort,
           });
@@ -186,6 +217,7 @@ export function createBridgeRouter(deps) {
           return profileChanged();
         }
         const result = await deps.analyzeJobFit({
+          ...modelOptions,
           resumeId: parsed.resumeId,
           job: parsed.job,
         });
@@ -203,6 +235,7 @@ export function createBridgeRouter(deps) {
           return profileChanged();
         }
         const result = await deps.createTailoredResume({
+          ...modelOptions,
           resumeId: parsed.resumeId,
           requestId: parsed.requestId,
           job: parsed.job,

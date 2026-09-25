@@ -1,10 +1,29 @@
 # Chrome Web Store release operations
 
-This document is the operational source of truth for shipping the Resume
-Designer Companion extension. The workflow is designed so Store credentials
+This document is the operational source of truth for shipping the On Paper Companion extension. The workflow is designed so Store credentials
 never reach pull-request code and an extension that requires a new bridge
 capability is submitted only after the corresponding production desktop
 release workflow succeeds.
+
+## Current submission gates
+
+The main candidate passed local Chrome functional QA with the isolated macOS demo and real AI after the user reloaded the extension. The subsequent status-copy extension build passed a fresh AI review and app quit/relaunch/reconnect; its runtime JavaScript is unchanged in the final publisher/support-policy package. The rebuilt native Library passed Close/Escape checks, and final native copy changes passed focused live verification. See [`chrome-web-store-readiness-2026-09-24.md`](chrome-web-store-readiness-2026-09-24.md) for exact artifact provenance and observed checks. This is not production-platform validation, Store approval, or publication.
+
+| Gate | Current disposition |
+| --- | --- |
+| Publisher/item/contact/trader setup | Owner selected HyperBuild, Inc, support@hyperbuild.com, and Unlisted for the first release. Registration/payment completed per the owner’s report. The trader declaration is in progress; account/item setup, mailbox/domain and Dashboard identity verification remain unconfirmed, as do trader completion and required legal details. |
+| Production desktop dependency | First release is Unlisted and macOS-only (14.4+). Supply its exact signed compatible macOS installer; the isolated demo app is insufficient. |
+| Pairing | Warm native consent, rejection, extension cancel/manual recovery, retry/approval, and disconnect/revoke passed locally. Cold launch still requires a correctly registered production installation and its own check. |
+| Core companion flow | Local real-AI review/fill with PDF, two sensitive blanks, model search/override/reset, application logging, fit analysis, one tailored variant, saved-answer reuse, and query/fragment stale-review protection passed. This does not complete the full manual checklist. |
+| Native Library close | The close fix, desktop suite (2,051/129), lint, signed isolated app rebuild, and live Close/reopen/Escape checks passed. The full suite preceded final copy-only policy/neutral Library changes; the final app started after user-approved Keychain access, retained saved resumes, and passed focused Library Close and Chrome reconnect checks. |
+| Public policy/support/homepage | Verify deployed URLs, Companion disclosures, and affirmative Limited Use statement. Local source edits are not deployment. |
+| Real reviewer AI access | No reviewer test account is currently available. The product requires a user-provided OpenRouter account/key and available model; do not assume the reviewer has funded access. A workable BYOK reviewer path remains unresolved. Never bundle developer keys. |
+| Reviewer fixture/import | Publish a durable fictional fixture/import through the normal authorized release process. |
+| Listing images | The 128×128 listing icon and 440×280 promo tile are complete in `extension/store-assets/`. Final UI was inspected, but screenshot PNG export was blocked by browser URL policy; no actual screenshot asset exists. |
+| Final artifact | Extension tests (413/14) and lint passed before the final manifest-description-only change; the final macOS-first package build, strict validator, and ZIP integrity passed. ZIP: 672,930 bytes, 12 files, SHA-256 `2c483546a2c390516d23006fa9f0bfedc47d0e5c219d0b92a31630218b77167e`. Runtime JavaScript is identical to the status-copy build that passed review/reconnect; final offline publisher/support copy and mail link rendered live. The last package change is only the macOS-first manifest description. The readiness record preserves all build provenance. |
+| First-release production/manual checks | Signed macOS installer, Store installation/update, URI cold launch, Chrome browser restart, and the applicable macOS README checklist remain open. |
+| Later Windows release | Windows GNU cross-target compilation passed. Windows signing, installation/runtime, and manual feature tests remain deferred; they do not block the macOS-only first release. |
+| Store status | No upload/submission/publication performed by preparing these files. |
 
 ## What is automated
 
@@ -54,22 +73,21 @@ asynchronous.
 
 ## What remains manual
 
+Use the [owner setup checklist](chrome-web-store-owner-checklist.md) for the remaining trader/verification, Unlisted macOS-first listing, and access steps.
+
 Chrome requires human-owned publisher and listing setup before the API can
 publish an item. Complete these once in the Chrome Web Store Developer
-Dashboard:
+Dashboard. Registration includes a one-time developer fee; the owner reports both registration and payment completed.
 
-1. Register the publisher and enable two-step verification.
-2. Pay the one-time developer registration fee, verify the publisher contact
-   email, and complete the applicable trader or non-trader declaration. A
-   trader must also complete Google's public identity/contact verification.
+1. Confirm two-step verification and the publisher identity for **HyperBuild, Inc** in the Dashboard. Registration/payment completion does not establish identity verification.
+2. Finish the trader declaration currently in progress and verify the publisher contact email **support@hyperbuild.com**. Mailbox/domain, Dashboard identity verification, trader completion, and required legal details remain unconfirmed. A trader must also complete Google’s public identity/contact verification.
 3. Create the Store item and upload the first validated ZIP to establish its
    extension ID.
 4. Complete Store Listing, Privacy practices, Test instructions, and
    Distribution using `docs/chrome-web-store-listing.md`.
 5. Add the public privacy-policy, support, and homepage URLs.
 6. Upload screenshots and promotional artwork.
-7. Select initial visibility. Use **Unlisted** for the prelaunch beta unless a
-   public listing is intentionally ready.
+7. Select **Unlisted** for the first release, as chosen by the owner. This choice has not yet been applied in the Dashboard.
 8. Manually publish once after establishing or changing visibility. The Web
    Store API preserves existing visibility and cannot activate a newly changed
    visibility until it has been published manually once.
@@ -129,7 +147,8 @@ Reference documentation:
 - [GitHub Actions OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect)
 - [Google deployment-pipeline WIF guidance](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines)
 - [google-github-actions/auth WIF examples](https://github.com/google-github-actions/auth)
-- [Chrome Web Store 2026 disclosure-policy update](https://developer.chrome.com/blog/cws-policy-updates-2026?hl=en)
+- [Current Chrome Web Store program policies](https://developer.chrome.com/docs/webstore/program-policies/policies)
+- [Current user-data FAQ](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq)
 
 ## GitHub environment configuration
 
@@ -187,7 +206,7 @@ Run these in order from the Actions tab, always selecting `main`:
    npm run lint
    npm test
    npm run package:store
-   unzip -t artifacts/resume-designer-companion-*.zip
+   unzip -t artifacts/on-paper-companion-*.zip
    ```
 
 3. Review the pull-request CI artifact and test it unpacked in Chrome.
@@ -229,29 +248,36 @@ the app-first guarantee for bridge changes.
 
 ## Product and listing gates before first submission
 
-- [ ] Publish a stable privacy policy and support page.
-- [ ] Add a prominent first-use disclosure and affirmative consent before page
-      or résumé data is processed. For the Chrome policy effective August 1,
-      2026, enumerate page origin/path and form descriptors; résumé, profile,
+- [ ] Deploy and verify a stable privacy policy (including Companion and Limited Use text), homepage link, and support route.
+- [x] Add a prominent first-use disclosure and affirmative consent before page
+      or resume data is processed. Enumerate page origin/path and form descriptors; resume, profile,
       and learned answers; generated PDFs; the session pairing credential;
       OpenRouter/downstream-provider transfers; and application-site
       fill/upload behavior.
-- [ ] Make the privacy policy reachable from the side panel.
-- [ ] Reconcile the final behavior with
+- [x] Make the bundled offline privacy policy reachable from the side panel.
+- [x] Reconcile the implemented data flow and CloudKit behavior with
       `docs/chrome-web-store-listing.md`, including AI-provider transfers and
       application-site autosave/upload behavior.
-- [ ] Decide whether EEO, disability, veteran, demographic, compensation, and
-      similar sensitive questions are excluded or always manual by default.
+- [x] Keep EEO, disability, veteran, demographic, compensation, work authorization,
+      and similar sensitive questions manual on the page and excluded from AI mapping.
 - [x] Keep the extension's pairing token only in memory-backed
       `chrome.storage.session`, unavailable to content scripts, and purge the
       legacy disk-persisted value.
-- [ ] Document and approve the pairing-token threat model; add a clear
-      disconnect/revoke path before broad launch.
-- [ ] Capture Store screenshots and create required promotional artwork from
-      the final UI.
-- [ ] Provide stable reviewer instructions, test fixture, desktop download, and
-      a test configuration that exercises the core path.
-- [ ] Copy and confirm the documented desktop floors in the live Dashboard
-      listing: macOS 14.4 or later and Windows 10 version 1809 or later.
+- [x] Document the pairing-token trust boundary and add a disconnect/revoke path.
+- [ ] Complete human review of the documented trust boundary before broad launch.
+- [x] Create the required listing icon and 440×280 promotional tile in `extension/store-assets/`.
+- [ ] Capture Store screenshots from the final UI.
+- [ ] Complete `docs/chrome-web-store-reviewer-instructions.md` with stable reviewer fixture/import, the exact signed compatible macOS installer, and safe real AI access.
+- [ ] Copy and confirm the first-release platform in the live Dashboard listing: macOS 14.4 or later only, with Unlisted visibility. Windows support is deferred until its separate release checks pass.
 - [ ] Perform the manual Chrome QA checklist in `extension/README.md` against
       the exact release ZIP.
+
+## Freeze and handoff
+
+1. Finish the outstanding product/privacy work and run the README’s applicable manual checks on macOS for this first release. Record failures separately from passes.
+2. Build the final ZIP, record its SHA-256, and capture screenshots from that same UI. Confirm no personal data, tokens, API keys, developer overlays, or unshipped promises appear in the images.
+3. Validate name/version/description against the listing; select only data categories supported by the final inventory. Check the deployed policy in a fresh browser session.
+4. Complete the owner-provided fields and reviewer access. Check the exact installer contains this bridge version; a generic latest-release link can point to an incompatible app.
+5. Request separate authorization for any remote upload/submission/publication. Keep automated publishing disabled until the gates are closed. A successful upload or review submission does not mean users can install the extension yet.
+
+Official submission behavior: [publishing documentation](https://developer.chrome.com/docs/webstore/publish) describes the upload, listing/privacy/test fields, and review step; [review process](https://developer.chrome.com/docs/webstore/review-process) explains that review timing varies. No review-time guarantee is made here.

@@ -40,10 +40,12 @@ function deferred() {
 
 function createChrome({
   token = '',
+  consent = true,
   legacyLocalToken = '',
   tab = { id: 17, windowId: 4, url: 'https://jobs.example.test/apply' },
   contentResponse,
 } = {}) {
+  let storedConsent = consent ? 1 : null;
   let storedToken = token;
   let storedLegacyToken = legacyLocalToken;
   const listeners = {};
@@ -56,6 +58,7 @@ function createChrome({
       },
     },
     runtime: {
+      id: 'a'.repeat(32),
       onMessage: {
         addListener: vi.fn((listener) => {
           listeners.runtime = listener;
@@ -70,13 +73,15 @@ function createChrome({
     },
     storage: {
       local: {
-        get: vi.fn(async () => ({ bridgeToken: storedLegacyToken })),
+        get: vi.fn(async () => ({ bridgeToken: storedLegacyToken, privacyConsentVersion: storedConsent })),
         set: vi.fn(async (value) => {
-          storedLegacyToken = value.bridgeToken;
+          if ('bridgeToken' in value) storedLegacyToken = value.bridgeToken;
+          if ('privacyConsentVersion' in value) storedConsent = value.privacyConsentVersion;
         }),
         setAccessLevel: vi.fn(async () => undefined),
         remove: vi.fn(async (key) => {
           if (key === 'bridgeToken') storedLegacyToken = '';
+          if (key === 'privacyConsentVersion') storedConsent = null;
         }),
       },
       session: {
@@ -111,6 +116,7 @@ async function callRuntime(listener, message) {
   return { response: sendResponse.mock.calls[0][0], sendResponse };
 }
 
+const REVIEW_CONTEXT = { page: { tabId: 17, url: 'https://jobs.example.test/apply', tabUrl: 'https://jobs.example.test/apply' }, descriptors: [] };
 const PDF_FIELD = [{ field_id: 'resume-file', value: '__resume_pdf__' }];
 
 describe('createBackgroundService', () => {
@@ -269,7 +275,7 @@ describe('createBackgroundService', () => {
     expect(chromeApi.storage.session.set).not.toHaveBeenCalled();
   });
 
-  it('opens an already-paired app without putting the token in the URL or requesting approval', async () => {
+  it('connects to an already-running paired app without launching or requesting approval', async () => {
     const { chromeApi } = createChrome({ token: 'stored-secret' });
     const fetchImpl = vi.fn(async (url, options) => {
       if (url.endsWith('/health')) {
@@ -293,10 +299,7 @@ describe('createBackgroundService', () => {
       profileContextId: 'context-1',
     });
 
-    expect(chromeApi.tabs.create).toHaveBeenCalledOnce();
-    const launchUrl = chromeApi.tabs.create.mock.calls[0][0].url;
-    expect(launchUrl).toBe('resume-designer://companion/open?protocolVersion=2');
-    expect(launchUrl).not.toContain('stored-secret');
+    expect(chromeApi.tabs.create).not.toHaveBeenCalled();
     expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/pairing/claim'))).toBe(false);
   });
 
@@ -336,6 +339,7 @@ describe('createBackgroundService', () => {
 
     const launchUrl = new URL(chromeApi.tabs.create.mock.calls[0][0].url);
     expect(launchUrl.hostname).toBe('companion');
+    expect(chromeApi.tabs.create.mock.calls[0][0].active).toBe(true);
     expect(launchUrl.pathname).toBe('/pair');
     expect(launchUrl.searchParams.get('protocolVersion')).toBe('2');
     expect(launchUrl.searchParams.get('challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -345,7 +349,7 @@ describe('createBackgroundService', () => {
     expect(waitImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('launches paired users first and starts challenge pairing only after a 401', async () => {
+  it('starts challenge pairing for a running app only after a 401', async () => {
     const { chromeApi, getStoredToken } = createChrome({ token: 'expired-secret' });
     let resumeCalls = 0;
     const fetchImpl = vi.fn(async (url, options) => {
@@ -372,9 +376,8 @@ describe('createBackgroundService', () => {
 
     await service.handleMessage({ type: 'app.open' });
 
-    expect(chromeApi.tabs.create).toHaveBeenCalledTimes(2);
-    expect(chromeApi.tabs.create.mock.calls[0][0].url).toContain('/open?');
-    expect(chromeApi.tabs.create.mock.calls[1][0].url).toContain('/pair?');
+    expect(chromeApi.tabs.create).toHaveBeenCalledOnce();
+    expect(chromeApi.tabs.create.mock.calls[0][0].url).toContain('/pair?');
     expect(getStoredToken()).toBe('replacement-secret');
   });
 
@@ -392,7 +395,7 @@ describe('createBackgroundService', () => {
       code: 'launch_failed',
       retryable: true,
     });
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(waitImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -417,11 +420,11 @@ describe('createBackgroundService', () => {
       type: 'mapping.create', profileContextId: 'context-old', resumeId: 'resume-1', descriptors: [],
     }],
     ['non-PDF fill', {
-      type: 'page.fill', profileContextId: 'context-old', resumeId: 'resume-1',
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-old', resumeId: 'resume-1',
       fields: [{ field_id: 'name', value: 'Jane' }],
     }],
     ['missing-context fill', {
-      type: 'page.fill', resumeId: 'resume-1',
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, resumeId: 'resume-1',
       fields: [{ field_id: 'name', value: 'Jane' }],
     }],
     ['answer save', {
@@ -455,12 +458,12 @@ describe('createBackgroundService', () => {
   it('queries and injects the active HTTPS tab before an exact scan relay', async () => {
     const scanResult = {
       descriptors: [{ field_id: 'name' }],
-      page: { company: 'Acme', title: 'Engineer' },
+      page: { company: 'Acme', title: 'Engineer', url: 'https://jobs.example.test/apply' },
     };
     const { chromeApi } = createChrome({ contentResponse: scanResult });
     const service = createBackgroundService({ chromeApi, fetchImpl: vi.fn() });
 
-    await expect(service.handleMessage({ type: 'page.scan' })).resolves.toEqual(scanResult);
+    await expect(service.handleMessage({ type: 'page.scan' })).resolves.toEqual({ ...scanResult, page: { ...scanResult.page, tabId: 17, tabUrl: 'https://jobs.example.test/apply' } });
     expect(chromeApi.tabs.query).toHaveBeenCalledWith({ active: true, currentWindow: true });
     expect(chromeApi.scripting.executeScript).toHaveBeenCalledWith({
       target: { tabId: 17 },
@@ -474,14 +477,14 @@ describe('createBackgroundService', () => {
     'http://127.0.0.1:8765/greenhouse-form.html',
     'http://[::1]:8765/greenhouse-form.html',
   ])('allows loopback HTTP fixtures at %s', async (url) => {
-    const scanResult = { descriptors: [], page: {} };
+    const scanResult = { descriptors: [], page: { url } };
     const { chromeApi } = createChrome({
       tab: { id: 17, windowId: 4, url },
       contentResponse: scanResult,
     });
     const service = createBackgroundService({ chromeApi, fetchImpl: vi.fn() });
 
-    await expect(service.handleMessage({ type: 'page.scan' })).resolves.toEqual(scanResult);
+    await expect(service.handleMessage({ type: 'page.scan' })).resolves.toEqual({ ...scanResult, page: { ...scanResult.page, tabId: 17, tabUrl: url } });
     expect(chromeApi.scripting.executeScript).toHaveBeenCalledOnce();
     expect(chromeApi.tabs.sendMessage).toHaveBeenCalledOnce();
   });
@@ -712,7 +715,7 @@ describe('createBackgroundService', () => {
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({
-      type: 'page.fill',
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT,
       profileContextId: 'context-1',
       resumeId: 'resume-1',
       fields,
@@ -724,7 +727,7 @@ describe('createBackgroundService', () => {
     ))).toBe(true);
     expect(chromeApi.tabs.sendMessage).toHaveBeenCalledWith(17, {
       type: 'content.fill',
-      payload: { fields },
+      payload: { fields, reviewContext: REVIEW_CONTEXT },
     });
   });
 
@@ -745,7 +748,7 @@ describe('createBackgroundService', () => {
     });
     const service = createBackgroundService({ chromeApi, fetchImpl });
     const fill = service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1',
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1',
       fields: [{ field_id: 'name', value: 'Jane' }],
     });
 
@@ -777,10 +780,10 @@ describe('createBackgroundService', () => {
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     const first = service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
     });
     const second = service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
     });
 
     await vi.waitFor(() => expect(pdfCalls).toBe(1));
@@ -807,6 +810,7 @@ describe('createBackgroundService', () => {
         type: 'content.fill',
         payload: {
           fields: PDF_FIELD,
+          reviewContext: REVIEW_CONTEXT,
           pdf: { filename: 'First.pdf', pdfBase64: 'UERGMSA=' },
         },
       },
@@ -814,6 +818,7 @@ describe('createBackgroundService', () => {
         type: 'content.fill',
         payload: {
           fields: PDF_FIELD,
+          reviewContext: REVIEW_CONTEXT,
           pdf: { filename: 'Second.pdf', pdfBase64: 'UERGMiA=' },
         },
       },
@@ -840,7 +845,7 @@ describe('createBackgroundService', () => {
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1',
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1',
       fields: [{ field_id: 'name', value: 'Jane' }, ...PDF_FIELD],
     })).resolves.toMatchObject({ attachments: [] });
   });
@@ -875,10 +880,10 @@ describe('createBackgroundService', () => {
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     const first = service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
     });
     const second = service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
     });
     await vi.waitFor(() => expect(pdfCalls).toBe(1));
     firstPdf.resolve(jsonResponse({
@@ -913,7 +918,7 @@ describe('createBackgroundService', () => {
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1',
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1',
       resumeId: 'resume-1', fields: PDF_FIELD,
     })).rejects.toMatchObject({ code: 'profile_changed' });
     expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
@@ -939,10 +944,10 @@ describe('createBackgroundService', () => {
 
     const outcomes = await Promise.allSettled([
       service.handleMessage({
-        type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
+        type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
       }),
       service.handleMessage({
-        type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
+        type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-2', fields: PDF_FIELD,
       }),
     ]);
 
@@ -957,7 +962,7 @@ describe('createBackgroundService', () => {
 
   it.each([
     [500, 'another PDF export is in progress — try again in a moment', 'pdf_busy'],
-    [504, 'the app did not answer in time — is Resume Designer running and unlocked?', 'app_timeout'],
+    [504, 'the app did not answer in time — is On Paper running and unlocked?', 'app_timeout'],
   ])('keeps a failed %s PDF export atomic with no page mutation', async (status, message, code) => {
     const { chromeApi } = createChrome({ token: 'paired' });
     const fetchImpl = vi.fn(async (url) => {
@@ -969,7 +974,7 @@ describe('createBackgroundService', () => {
     const service = createBackgroundService({ chromeApi, fetchImpl });
 
     await expect(service.handleMessage({
-      type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
     })).rejects.toMatchObject({ code, retryable: true });
 
     expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
@@ -1060,6 +1065,7 @@ describe('createBackgroundService', () => {
           profileContextId: 'context-1',
           resumeId: 'resume-1',
           job: { url: 'https://jobs.test/1', description: 'Build products' },
+          model: 'provider/chosen',
         });
         return jsonResponse({
           profileId: 'profile-1', profileContextId: 'context-1', resumeId: 'resume-1', analysis,
@@ -1074,6 +1080,7 @@ describe('createBackgroundService', () => {
       profileContextId: 'context-1',
       resumeId: 'resume-1',
       job: { url: 'https://jobs.test/1', description: 'Build products' },
+          model: 'provider/chosen',
       ignored: 'do not send',
     })).resolves.toMatchObject({ analysis });
 
@@ -1097,6 +1104,7 @@ describe('createBackgroundService', () => {
           resumeId: 'resume-1',
           requestId: 'request-uuid',
           job: { description: 'Build products' },
+          model: 'provider/chosen',
         });
         return jsonResponse({
           profileId: 'profile-1', profileContextId: 'context-1', created: true, resume,
@@ -1112,11 +1120,321 @@ describe('createBackgroundService', () => {
       resumeId: 'resume-1',
       requestId: 'request-uuid',
       job: { description: 'Build products' },
+          model: 'provider/chosen',
     })).resolves.toMatchObject({ created: true, resume });
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       'http://127.0.0.1:17872/resumes',
       'http://127.0.0.1:17872/ai/tailored-resume',
     ]);
+  });
+});
+
+
+describe('privacy consent and disconnection', () => {
+  it('blocks all processing before explicit consent, including page scanning and reading resumes', async () => {
+    const { chromeApi } = createChrome({ consent: false });
+    const fetchImpl = vi.fn();
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    expect(await service.handleMessage({ type: 'privacy.status' })).toEqual({ accepted: false });
+    for (const type of ['connection.check', 'app.open', 'ai.models', 'page.scan', 'mapping.create', 'page.fill', 'answer.save']) {
+      await expect(service.handleMessage({ type })).rejects.toMatchObject({ code: 'consent_required' });
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
+    await expect(service.handleMessage({ type: 'privacy.accept' })).rejects.toMatchObject({ code: 'consent_required' });
+    expect(await service.handleMessage({ type: 'privacy.accept', accepted: true })).toEqual({ accepted: true });
+    expect(await service.handleMessage({ type: 'privacy.status' })).toEqual({ accepted: true });
+  });
+
+  it('revokes app access before forgetting the session and consent', async () => {
+    const { chromeApi, getStoredToken } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => jsonResponse(url.endsWith('/health') ? HEALTH : { ok: true }));
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    expect(await service.handleMessage({ type: 'pairing.disconnect' })).toEqual({ disconnected: true, revoked: true });
+    expect(fetchImpl.mock.calls[1][0]).toMatch(/\/pairing\/revoke$/);
+    expect(new Headers(fetchImpl.mock.calls[1][1].headers).get('Authorization')).toBe('Bearer paired');
+    expect(getStoredToken()).toBe('');
+    expect(await service.handleMessage({ type: 'privacy.status' })).toEqual({ accepted: false });
+  });
+
+  it('forgets this browser honestly when the desktop cannot revoke', async () => {
+    const { chromeApi, getStoredToken } = createChrome({ token: 'paired' });
+    const service = createBackgroundService({ chromeApi, fetchImpl: vi.fn(async () => { throw new Error('offline'); }) });
+    expect(await service.handleMessage({ type: 'pairing.disconnect' })).toEqual({ disconnected: true, revoked: false });
+    expect(getStoredToken()).toBe('');
+    expect(await service.handleMessage({ type: 'privacy.status' })).toEqual({ accepted: false });
+  });
+
+  it('does not claim app-wide revocation when this browser has no token', async () => {
+    const { chromeApi } = createChrome();
+    const fetchImpl = vi.fn();
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    expect(await service.handleMessage({ type: 'pairing.disconnect' }))
+      .toEqual({ disconnected: true, revoked: false });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each(['pairing.save', 'app.open'])('does not restore a pending %s token after another panel disconnects', async (type) => {
+    const verification = deferred();
+    const { chromeApi, getStoredToken } = createChrome();
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/pairing/claim')) return jsonResponse({ token: 'late-token' });
+      if (url.endsWith('/resumes')) return verification.promise;
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl, pollAttempts: 1 });
+    const pending = service.handleMessage({ type, token: 'late-token' });
+    await vi.waitFor(() => expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/resumes'))).toBe(true));
+    await service.handleMessage({ type: 'pairing.disconnect' });
+    verification.resolve(jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] }));
+    await expect(pending).rejects.toMatchObject({ code: type === 'app.open' ? 'pairing_cancelled' : 'not_paired' });
+    expect(getStoredToken()).toBe('');
+  });
+
+  it('cancels a fill paused at injection as soon as another panel starts disconnecting', async () => {
+    const injection = deferred();
+    const revocation = deferred();
+    const { chromeApi } = createChrome({ token: 'paired' });
+    chromeApi.scripting.executeScript.mockReturnValue(injection.promise);
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/pairing/revoke')) return revocation.promise;
+      return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    const fill = service.handleMessage({
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1',
+      fields: [{ field_id: 'name', value: 'Jane' }],
+    });
+    await vi.waitFor(() => expect(chromeApi.scripting.executeScript).toHaveBeenCalledOnce());
+    const disconnect = service.handleMessage({ type: 'pairing.disconnect' });
+    injection.resolve([]);
+    await expect(fill).rejects.toMatchObject({ code: 'not_paired' });
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+    revocation.resolve(jsonResponse({ ok: true }));
+    await disconnect;
+  });
+
+  it('drops a pending PDF fill even if another panel reconnects before export finishes', async () => {
+    const pdf = deferred();
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/pairing/revoke')) return jsonResponse({ ok: true });
+      if (url.endsWith('/pdf')) return pdf.promise;
+      return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    const fill = service.handleMessage({
+      type: 'page.fill', reviewContext: REVIEW_CONTEXT, profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD,
+    });
+    await vi.waitFor(() => expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/pdf'))).toBe(true));
+    await service.handleMessage({ type: 'pairing.disconnect' });
+    await service.handleMessage({ type: 'privacy.accept', accepted: true });
+    await chromeApi.storage.session.set({ bridgeToken: 'new-session' });
+    pdf.resolve(jsonResponse({
+      profileId: 'profile-1', profileContextId: 'context-1', filename: 'Resume.pdf', pdfBase64: 'UERG',
+    }));
+    await expect(fill).rejects.toMatchObject({ code: 'not_paired' });
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('never saves sensitive answers through a crafted runtime request', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn();
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type: 'answer.save', question: 'Do you have a disability?', answer: 'Yes' })).rejects.toMatchObject({ code: 'sensitive_field' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('AI model and narrative context transport', () => {
+  it('reads the model catalog through the authenticated loopback bridge', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const catalog = { models: [{id: 'provider/chosen', name: 'Chosen'}], defaults: {mapping: 'provider/chosen'} };
+    const fetchImpl = vi.fn(async (url, options) => {
+      expect(url).toBe('http://127.0.0.1:17872/ai/models');
+      expect(new Headers(options.headers).get('Authorization')).toBe('Bearer paired');
+      return jsonResponse(catalog);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    expect(await service.handleMessage({type: 'ai.models'})).toEqual(catalog);
+  });
+
+  it('carries job context and an explicit model into the actual mapping AI request', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const job = {company: 'Fieldwork', title: 'Designer', description: 'Accessible collaboration tools.'};
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/resumes')) return jsonResponse({profileId: 'profile', profileContextId: 'context', resumes: []});
+      if (url.endsWith('/resumes/resume')) return jsonResponse({profileId: 'profile', profileContextId: 'context', data: {summary: 'Product designer.'}});
+      if (url.endsWith('/ai/complete')) {
+        const body = JSON.parse(options.body);
+        expect(body.model).toBe('provider/chosen');
+        expect(JSON.parse(body.messages[0].content).job).toEqual(job);
+        return jsonResponse({text: JSON.stringify({fields: [{field_id: 'motivation', value: 'I am interested in applying my product design experience to accessible collaboration tools.', confidence: 0.8, source: 'draft'}], needs_human: []})});
+      }
+      throw new Error('Unexpected request');
+    });
+    const service = createBackgroundService({chromeApi, fetchImpl});
+    const result = await service.handleMessage({type: 'mapping.create', profileContextId: 'context', resumeId: 'resume', descriptors: [{field_id: 'motivation', type: 'textarea', label: 'What interests you about this role?'}], job, model: 'provider/chosen'});
+    expect(result.fields[0].source).toBe('draft');
+  });
+});
+
+ describe('connection recovery and cancellation', () => {
+  const warmHealth = { ...HEALTH, capabilities: [...HEALTH.capabilities, 'pairing.request'] };
+  const context = { profileId: 'profile-1', profileContextId: 'context-1', resumes: [] };
+
+  it('pairs with a running app through native approval without relying on the OS URL handler', async () => {
+    const { chromeApi, getStoredToken } = createChrome();
+    let request;
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/health')) return jsonResponse(warmHealth);
+      if (url.endsWith('/pairing/request')) {
+        request = JSON.parse(options.body);
+        expect(request.clientId).toBe('a'.repeat(32));
+        expect(request.challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        expect(request).not.toHaveProperty('verifier');
+        return jsonResponse({ pending: true }, { status: 202 });
+      }
+      if (url.endsWith('/pairing/claim')) {
+        expect(JSON.parse(options.body).requestId).toBe(request.requestId);
+        return jsonResponse({ token: 'approved-token' });
+      }
+      return jsonResponse(context);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    expect(await service.handleMessage({ type: 'app.open' })).toMatchObject({ connected: true });
+    expect(chromeApi.tabs.create).not.toHaveBeenCalled();
+    expect(getStoredToken()).toBe('approved-token');
+  });
+
+  it('cancels pending approval immediately and keeps manual pairing safe from late completion', async () => {
+    const { chromeApi, getStoredToken } = createChrome();
+    const claim = deferred();
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/health')) return jsonResponse(warmHealth);
+      if (url.endsWith('/pairing/request')) return jsonResponse({ pending: true }, { status: 202 });
+      if (url.endsWith('/pairing/claim')) return claim.promise;
+      return jsonResponse(context);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    const opening = service.handleMessage({ type: 'app.open' });
+    const rejected = expect(opening).rejects.toMatchObject({ code: 'pairing_cancelled' });
+    await vi.waitFor(() => expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/pairing/claim'))).toBe(true));
+    expect(await service.handleMessage({ type: 'pairing.cancel' })).toEqual({ cancelled: true });
+    await rejected;
+    await service.handleMessage({ type: 'pairing.save', token: 'manual-token' });
+    claim.resolve(jsonResponse({ token: 'late-auto-token' }));
+    await Promise.resolve();
+    expect(getStoredToken()).toBe('manual-token');
+    expect(await service.handleMessage({ type: 'privacy.status' })).toEqual({ accepted: true });
+  });
+
+  it('bounds the full opening attempt even if launching the app never resolves', async () => {
+    vi.useFakeTimers();
+    try {
+      const { chromeApi } = createChrome();
+      chromeApi.tabs.create.mockImplementation(() => new Promise(() => {}));
+      const fetchImpl = vi.fn(async () => { throw new TypeError('offline'); });
+      const service = createBackgroundService({ chromeApi, fetchImpl, openingTimeoutMs: 25 });
+      const opening = service.handleMessage({ type: 'app.open' });
+      const rejected = expect(opening).rejects.toMatchObject({ code: 'launch_failed' });
+      await vi.advanceTimersByTimeAsync(25);
+      await rejected;
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('distinguishes a missing OS delivery from a native approval that expired', async () => {
+    for (const pending of [false, true]) {
+      const { chromeApi } = createChrome();
+      const service = createBackgroundService({ chromeApi, pollAttempts: 1, fetchImpl: async (url) => (
+        url.endsWith('/health') ? jsonResponse(HEALTH) : jsonResponse({ code: pending ? 'pairing_pending' : 'pairing_not_found' }, { status: pending ? 425 : 404 })
+      ) });
+      await expect(service.handleMessage({ type: 'app.open' })).rejects.toMatchObject({ code: pending ? 'pairing_timeout' : 'pairing_not_received' });
+    }
+  });
+});
+
+ describe('reviewed application tab binding', () => {
+  const contextResponse = () => jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+  it('rejects missing review context before exporting or sending field values', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(contextResponse);
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type: 'page.fill', profileContextId: 'context-1', fields: PDF_FIELD }))
+      .rejects.toMatchObject({ code: 'stale_review' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects a switch to another tab with the same URL before exporting the PDF', async () => {
+    const { chromeApi } = createChrome({ token: 'paired', tab: { id: 18, url: REVIEW_CONTEXT.page.url } });
+    const fetchImpl = vi.fn(contextResponse);
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type: 'page.fill', profileContextId: 'context-1', fields: PDF_FIELD, reviewContext: REVIEW_CONTEXT }))
+      .rejects.toMatchObject({ code: 'stale_review' });
+    expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/pdf'))).toBe(false);
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('never sends a PDF or answers to a tab selected while the PDF was exporting', async () => {
+    const pdf = deferred();
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => url.endsWith('/pdf') ? pdf.promise : contextResponse());
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    const fill = service.handleMessage({ type: 'page.fill', profileContextId: 'context-1', resumeId: 'resume-1', fields: PDF_FIELD, reviewContext: REVIEW_CONTEXT });
+    await vi.waitFor(() => expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/pdf'))).toBe(true));
+    chromeApi.tabs.query.mockResolvedValue([{ id: 18, url: REVIEW_CONTEXT.page.url }]);
+    pdf.resolve(jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', filename: 'Resume.pdf', pdfBase64: 'UERG' }));
+    await expect(fill).rejects.toMatchObject({ code: 'stale_review' });
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the original URL after delayed content injection', async () => {
+    const injection = deferred();
+    const { chromeApi } = createChrome({ token: 'paired' });
+    chromeApi.scripting.executeScript.mockReturnValue(injection.promise);
+    const service = createBackgroundService({ chromeApi, fetchImpl: async () => contextResponse() });
+    const fill = service.handleMessage({ type: 'page.fill', profileContextId: 'context-1', fields: [{field_id:'name',value:'Jane'}], reviewContext: REVIEW_CONTEXT });
+    await vi.waitFor(() => expect(chromeApi.scripting.executeScript).toHaveBeenCalledOnce());
+    chromeApi.tabs.query.mockResolvedValue([{ id: 17, url: 'https://jobs.example.test/another-role' }]);
+    injection.resolve([]);
+    await expect(fill).rejects.toMatchObject({ code: 'stale_review' });
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+ describe('native pairing protocol integration', () => {
+  it('completes the real challenge, native approval, and one-time proof flow without a deep link', async () => {
+    const { createBridgeRouter } = await import('../../resume-designer/src/bridgeRoutes.js');
+    const { createCompanionPairing } = await import('../../resume-designer/src/companionPairing.js');
+    const approval = deferred();
+    const nextPoll = deferred();
+    const ensureToken = vi.fn(() => 'native-install-token');
+    const pairing = createCompanionPairing({ confirmPairing: () => approval.promise, ensureToken });
+    const router = createBridgeRouter({ version: '1.0.0', profileId: 'profile-1', profileContextId: 'context-1',
+      getToken: () => 'native-install-token', getVariants: () => ({}), requestPairing: pairing.request, claimPairing: pairing.claim });
+    const { chromeApi, getStoredToken } = createChrome();
+    const fetchImpl = vi.fn(async (url, options) => {
+      const response = await router({ method: options.method, path: new URL(url).pathname,
+        authorization: options.headers.get('Authorization'), body: options.body });
+      return jsonResponse(response.body, { status: response.status });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl, waitImpl: () => nextPoll.promise, pollAttempts: 3 });
+    const operation = service.handleMessage({ type: 'app.open' });
+    await vi.waitFor(() => expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/pairing/claim'))).toBe(true));
+    expect(ensureToken).not.toHaveBeenCalled();
+    expect(getStoredToken()).toBe('');
+    approval.resolve(true);
+    await Promise.resolve();
+    nextPoll.resolve();
+    expect(await operation).toMatchObject({ connected: true, profileContextId: 'context-1' });
+    expect(ensureToken).toHaveBeenCalledOnce();
+    expect(getStoredToken()).toBe('native-install-token');
+    expect(chromeApi.tabs.create).not.toHaveBeenCalled();
   });
 });

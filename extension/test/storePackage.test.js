@@ -60,15 +60,15 @@ function icon(size) {
 function validManifest(overrides = {}) {
   return {
     manifest_version: 3,
-    name: 'Resume Designer Companion',
+    name: 'On Paper Companion',
     version: '0.1.0',
     minimum_chrome_version: '116',
-    description: 'Review and fill job applications with the local Resume Designer app.',
+    description: 'Review and fill job applications with the local On Paper app.',
     content_security_policy: {
       extension_pages: "default-src 'self'; connect-src http://127.0.0.1:17872; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'",
     },
     action: {
-      default_title: 'Open Resume Designer Companion',
+      default_title: 'Open On Paper Companion',
       default_icon: { 16: 'icons/16.png', 32: 'icons/32.png' },
     },
     background: { service_worker: 'background.js' },
@@ -92,6 +92,8 @@ function validFiles() {
     ['content.js', Buffer.from('(() => {})();')],
     ['sidepanel.html', Buffer.from('<script src="assets/panel.js"></script>')],
     ['assets/panel.js', Buffer.from('console.log("panel")')],
+    ['privacy.html', Buffer.from('<link rel="stylesheet" href="privacy.css"><h1>Privacy</h1>')],
+    ['privacy.css', Buffer.from('body { color: black; }')],
     ['icons/16.png', icon(16)],
     ['icons/32.png', icon(32)],
     ['icons/48.png', icon(48)],
@@ -115,7 +117,88 @@ describe('validateStoreBuild', () => {
       packageVersion: '0.1.0',
     });
 
-    expect(result).toMatchObject({ fileCount: 9, version: '0.1.0' });
+    expect(result).toMatchObject({ fileCount: 11, version: '0.1.0' });
+  });
+
+  it('requires the bundled privacy notice and validates its local assets', () => {
+    const missing = validFiles();
+    missing.delete('privacy.html');
+    expect(() => validateStoreBuild({ files: missing, manifest: validManifest(), lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+      .toThrow(/privacy.html/);
+    const remote = validFiles();
+    remote.set('privacy.html', Buffer.from('<script src="https://example.com/privacy.js"></script>'));
+    expect(() => validateStoreBuild({ files: remote, manifest: validManifest(), lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+      .toThrow(/remote HTML asset/i);
+  });
+
+  it('permits secure navigation links without allowing remotely hosted resources', () => {
+    const linked = validFiles();
+    linked.set('privacy.html', Buffer.from('<link rel="stylesheet" href="privacy.css"><a href="https://onpaper.pro/privacy.html" target="_blank" rel="noreferrer">Privacy</a>'));
+    expect(() => validateStoreBuild({ files: linked, manifest: validManifest(), lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+      .not.toThrow();
+    for (const html of [
+      '<a href="http://example.com/privacy">Insecure</a>',
+      '<a href="javascript:alert(1)">Script</a>',
+      '<a href="data:text/html,hello">Data</a>',
+      '<a href="https://name:secret@example.com/privacy">Credentials</a>',
+      '<a href="//example.com/privacy">Protocol relative</a>',
+      '<script src="https://example.com/code.js"></script>',
+      '<iframe src="https://example.com/privacy"></iframe>',
+      '<img src="https://example.com/pixel.png">',
+    ]) {
+      const files = validFiles();
+      files.set('privacy.html', Buffer.from(html));
+      expect(() => validateStoreBuild({ files, manifest: validManifest(), lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+        .toThrow(/remote|data HTML|navigation|credentials/i);
+    }
+  });
+
+  it.each(['mailto:support@hyperbuild.com', 'MAILTO:help.desk+support@team.example.com'])(
+    'permits a plain mailbox navigation link: %s',
+    (href) => {
+      const files = validFiles();
+      files.set('privacy.html', Buffer.from(`<link rel="stylesheet" href="privacy.css"><a href="${href}">Support</a>`));
+      expect(() => validateStoreBuild({ files, manifest: validManifest(), lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+        .not.toThrow();
+    },
+  );
+
+  it.each([
+    '<img src="mailto:support@hyperbuild.com">',
+    '<script src="mailto:support@hyperbuild.com"></script>',
+    '<link rel="stylesheet" href="mailto:support@hyperbuild.com">',
+    '<iframe src="mailto:support@hyperbuild.com"></iframe>',
+    '<form action="mailto:support@hyperbuild.com"></form>',
+    '<svg><a href="mailto:support@hyperbuild.com">Support</a></svg>',
+  ])('rejects mailbox URLs outside HTML navigation anchors: %s', (html) => {
+    const files = validFiles();
+    files.set('privacy.html', Buffer.from(html));
+    expect(() => validateStoreBuild({ files, manifest: validManifest(), lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+      .toThrow(/remote HTML asset/i);
+  });
+
+  it.each([
+    'mailto:support@hyperbuild.com?subject=Support',
+    'mailto:support@hyperbuild.com?body=Content',
+    'mailto:support@hyperbuild.com?bcc=other@example.com',
+    'mailto:support@hyperbuild.com%0D%0ABcc:other@example.com',
+    'mailto:support@hyperbuild.com&#13;&#10;Bcc:other@example.com',
+    'mailto:support@hyperbuild.com&#10;',
+    'mailto:support@hyperbuild.com%250aBcc%3Aother@example.com',
+    'mailto://support@hyperbuild.com',
+    'mailto:user:secret@hyperbuild.com',
+    'mailto:support@hyperbuild.com@evil.example',
+    'mailto:support@hyperbuild.com,other@example.com',
+    'mailto:support@hyperbuild.com#fragment',
+    'mailto:support..team@hyperbuild.com',
+    'mailto:support@-hyperbuild.com',
+    'mailto:support@hyperbuild',
+    'mailto:',
+  ])('rejects mailbox parameters, injection, and invalid syntax: %s', (href) => {
+    const files = validFiles();
+    files.set('privacy.html', Buffer.from(`<a href="${href}">Support</a>`));
+    expect(() => validateStoreBuild({ files, manifest: validManifest(), lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+      .toThrow(/mailbox|remote HTML asset/i);
   });
 
   it('rejects version drift, undeclared permissions, and development artifacts', () => {
@@ -262,7 +345,7 @@ describe('validateStoreBuild', () => {
   it('requires action icon paths to match their declared sizes', () => {
     const manifest = validManifest({
       action: {
-        default_title: 'Open Resume Designer Companion',
+        default_title: 'Open On Paper Companion',
         default_icon: { 16: 'icons/32.png', 32: 'icons/16.png' },
       },
     });
@@ -383,12 +466,12 @@ describe('createStorePackage', () => {
     });
 
     expect(result).toMatchObject({
-      fileCount: 9,
+      fileCount: 11,
       version: '0.1.0',
     });
     expect(result.artifactPath).toBe(join(
       outputDir,
-      'resume-designer-companion-0.1.0.zip',
+      'on-paper-companion-0.1.0.zip',
     ));
     expect(result.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect((await readFile(result.artifactPath)).readUInt32LE(0)).toBe(0x04034b50);

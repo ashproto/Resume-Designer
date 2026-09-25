@@ -225,6 +225,66 @@ describe('createCompanionJobActions createTailoredResume', () => {
     expect(BASE_VARIANTS['resume-2'].data).toEqual(expect.objectContaining({ summary: 'Product summary' }));
   });
 
+  it('clears structured dates when tailoring rewrites their displayed range', async () => {
+    const deps = makeDeps({
+      generateResumeChangesForData: vi.fn(async () => ({
+        changes: { 'experience[0].dates': '2022 – Present' },
+      })),
+    });
+    const base = deps.getVariants()['resume-1'].data;
+    Object.assign(base.experience[0], { dates: '2020 – 2021', startDate: '2020-01', endDate: '2021-12' });
+
+    await createCompanionJobActions(deps).createTailoredResume({
+      resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB,
+    });
+
+    expect(deps.saveVariant.mock.calls[0][2].experience[0]).toMatchObject({
+      dates: '2022 – Present', startDate: '', endDate: '',
+    });
+    expect(base.experience[0]).toMatchObject({ startDate: '2020-01', endDate: '2021-12' });
+  });
+
+  it('preserves structured dates when their display text is unchanged', async () => {
+    const deps = makeDeps({
+      generateResumeChangesForData: vi.fn(async () => ({
+        changes: { 'experience[0].dates': '2020 – 2021' },
+      })),
+    });
+    Object.assign(deps.getVariants()['resume-1'].data.experience[0], {
+      dates: '2020 – 2021', startDate: '2020-01', endDate: '2021-12',
+    });
+
+    await createCompanionJobActions(deps).createTailoredResume({
+      resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB,
+    });
+
+    expect(deps.saveVariant.mock.calls[0][2].experience[0]).toMatchObject({
+      dates: '2020 – 2021', startDate: '2020-01', endDate: '2021-12',
+    });
+  });
+
+  it('renames every role in a grouped employer without changing separate tenures', async () => {
+    const deps = makeDeps({
+      generateResumeChangesForData: vi.fn(async () => ({
+        changes: { 'experience[0].company': 'New employer' },
+      })),
+    });
+    const base = deps.getVariants()['resume-1'].data;
+    base.experience = [
+      { title: 'Lead', company: 'Acme', _groupId: 'tenure-1', bullets: [] },
+      { title: 'Engineer', company: 'Acme', _groupId: 'tenure-1', bullets: [] },
+      { title: 'Intern', company: 'Acme', _groupId: 'tenure-2', bullets: [] },
+    ];
+
+    await createCompanionJobActions(deps).createTailoredResume({
+      resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB,
+    });
+
+    expect(deps.saveVariant.mock.calls[0][2].experience.map((entry) => entry.company))
+      .toEqual(['New employer', 'New employer', 'Acme']);
+    expect(base.experience.map((entry) => entry.company)).toEqual(['Acme', 'Acme', 'Acme']);
+  });
+
   it('rejects malformed request ids, unsafe paths, and storage failures without selecting a variant', async () => {
     const unsafeDeps = makeDeps({
       generateResumeChangesForData: vi.fn(async () => ({
@@ -346,6 +406,31 @@ describe('createCompanionJobActions createTailoredResume', () => {
       requestId: REQUEST_ID,
       job: { ...JOB, company: 'Different Company' },
     })).rejects.toMatchObject({ status: 409, code: 'idempotency_conflict' });
+    expect(deps.generateResumeChangesForData).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('request-specific companion models', () => {
+  it('overrides each action model without altering app settings', async () => {
+    const deps = makeDeps();
+    const original = deps.getSettings();
+    const actions = createCompanionJobActions(deps);
+    await actions.analyzeJobFit({ resumeId: 'resume-1', job: JOB, model: 'vendor/selected' });
+    await actions.createTailoredResume({ resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB, model: 'vendor/selected' });
+    expect(deps.analyzeResumeDataAgainstJobs.mock.calls[0][0]).toBe('vendor/selected');
+    expect(deps.generateResumeChangesForData.mock.calls[0][0]).toBe('vendor/selected');
+    expect(deps.getSettings()).toEqual(original);
+  });
+
+  it('does not replay a tailored resume generated with a different explicit model', async () => {
+    const deps = makeDeps();
+    const actions = createCompanionJobActions(deps);
+    const input = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB, model: 'vendor/first' };
+    await actions.createTailoredResume(input);
+    await expect(actions.createTailoredResume(input)).resolves.toMatchObject({ created: false });
+    await expect(actions.createTailoredResume({ ...input, model: 'vendor/second' }))
+      .rejects.toMatchObject({ status: 409, code: 'idempotency_conflict' });
     expect(deps.generateResumeChangesForData).toHaveBeenCalledOnce();
   });
 });

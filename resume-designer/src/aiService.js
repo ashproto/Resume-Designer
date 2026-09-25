@@ -1183,12 +1183,12 @@ async function callOpenRouter(modelId, messages, options = {}) {
 /**
  * Minimal completion for the local companion-extension bridge. Unlike chat(),
  * no resume/job context is injected — the bridge request carries its own
- * messages. Uses the settings' default model; tracked as feature 'bridge'.
+ * messages. Uses the request model or app default; tracked as feature 'bridge'.
  */
 export async function completeForBridge(messages, options = {}) {
   if (!getApiKey()) throw new Error('No OpenRouter API key configured. Add your key in Settings.');
   const settings = getSettings();
-  const modelId = validateModelId(settings.defaultModel);
+  const modelId = validateModelId(options.model ?? settings.defaultModel);
   return callOpenRouter(modelId, messages, {
     feature: 'bridge',
     systemPrompt: options.systemPrompt,

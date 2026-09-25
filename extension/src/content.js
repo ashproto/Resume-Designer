@@ -18,7 +18,22 @@ function relayMessage(message, root = document) {
   }
 
   if (message?.type === 'content.fill') {
-    return fillForm(message.payload?.fields, { root, pdf: message.payload?.pdf });
+    const fields = message.payload?.fields ?? [];
+    const context = message.payload?.reviewContext;
+    const page = scrapePageContext(root, pageUrl(root));
+    const samePage = context?.page && ['url', 'title', 'company', 'description', 'fingerprint']
+      .every((key) => context.page[key] === page[key]);
+    if (!samePage || !Array.isArray(context?.descriptors)) {
+      return {
+        filled: [],
+        unfilled: fields.map(({ field_id }) => ({
+          field_id, reason: 'The application page changed or its review expired; prepare a new review before filling.',
+        })),
+      };
+    }
+    return fillForm(fields, {
+      root, pdf: message.payload?.pdf, expectedDescriptors: context.descriptors,
+    });
   }
 
   return undefined;

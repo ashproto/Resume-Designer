@@ -22,7 +22,7 @@ const EXPECTED_PERMISSIONS = Object.freeze([
 const EXPECTED_HOST_PERMISSIONS = Object.freeze([
   'http://127.0.0.1:17872/*',
 ]);
-const EXPECTED_ACTION_TITLE = 'Open Resume Designer Companion';
+const EXPECTED_ACTION_TITLE = 'Open On Paper Companion';
 const EXPECTED_EXTENSION_CSP = "default-src 'self'; connect-src http://127.0.0.1:17872; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
 const EXPECTED_MANIFEST_KEYS = Object.freeze([
   'action',
@@ -124,9 +124,27 @@ function localHtmlAssets(html) {
       }
       for (const attribute of HTML_URL_ATTRIBUTES) {
         if (!element.hasAttribute(attribute)) continue;
-        const path = element.getAttribute(attribute).trim();
+        const rawPath = element.getAttribute(attribute);
+        const path = rawPath.trim();
         assert(path.length > 0, `Empty HTML ${attribute} asset is not allowed`);
         if (path.startsWith('#')) continue;
+        // Navigation is not an executable/resource dependency. Keep policy and
+        // support links usable without permitting remote scripts or images.
+        if (element.localName === 'a' && attribute === 'href' && /^https:/iu.test(path)) {
+          const navigation = new URL(path);
+          assert(navigation.protocol === 'https:' && !navigation.username && !navigation.password,
+            'External navigation must use HTTPS without embedded credentials');
+          continue;
+        }
+        if (element.namespaceURI === 'http://www.w3.org/1999/xhtml'
+          && element.localName === 'a' && attribute === 'href' && /^mailto:/iu.test(path)) {
+          // A deliberately narrow ASCII mailbox grammar: no URI escaping,
+          // recipients/headers, credentials, or whitespace normalization.
+          const mailbox = path.slice(7).match(/^([A-Za-z\d_+-]+(?:\.[A-Za-z\d_+-]+)*)@([A-Za-z\d](?:[A-Za-z\d-]{0,61}[A-Za-z\d])?(?:\.[A-Za-z\d](?:[A-Za-z\d-]{0,61}[A-Za-z\d])?)+)$/u);
+          assert(rawPath === path && mailbox && mailbox[1].length <= 64 && mailbox[0].length <= 254,
+            'Email navigation must contain one plain mailbox without parameters');
+          continue;
+        }
         assert(!/^data:/iu.test(path), `Data HTML asset is not allowed: ${path.slice(0, 40)}`);
         assert(!/^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(path), `Remote HTML asset is not allowed: ${path}`);
         references.push(path.replace(/^\.\//u, ''));
@@ -146,9 +164,9 @@ function referencedPaths(manifest, files) {
     ...iconPaths(manifest.action?.default_icon),
   ].filter(Boolean));
 
-  const sidePanelPath = manifest.side_panel?.default_path;
-  if (sidePanelPath && files.has(sidePanelPath)) {
-    for (const path of localHtmlAssets(files.get(sidePanelPath).toString('utf8'))) {
+  for (const htmlPath of [manifest.side_panel?.default_path, 'privacy.html']) {
+    if (!htmlPath || !files.has(htmlPath)) continue;
+    for (const path of localHtmlAssets(files.get(htmlPath).toString('utf8'))) {
       paths.add(path);
     }
   }
@@ -162,6 +180,8 @@ function isAllowedArtifact(path) {
     'background.js',
     'content.js',
     'sidepanel.html',
+    'privacy.html',
+    'privacy.css',
   ].includes(path)) return true;
   if (/^assets\/[A-Za-z0-9._-]+\.(?:css|js)$/u.test(path)) return true;
   return /^icons\/(?:16|32|48|128)\.png$/u.test(path);
@@ -270,7 +290,7 @@ export function validateStoreBuild({ files, lockVersion, manifest, packageVersio
   assert(files instanceof Map && files.size > 0, 'Store build contains no files');
   assert(sameStrings(Object.keys(manifest ?? {}), EXPECTED_MANIFEST_KEYS), 'Manifest top-level key allowlist changed');
   assert(manifest?.manifest_version === 3, 'Store package must use Manifest V3');
-  assert(manifest.name === 'Resume Designer Companion', 'Unexpected extension name');
+  assert(manifest.name === 'On Paper Companion', 'Unexpected extension name');
   assert(typeof manifest.description === 'string'
     && manifest.description.length > 0
     && manifest.description.length <= 132, 'Manifest description must be 1-132 characters');
@@ -319,7 +339,7 @@ export function validateStoreBuild({ files, lockVersion, manifest, packageVersio
   }
   assert(totalBytes <= MAX_TOTAL_BYTES, 'Store package exceeds the 2 MiB unpacked budget');
 
-  const requiredPaths = ['manifest.json', 'background.js', 'content.js', 'sidepanel.html'];
+  const requiredPaths = ['manifest.json', 'background.js', 'content.js', 'sidepanel.html', 'privacy.html'];
   for (const required of requiredPaths) {
     assert(files.has(required), `Required Store file is missing: ${required}`);
   }
@@ -457,7 +477,7 @@ export async function createStorePackage({ distDir, lockVersion, outputDir, pack
   const summary = validateStoreBuild({ files, lockVersion, manifest, packageVersion });
   const zip = createDeterministicZip([...files].map(([path, data]) => ({ path, data })));
   assert(zip.byteLength <= MAX_ZIP_BYTES, 'Store ZIP exceeds the 1 MiB artifact budget');
-  const artifactPath = resolve(outputDir, `resume-designer-companion-${summary.version}.zip`);
+  const artifactPath = resolve(outputDir, `on-paper-companion-${summary.version}.zip`);
   await mkdir(outputDir, { recursive: true });
   await writeFile(artifactPath, zip);
 

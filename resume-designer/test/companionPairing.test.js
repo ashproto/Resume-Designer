@@ -74,6 +74,34 @@ describe('companion pairing grants', () => {
     });
   });
 
+  it('invalidates approved and in-flight grants when pairing is revoked', async () => {
+    const durability = deferred();
+    const flush = vi.fn(() => durability.promise);
+    const pairing = createCompanionPairing({
+      confirmPairing: vi.fn(async () => true),
+      ensureToken: () => 'install-token',
+      flush,
+    });
+    await pairing.registerUrl(await pairUrl());
+    const operation = pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER });
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledOnce());
+    pairing.revokeAll();
+    durability.resolve(true);
+    expect(await operation).toMatchObject({ status: 404 });
+    expect(pairing.pendingCount()).toBe(0);
+    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 404 });
+  });
+
+  it('does not revive an approval dialog that completes after revocation', async () => {
+    const approval = deferred();
+    const pairing = createCompanionPairing({ confirmPairing: () => approval.promise });
+    const operation = pairing.registerUrl(await pairUrl());
+    pairing.revokeAll();
+    approval.resolve(true);
+    await operation;
+    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 404 });
+  });
+
   it('never exposes a token for wrong, rejected, expired, or malformed claims', async () => {
     let now = 1_000;
     const ensureToken = vi.fn(() => 'secret');
@@ -173,5 +201,49 @@ describe('companion pairing grants', () => {
       body: { token: 'install-token' },
     });
     expect(ensureToken).toHaveBeenCalledOnce();
+  });
+});
+
+ describe('loopback pairing requests', () => {
+  const clientId = 'a'.repeat(32);
+  async function request(overrides = {}) {
+    return { protocolVersion: '2', requestId: REQUEST_ID, challenge: await challengeFor(VERIFIER), clientId, ...overrides };
+  }
+
+  it('starts one native approval, exposes no token, and requires matching proof after approval', async () => {
+    const approval = deferred();
+    const confirmPairing = vi.fn(() => approval.promise);
+    const ensureToken = vi.fn(() => 'install-token');
+    const pairing = createCompanionPairing({ confirmPairing, ensureToken });
+    const input = await request();
+    expect(pairing.request(input)).toEqual({ status: 202, body: { pending: true } });
+    expect(pairing.request(input)).toEqual({ status: 202, body: { pending: true } });
+    expect(confirmPairing).toHaveBeenCalledOnce();
+    expect(ensureToken).not.toHaveBeenCalled();
+    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 425 });
+    approval.resolve(true);
+    await Promise.resolve();
+    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER + 'wrong' })).toMatchObject({ status: 404 });
+    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 200, body: { token: 'install-token' } });
+  });
+
+  it('rejects malformed requests and bounds both pending prompts and repeated new attempts', async () => {
+    let now = 0;
+    const approval = deferred();
+    const confirmPairing = vi.fn(() => approval.promise);
+    const pairing = createCompanionPairing({ now: () => now, confirmPairing });
+    for (const changes of [{ requestId: '' }, { challenge: 'bad' }, { clientId: 'site.example' }, { protocolVersion: '1' }]) {
+      expect(pairing.request(await request(changes))).toMatchObject({ status: 400 });
+    }
+    expect(confirmPairing).not.toHaveBeenCalled();
+    expect(pairing.request(await request())).toMatchObject({ status: 202 });
+    now = 10000;
+    expect(pairing.request(await request({ requestId: 'differentrequestid12345' }))).toMatchObject({ status: 429 });
+    approval.resolve(false);
+    await Promise.resolve();
+    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 403 });
+    expect(pairing.request(await request({ requestId: 'differentrequestid12345' }))).toMatchObject({ status: 202 });
+    await Promise.resolve();
+    expect(pairing.request(await request({ requestId: 'anotherrequestid1234567' }))).toMatchObject({ status: 429 });
   });
 });

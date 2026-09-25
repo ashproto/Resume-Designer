@@ -11,6 +11,8 @@ const EXACT_PACKAGE_PATHS = new Set([
   'extension/scripts/chrome-version.mjs',
   'extension/scripts/store-package.mjs',
   'extension/sidepanel.html',
+  'extension/privacy.html',
+  'extension/privacy.css',
   'extension/vite.config.js',
 ]);
 const PACKAGE_PATH_PREFIXES = Object.freeze([

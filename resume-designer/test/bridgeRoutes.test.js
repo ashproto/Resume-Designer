@@ -18,6 +18,7 @@ function makeDeps(overrides = {}) {
     addApplication: vi.fn((fields) => ({ id: 'app-1', ...fields })),
     saveLearnedAnswer: vi.fn((q, a) => ({ id: 'ans-2', question: q, answer: a })),
     complete: vi.fn(async () => 'ai says hi'),
+    getAiModels: vi.fn(() => ({ models: [{ id: 'vendor/chosen', name: 'Chosen model' }], defaults: { mapping: 'vendor/chosen', analysis: 'vendor/chosen', tailoring: 'vendor/chosen' }, autoFallback: false })),
     claimPairing: vi.fn(async () => ({ status: 200, body: { token: 'tok-123' } })),
     analyzeJobFit: vi.fn(async ({ resumeId }) => ({
       resumeId,
@@ -99,6 +100,51 @@ describe('auth', () => {
   it('rejects everything when no token is provisioned yet', async () => {
     const res = await route(makeDeps({ getToken: () => '' }), { method: 'GET', path: '/resumes', authorization: 'Bearer ', body: '' });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /pairing/revoke', () => {
+  it('requires the current bearer token before revoking', async () => {
+    const deps = makeDeps({ revokePairing: vi.fn() });
+    for (const authorization of ['', 'Bearer wrong']) {
+      expect(await route(deps, { method: 'POST', path: '/pairing/revoke', authorization, body: '{}' }))
+        .toMatchObject({ status: 401 });
+    }
+    expect(deps.revokePairing).not.toHaveBeenCalled();
+  });
+
+  it('waits for durable rotation then rejects the old bearer token', async () => {
+    let token = 'tok-123';
+    const durability = deferred();
+    const deps = makeDeps({
+      getToken: () => token,
+      revokePairing: vi.fn(async () => {
+        await durability.promise;
+        token = 'new-token';
+      }),
+    });
+    const handle = createBridgeRouter(deps);
+    let settled = false;
+    const operation = handle({ method: 'POST', path: '/pairing/revoke', authorization: AUTH, body: '{}' })
+      .then((result) => { settled = true; return result; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    durability.resolve();
+    expect(await operation).toEqual({ status: 200, body: { ok: true } });
+    expect(await handle({ method: 'GET', path: '/resumes', authorization: AUTH }))
+      .toMatchObject({ status: 401 });
+  });
+
+  it('reports durable-storage failure without claiming disconnection', async () => {
+    const deps = makeDeps({
+      revokePairing: vi.fn(async () => {
+        throw Object.assign(new Error('Could not save disconnection. Try again.'), {
+          status: 503, code: 'pairing_unavailable',
+        });
+      }),
+    });
+    expect(await route(deps, { method: 'POST', path: '/pairing/revoke', authorization: AUTH, body: '{}' }))
+      .toEqual({ status: 503, body: { error: 'Could not save disconnection. Try again.', code: 'pairing_unavailable' } });
   });
 });
 
@@ -598,5 +644,67 @@ describe('fallthrough', () => {
       const res = await route(makeDeps(), req);
       expect(res.status).toBe(404);
     }
+  });
+});
+
+
+describe('companion model selection', () => {
+  it('requires pairing before exposing the model catalog and defaults', async () => {
+    const deps = makeDeps();
+    expect(await route(deps, { method: 'GET', path: '/ai/models', authorization: '' }))
+      .toMatchObject({ status: 401 });
+    expect(deps.getAiModels).not.toHaveBeenCalled();
+    expect(await route(deps, { method: 'GET', path: '/ai/models', authorization: AUTH }))
+      .toEqual({ status: 200, body: deps.getAiModels() });
+  });
+
+  it.each([
+    ['/ai/complete', 'complete'], ['/ai/job-fit', 'analyzeJobFit'], ['/ai/tailored-resume', 'createTailoredResume'],
+  ])('passes a selected model through %s', async (path, action) => {
+    const deps = makeDeps();
+    const body = { profileContextId: 'context-1', messages: [{ role: 'user', content: 'Draft an answer' }],
+      resumeId: 'v-1', job: { description: 'Build products' }, model: 'vendor/chosen' };
+    expect((await route(deps, { method: 'POST', path, authorization: AUTH, body: JSON.stringify(body) })).status)
+      .toBe(path === '/ai/tailored-resume' ? 201 : 200);
+    const args = deps[action].mock.calls[0];
+    expect(action === 'complete' ? args[1] : args[0]).toMatchObject({ model: 'vendor/chosen' });
+  });
+
+  it.each(['/ai/complete', '/ai/job-fit', '/ai/tailored-resume'])('rejects invalid models before AI work on %s', async (path) => {
+    const deps = makeDeps();
+    for (const model of [null, {}, '', ' ', 'vendor/unknown', 'x'.repeat(257)]) {
+      const res = await route(deps, { method: 'POST', path, authorization: AUTH,
+        body: JSON.stringify({ profileContextId: 'context-1', messages: [{ role: 'user', content: 'Draft an answer' }], model }),
+      });
+      expect(res).toMatchObject({ status: 400, body: { code: 'invalid_model' } });
+    }
+    expect(deps.complete).not.toHaveBeenCalled();
+    expect(deps.analyzeJobFit).not.toHaveBeenCalled();
+    expect(deps.createTailoredResume).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('POST /pairing/request', () => {
+  it('starts approval without auth but never returns a token', async () => {
+    const requestPairing = vi.fn(() => ({ status: 202, body: { pending: true } }));
+    const input = { protocolVersion: '2', requestId: 'request', challenge: 'challenge', clientId: 'extension' };
+    const response = await route(makeDeps({ requestPairing }), {
+      method: 'POST', path: '/pairing/request', authorization: '', body: JSON.stringify(input),
+    });
+    expect(response).toEqual({ status: 202, body: { pending: true } });
+    expect(requestPairing).toHaveBeenCalledWith(input);
+  });
+
+  it('rejects malformed requests and does not show approval during a destructive import', async () => {
+    const requestPairing = vi.fn();
+    for (const body of ['not-json', 'null', '[]', '3']) {
+      expect(await route(makeDeps({ requestPairing }), { method: 'POST', path: '/pairing/request', body }))
+        .toMatchObject({ status: 400 });
+    }
+    expect(await route(makeDeps({ requestPairing, writesSuspended: () => true }), {
+      method: 'POST', path: '/pairing/request', body: '{}',
+    })).toMatchObject({ status: 503 });
+    expect(requestPairing).not.toHaveBeenCalled();
   });
 });

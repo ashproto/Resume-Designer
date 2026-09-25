@@ -374,7 +374,7 @@ describe('createBridgeClient', () => {
   });
 
   it('classifies 504 responses as app timeouts and retryable', async () => {
-    const message = 'the app did not answer in time — is Resume Designer running and unlocked?';
+    const message = 'the app did not answer in time — is On Paper running and unlocked?';
     const fetchImpl = vi.fn(async () => jsonResponse({ error: message }, { status: 504 }));
 
     const error = await captureError(makeClient(fetchImpl).listResumes());
@@ -471,5 +471,41 @@ describe('createBridgeClient', () => {
       code: 'not_paired',
       retryable: false,
     });
+  });
+});
+
+ describe('bounded bridge requests', () => {
+  it('times out even when fetch never settles, and aborts the underlying request', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal;
+      const client = createBridgeClient({ getToken: async () => 'token', requestTimeoutMs: 25,
+        fetchImpl: async (_url, options) => { signal = options.signal; return new Promise(() => {}); } });
+      const result = captureError(client.listResumes());
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await result).toMatchObject({ code: 'app_timeout', retryable: true });
+      expect(signal.aborted).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('cancels health while fetch is pending without waiting for its deadline', async () => {
+    const abort = new AbortController();
+    const client = createBridgeClient({ fetchImpl: async () => new Promise(() => {}) });
+    const result = captureError(client.health({ signal: abort.signal }));
+    abort.abort();
+    expect(await result).toMatchObject({ code: 'request_cancelled', retryable: false });
+  });
+
+  it('bounds a response body that stalls after headers', async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn();
+      const client = createBridgeClient({ getToken: async () => 'token', requestTimeoutMs: 25,
+        fetchImpl: async () => new Response(new ReadableStream({ cancel })) });
+      const result = captureError(client.getAIModels());
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await result).toMatchObject({ code: 'app_timeout' });
+      expect(cancel).toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });

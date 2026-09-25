@@ -123,14 +123,14 @@ jobs:
           set -euo pipefail
           npm run package:store
           version="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json')).version")"
-          filename="resume-designer-companion-${version}.zip"
+          filename="on-paper-companion-${version}.zip"
           first_sha="$(sha256sum "artifacts/${filename}" | cut -d ' ' -f 1)"
           npm run package:store
           second_sha="$(sha256sum "artifacts/${filename}" | cut -d ' ' -f 1)"
           test "${first_sha}" = "${second_sha}"
           unzip -t "artifacts/${filename}"
           {
-            echo "artifact_name=resume-designer-companion-${version}"
+            echo "artifact_name=on-paper-companion-${version}"
             echo "filename=${filename}"
             echo "sha256=${second_sha}"
             echo "version=${version}"

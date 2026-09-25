@@ -57,19 +57,40 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
   }
 
   return {
+    getPrivacyConsent: () => request({ type: 'privacy.status' }),
+    acceptPrivacyConsent: () => request({ type: 'privacy.accept', accepted: true }),
+    disconnect: () => request({ type: 'pairing.disconnect' }),
+    cancelPairing: () => request({ type: 'pairing.cancel' }),
     checkConnection: () => request({ type: 'connection.check' }),
     openApp: () => request({ type: 'app.open' }),
     savePairing: (token) => request({ type: 'pairing.save', token }),
     listResumes: () => request({ type: 'resumes.list' }),
+    getAIModels: async () => {
+      try {
+        return await request({ type: 'ai.models' });
+      } catch (error) {
+        if (error?.code === 'invalid_runtime_response' || error?.code === 'unsupported_message') {
+          throw new RuntimeMessageError({
+            message: 'Reload On Paper Companion from chrome://extensions, then retry loading models.',
+            code: 'extension_update_required',
+            retryable: false,
+          });
+        }
+        throw error;
+      }
+    },
     scanPage: () => request({ type: 'page.scan' }),
-    createMapping: (profileContextId, resumeId, descriptors) => request({
+    createMapping: (profileContextId, resumeId, descriptors, { job, model } = {}) => request({
       type: 'mapping.create',
       profileContextId,
       resumeId,
       descriptors,
+      ...(job ? { job } : {}),
+      ...(model ? { model } : {}),
     }),
-    fillPage: (profileContextId, resumeId, fields) => request({
+    fillPage: (profileContextId, resumeId, fields, reviewContext) => request({
       type: 'page.fill', profileContextId, resumeId, fields,
+      ...(reviewContext ? { reviewContext } : {}),
     }),
     saveAnswer: (profileContextId, question, answer) => request({
       type: 'answer.save', profileContextId, question, answer,
@@ -83,11 +104,11 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
       }
       return request(message);
     },
-    analyzeJobFit: ({ profileContextId, resumeId, job }) => request({
-      type: 'job.fit.analyze', profileContextId, resumeId, job,
+    analyzeJobFit: ({ profileContextId, resumeId, job, model }) => request({
+      type: 'job.fit.analyze', profileContextId, resumeId, job, ...(model ? { model } : {}),
     }),
-    createTailoredResume: ({ profileContextId, resumeId, requestId, job }) => request({
-      type: 'resume.tailor', profileContextId, resumeId, requestId, job,
+    createTailoredResume: ({ profileContextId, resumeId, requestId, job, model }) => request({
+      type: 'resume.tailor', profileContextId, resumeId, requestId, job, ...(model ? { model } : {}),
     }),
   };
 }

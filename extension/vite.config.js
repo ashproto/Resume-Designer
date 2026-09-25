@@ -16,6 +16,13 @@ function copyStoreFiles() {
         fileName: 'manifest.json',
         source: await readFile(new URL('./manifest.json', import.meta.url), 'utf8'),
       });
+      for (const fileName of ['privacy.html', 'privacy.css']) {
+        this.emitFile({
+          type: 'asset',
+          fileName,
+          source: await readFile(new URL(`./${fileName}`, import.meta.url), 'utf8'),
+        });
+      }
       for (const size of [16, 32, 48, 128]) {
         this.emitFile({
           type: 'asset',
@@ -50,7 +57,7 @@ function buildClassicEntries() {
             minify: false,
             lib: {
               entry: fileURLToPath(new URL(entry, import.meta.url)),
-              name: `ResumeDesignerCompanion${name}`,
+              name: `OnPaperCompanion${name}`,
               formats: ['iife'],
               fileName: () => fileName,
             },

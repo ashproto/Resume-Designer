@@ -47,6 +47,35 @@ afterAll(() => {
 });
 
 describe('content relay', () => {
+  it('refuses a fill without the reviewed page context', () => {
+    const document = installDocument('<form><label>Name <input value="original"></label></form>');
+    const scan = relay({ type: 'content.scan' }).response;
+    const response = relay({ type: 'content.fill', payload: { fields: [{ field_id: scan.descriptors[0].field_id, value: 'replacement' }] } }).response;
+    expect(response.filled).toEqual([]);
+    expect(response.unfilled[0].reason).toMatch(/review/i);
+    expect(document.querySelector('input').value).toBe('original');
+  });
+
+  it('rejects a review after a single-page application changes the role', () => {
+    const document = installDocument('<h1>Designer</h1><form><label>Name <input value="original"></label></form>');
+    const scan = relay({ type: 'content.scan' }).response;
+    document.querySelector('h1').textContent = 'Different job';
+    const response = relay({ type: 'content.fill', payload: { reviewContext: scan, fields: [{ field_id: scan.descriptors[0].field_id, value: 'replacement' }] } }).response;
+    expect(response.filled).toEqual([]);
+    expect(document.querySelector('input').value).toBe('original');
+  });
+
+  it('leaves relabelled or duplicated controls untouched while filling unchanged reviewed fields', () => {
+    const document = installDocument('<form><label id="label">Name <input value="original"></label><label>City <input value="original"></label><label>Portfolio <input value="original"></label></form>');
+    const scan = relay({ type: 'content.scan' }).response;
+    document.querySelector('#label').firstChild.textContent = 'Different question';
+    const portfolio = document.querySelectorAll('input')[2];
+    portfolio.after(portfolio.cloneNode(true));
+    const response = relay({ type: 'content.fill', payload: { reviewContext: scan, fields: scan.descriptors.map(({ field_id }) => ({ field_id, value: 'replacement' })) } }).response;
+    expect(response.filled).toEqual([scan.descriptors[1].field_id]);
+    expect([...document.querySelectorAll('input')].map((input) => input.value)).toEqual(['original', 'replacement', 'original', 'original']);
+  });
+
   it('installs exactly one runtime listener across repeated entry evaluation', () => {
     expect(addListener).toHaveBeenCalledOnce();
     expect(listener).toBeTypeOf('function');
@@ -92,7 +121,7 @@ describe('content relay', () => {
     const document = installDocument(`
       <form>
         <label>Email <input type="email" required></label>
-        <label>Terms <input type="checkbox"></label>
+        <label>Has portfolio <input type="checkbox"></label>
       </form>
     `);
     const scan = relay({ type: 'content.scan' }).response;
@@ -100,6 +129,7 @@ describe('content relay', () => {
     const { returnValue, sendResponse, response } = relay({
       type: 'content.fill',
       payload: {
+        reviewContext: scan,
         fields: [
           { field_id: email.field_id, value: 'ada@example.com' },
           { field_id: terms.field_id, value: 'true' },
@@ -135,11 +165,13 @@ describe('content relay', () => {
       }
     };
 
-    const fileField = relay({ type: 'content.scan' }).response.descriptors[0];
+    const scan = relay({ type: 'content.scan' }).response;
+    const fileField = scan.descriptors[0];
     const response = relay({
       type: 'content.fill',
       payload: {
         fields: [{ field_id: fileField.field_id, value: '__resume_pdf__' }],
+        reviewContext: scan,
         pdf: {
           filename: 'Platform-Engineer.pdf',
           pdfBase64: Buffer.from('%PDF relay').toString('base64'),

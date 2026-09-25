@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Resume Designer Companion",
-  "version": "0.1.0",
-  "description": "Review and fill job applications with the local Resume Designer app.",
+  "name": "On Paper Companion",
+  "version": "0.1.1",
+  "description": "Review and fill job applications with On Paper. Requires On Paper for macOS and your own OpenRouter key for AI.",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/16.png",
@@ -11,7 +11,7 @@
     "128": "icons/128.png"
   },
   "action": {
-    "default_title": "Open Resume Designer Companion",
+    "default_title": "Open On Paper Companion",
     "default_icon": {
       "16": "icons/16.png",
       "32": "icons/32.png"

@@ -1,3 +1,5 @@
+import { isSensitiveDescriptor, isSensitiveQuestion } from '../sensitivity.js';
+
 export const FIELD_ID_ATTRIBUTE = 'data-resume-designer-field-id';
 export const MAX_JOB_DESCRIPTION_CHARS = 65_536;
 
@@ -177,9 +179,25 @@ function descriptorType(element) {
   return 'text';
 }
 
+export function isUnavailableControl(element) {
+  if (element.matches(':disabled') || element.hasAttribute('disabled') || (element.readOnly && element.getAttribute('role') !== 'combobox')) return true;
+  if (normalize(element.getAttribute('aria-disabled')).toLowerCase() === 'true') return true;
+  if (element.closest('[inert]')) return true;
+  // Upload widgets may hide the native input itself, but an inactive containing
+  // step must stay untouched just like it would for every other control.
+  const isFile = element.tagName === 'INPUT' && inputType(element) === 'file';
+  const visibilityRoot = isFile ? element.parentElement : element;
+  if (visibilityRoot?.closest('[hidden], [aria-hidden="true"]')) return true;
+  const view = element.ownerDocument?.defaultView;
+  for (let node = visibilityRoot; node; node = node.parentElement) {
+    const style = view?.getComputedStyle(node);
+    if (style?.display === 'none' || ['hidden', 'collapse'].includes(style?.visibility)) return true;
+  }
+  return false;
+}
+
 function isIgnored(element) {
-  if (element.matches(':disabled') || element.hasAttribute('disabled')) return true;
-  if (normalize(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return true;
+  if (isUnavailableControl(element)) return true;
   if (element.tagName !== 'INPUT') return false;
 
   const type = inputType(element);
@@ -215,7 +233,7 @@ function markerFor(elements) {
 }
 
 function selectOptions(element) {
-  return [...element.options].map((option) => ({
+  return [...element.options].filter((option) => !option.disabled && !option.closest('optgroup[disabled]')).map((option) => ({
     value: String(option.value),
     label: normalize(option.label || option.textContent),
   }));
@@ -262,6 +280,24 @@ function controlDescriptor(element) {
     type,
     options: type === 'select' ? selectOptions(element) : [],
     required: isRequired(element),
+    ...(element.tagName === 'INPUT' && TEXT_INPUT_TYPES.has(inputType(element)) && inputType(element) !== 'text' ? { inputType: inputType(element) } : {}),
+    ...(Number.isInteger(element.maxLength) && element.maxLength >= 0 ? { maxLength: element.maxLength } : {}),
+    ...(type === 'file' && element.accept ? { accept: element.accept } : {}),
+  };
+}
+
+export function isSensitiveControl(element) {
+  return isSensitiveDescriptor(controlDescriptorWithoutMarker(element))
+    || isSensitiveQuestion(groupLabel(element))
+    || isSensitiveQuestion(element.getAttribute('name'))
+    || isSensitiveQuestion(element.getAttribute('autocomplete'));
+}
+
+function controlDescriptorWithoutMarker(element) {
+  const type = descriptorType(element);
+  return {
+    label: labelFor(element, type),
+    options: element.tagName === 'SELECT' ? selectOptions(element) : [],
   };
 }
 
@@ -343,7 +379,13 @@ export function scanForm(root = document) {
     descriptors.push(controlDescriptor(control));
   }
 
-  return descriptors;
+  const sensitiveIds = new Set(controls.filter(isSensitiveControl)
+    .map((control) => control.getAttribute(FIELD_ID_ATTRIBUTE)));
+  return descriptors.map((descriptor) => (
+    sensitiveIds.has(descriptor.field_id) || isSensitiveDescriptor(descriptor)
+      ? { ...descriptor, sensitive: true }
+      : descriptor
+  ));
 }
 
 function isJobPosting(value) {
@@ -403,11 +445,11 @@ function cleanJobTextContainer(container) {
 }
 
 function jobTextFromMarkup(root, value) {
-  const container = root.createElement('div');
+  const container = root.createElement('template');
   container.innerHTML = String(value ?? '')
     .replace(/<br\s*\/?\s*>/gi, ' ')
     .replace(/<\/(?:p|div|li|h[1-6]|section|article)\s*>/gi, (tag) => `${tag} `);
-  return cleanJobTextContainer(container);
+  return cleanJobTextContainer(container.content);
 }
 
 function jobDescription(root, posting) {

@@ -15,6 +15,10 @@ rust-version = "1.77"
 name = "on_paper_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Isolated local demo only; secret.rs rejects release and non-macOS builds.
+companion-demo = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

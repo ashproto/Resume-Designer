@@ -1,3 +1,5 @@
+import { isSensitiveDescriptor, SENSITIVE_MANUAL_MESSAGE } from '../sensitivity.js';
+
 function descriptorOptions(options) {
   if (!Array.isArray(options)) return [];
   return options.map((option) => ({
@@ -16,8 +18,9 @@ export function buildReviewItems(descriptors = [], mapping = {}) {
 
   return descriptors.map((descriptor) => {
     const fieldId = descriptor.field_id;
-    const mapped = mappedById.get(fieldId);
-    const human = humanById.get(fieldId);
+    const manualSensitive = isSensitiveDescriptor(descriptor);
+    const mapped = manualSensitive ? null : mappedById.get(fieldId);
+    const human = manualSensitive ? { question: SENSITIVE_MANUAL_MESSAGE } : humanById.get(fieldId);
     const needsHuman = Boolean(human || !mapped);
     const type = String(descriptor.type ?? 'text');
     const value = mapped ? String(mapped.value ?? '') : '';
@@ -28,10 +31,11 @@ export function buildReviewItems(descriptors = [], mapping = {}) {
       field_id: fieldId,
       label: String(descriptor.label ?? fieldId),
       type,
-      options: descriptorOptions(descriptor.options),
+      options: manualSensitive ? [] : descriptorOptions(descriptor.options),
       value,
       confidence: typeof mapped?.confidence === 'number' ? mapped.confidence : null,
       source: typeof mapped?.source === 'string' ? mapped.source : null,
+      aiDraft: mapped?.source === 'draft',
       question: human?.question
         ? String(human.question)
         : needsHuman
@@ -41,6 +45,8 @@ export function buildReviewItems(descriptors = [], mapping = {}) {
       lowConfidence: typeof mapped?.confidence === 'number' && mapped.confidence < 0.7,
       manualFile,
       manualCustom,
+      manualSensitive,
+      sensitive: manualSensitive,
     };
   });
 }
@@ -49,7 +55,9 @@ function warningFor(item) {
   return {
     field_id: item.field_id,
     label: item.label,
-    reason: item.manualCustom
+    reason: isSensitiveDescriptor(item)
+      ? SENSITIVE_MANUAL_MESSAGE
+      : item.manualCustom
       ? 'This custom control must be completed manually.'
       : item.question || 'Please complete this field manually.',
   };
@@ -60,7 +68,7 @@ export function buildFillPayload(items = []) {
   const warnings = [];
 
   for (const item of items) {
-    if (item.manualFile || item.manualCustom) {
+    if (item.manualFile || item.manualCustom || isSensitiveDescriptor(item)) {
       warnings.push(warningFor(item));
       continue;
     }

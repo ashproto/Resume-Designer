@@ -1,7 +1,11 @@
 import {
   FIELD_ID_ATTRIBUTE,
   isButtonBackedYesNoCheckbox,
+  isSensitiveControl,
+  isUnavailableControl,
+  scanForm,
 } from './scan.js';
+import { isSensitiveDescriptor, SENSITIVE_MANUAL_MESSAGE } from '../sensitivity.js';
 
 const TEXT_INPUT_TYPES = new Set([
   'date',
@@ -87,6 +91,9 @@ function fillText(element, value) {
     : 'HTMLInputElement';
   const requestedValue = String(value ?? '');
   const previousValue = element.value;
+  if (element.maxLength >= 0 && requestedValue.length > element.maxLength) {
+    throw new Error(`This answer exceeds the field’s ${element.maxLength}-character limit; shorten it before filling`);
+  }
 
   nativeSetter(element, prototypeName, 'value', requestedValue);
 
@@ -100,6 +107,7 @@ function fillText(element, value) {
 
 function fillSelect(element, value) {
   const option = matchingOption([...element.options], value, optionLabel);
+  if (option?.disabled || option?.closest('optgroup[disabled]')) throw new Error('This option is disabled; choose another answer');
   if (!option) throw new Error(`No select option matches "${String(value ?? '')}"`);
 
   nativeSetter(element, 'HTMLSelectElement', 'value', option.value);
@@ -142,7 +150,7 @@ function fillCheckboxChoiceGroup(elements, value) {
 
 function pdfFile(element, pdf) {
   if (!pdf?.filename || !pdf?.pdfBase64) {
-    throw new Error('A résumé PDF payload is required for this file field');
+    throw new Error('A resume PDF payload is required for this file field');
   }
 
   const view = ownerView(element);
@@ -153,6 +161,10 @@ function pdfFile(element, pdf) {
 
 function fillFile(element, pdf, dataTransferFactory) {
   const view = ownerView(element);
+  const accepted = String(element.accept ?? '').toLowerCase().split(',').map((type) => type.trim()).filter(Boolean);
+  if (accepted.length && !accepted.some((type) => ['.pdf', 'application/pdf', 'application/*', '*/*'].includes(type))) {
+    throw new Error('This upload does not accept PDF files; attach the requested format manually');
+  }
   const file = pdfFile(element, pdf);
   const dataTransfer = dataTransferFactory
     ? dataTransferFactory()
@@ -191,10 +203,18 @@ function failureReason(error) {
 
 export function fillForm(
   reviewedFields,
-  { root = document, pdf, dataTransferFactory } = {},
+  { root = document, pdf, dataTransferFactory, expectedDescriptors } = {},
 ) {
   const filled = [];
   const unfilled = [];
+  const expected = Array.isArray(expectedDescriptors)
+    ? new Map(expectedDescriptors.map((descriptor) => [descriptor.field_id, descriptor]))
+    : null;
+  const descriptorSignature = (descriptor) => JSON.stringify({
+    label: descriptor.label, type: descriptor.type, options: descriptor.options,
+    required: descriptor.required, inputType: descriptor.inputType,
+    maxLength: descriptor.maxLength, accept: descriptor.accept, sensitive: Boolean(descriptor.sensitive),
+  });
 
   for (const reviewedField of reviewedFields ?? []) {
     const fieldId = reviewedField?.field_id;
@@ -202,6 +222,21 @@ export function fillForm(
     try {
       const elements = markedElements(root, fieldId);
       if (elements.length === 0) throw new Error('The reviewed field was not found on this page');
+      if (elements.some(isUnavailableControl)) throw new Error('This field is hidden, disabled, or read-only; prepare a new review');
+      if (expected) {
+        const previous = expected.get(fieldId);
+        // A previous input/change handler may have changed the next field.
+        const matches = scanForm(root).filter((descriptor) => descriptor.field_id === fieldId);
+        if (!previous || matches.length !== 1 || descriptorSignature(previous) !== descriptorSignature(matches[0])) {
+          throw new Error('This field changed since the review was prepared; prepare a new review');
+        }
+        if (elements.length > 1 && previous.type !== 'radio') {
+          throw new Error('This field is ambiguous on the page; prepare a new review');
+        }
+      }
+      if (elements.some(isSensitiveControl) || isSensitiveDescriptor({
+        options: elements.map((element) => ({ label: radioLabel(element), value: element.value })),
+      })) throw new Error(SENSITIVE_MANUAL_MESSAGE);
 
       fillReviewedField(elements, reviewedField?.value, { pdf, dataTransferFactory });
       filled.push(fieldId);

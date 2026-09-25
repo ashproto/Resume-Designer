@@ -21,6 +21,39 @@ function loadFixture(name) {
 }
 
 describe('scanForm', () => {
+  it.each(['hidden', 'inert', 'aria-hidden="true"', 'style="display:none"', 'style="visibility:hidden"', 'style="visibility:collapse"'])('omits a file input inside an unavailable ancestor: %s', (attribute) => {
+    const document = new JSDOM(`<form><div ${attribute}><label>Resume <input type="file" accept="application/pdf"></label></div></form>`).window.document;
+    expect(scanForm(document)).toEqual([]);
+    expect(document.querySelector('input').hasAttribute(FIELD_ID_ATTRIBUTE)).toBe(false);
+  });
+
+  it('honors inert on a file input itself while preserving direct hidden upload proxies', () => {
+    const document = new JSDOM('<form><label>Inert resume <input type="file" inert></label><label>Resume <input type="file" hidden style="display:none" aria-hidden="true"></label></form>').window.document;
+    expect(scanForm(document).map(({ label }) => label)).toEqual(['Resume']);
+  });
+
+  it('ignores read-only and hidden text controls while retaining identified hidden file inputs', () => {
+    const document = new JSDOM(`<form>
+      <label>Name <input></label>
+      <label>Locked <input readonly value="fixed"></label>
+      <div hidden><label>Internal <input></label></div>
+      <div style="display:none"><label>Other step <textarea></textarea></label></div>
+      <label>Unavailable <input aria-disabled="true"></label>
+      <label>Resume <input type="file" style="display:none" accept=".pdf"></label>
+    </form>`).window.document;
+    expect(scanForm(document).map(({ label }) => label)).toEqual(['Name', 'Resume']);
+  });
+
+  it('omits disabled select choices and exposes native input constraints for grounded mapping', () => {
+    const document = new JSDOM(`<form>
+      <label>Email <input type="email" maxlength="100"></label>
+      <label>Office <select><option disabled value="old">Closed</option><optgroup disabled><option value="other">Other</option></optgroup><option value="remote">Remote</option></select></label>
+    </form>`).window.document;
+    const [email, office] = scanForm(document);
+    expect(email).toMatchObject({ inputType: 'email', maxLength: 100 });
+    expect(office.options).toEqual([{ value: 'remote', label: 'Remote' }]);
+  });
+
   it('uses the documented label precedence and required signals', () => {
     const document = new JSDOM(`
       <form>
@@ -271,7 +304,7 @@ describe('scanForm', () => {
     const serialized = JSON.stringify(descriptors);
 
     expect(descriptors.every((descriptor) => (
-      Object.keys(descriptor).join(',') === 'field_id,label,type,options,required'
+      Object.keys(descriptor).filter((key) => !['sensitive', 'inputType', 'maxLength', 'accept'].includes(key)).join(',') === 'field_id,label,type,options,required'
     ))).toBe(true);
     expect(descriptors.flatMap(({ options }) => options).every((option) => (
       Object.keys(option).join(',') === 'value,label'
