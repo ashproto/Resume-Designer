@@ -43,16 +43,16 @@ Requires On Paper for macOS. AI features require your own OpenRouter key; usage 
 | Dashboard field | Value or required action |
 | --- | --- |
 | Name | On Paper Companion |
-| Publisher name | HyperBuild, Inc — owner-selected; registration/payment completed per the owner’s report; Dashboard identity verification remains unconfirmed |
+| Publisher name | HyperBuild, Inc — registration/payment and publisher verification completed per the owner’s September 25 report |
 | Language | English |
 | Category | Productivity (confirm the current dashboard category label) |
 | Homepage | https://onpaper.pro |
 | Privacy-policy URL | https://onpaper.pro/privacy.html — deploy the Companion and Limited Use disclosures before submitting |
 | Support URL | https://github.com/ashproto/Resume-Designer/issues — public support; do not post private data |
-| Support/contact email | support@hyperbuild.com — owner-provided; mailbox/domain and Dashboard verification remain unverified |
-| Initial visibility | Unlisted — owner-selected for the first release; not yet applied in the Dashboard |
+| Support/contact email | support@hyperbuild.com — owner-provided; publisher verification is owner-reported complete; mailbox monitoring and domain ownership were not independently checked |
+| Initial visibility | Unlisted — owner-selected for the first release; confirm Distribution matches before submission |
 | First-release platform | macOS 14.4 or later only; Windows is deferred until testing is complete |
-| Trader declaration/details | Declaration in progress; complete the legally applicable declaration and required identity/contact verification. Completion and legal details are not yet confirmed |
+| Trader declaration/details | Publisher verification is owner-reported complete; any required legal details are supplied privately to Google and are not recorded here |
 | Desktop download | Supply an exact signed production macOS release that implements the required companion bridge; do not send reviewers to the older generic latest release |
 
 ## Permission justifications
@@ -131,24 +131,26 @@ Dashboard certification is submitted.
 
 ## Reviewer instructions
 
-Use [`chrome-web-store-reviewer-instructions.md`](chrome-web-store-reviewer-instructions.md) to complete the Dashboard **Test instructions** field. It contains a deterministic fictional test flow, expected results, manual-pairing recovery, and the owner inputs that must be resolved. Do not paste an unresolved placeholder or a developer API key into the Store.
+Use [`chrome-web-store-reviewer-instructions.md`](chrome-web-store-reviewer-instructions.md) to complete the Dashboard **Test instructions** field. It contains a deterministic fictional test flow, expected results, manual-pairing recovery, and the owner inputs that must be resolved. Do not paste unresolved placeholders or credentials into the instructions; the dedicated review-only key belongs only in the private **Password** field.
 
-No reviewer test account is currently available. Full AI review access remains unresolved: this BYOK product requires an OpenRouter account/key and an available model, and a reviewer must not be assumed to have funded access.
+September 25 update: the owner committed to providing a dedicated, spending-capped OpenRouter key privately in the Dashboard **Password** field, with **Username** blank. Actual supply and continued availability are not yet confirmed. The reviewer enters it in the native welcome wizard if needed on first launch, or **On Paper Settings → AI** afterward, and selects the tested **Claude Sonnet 4.6** model. No On Paper login or reviewer-funded OpenRouter account is required for this arrangement.
 
 The app’s desktop dependency and BYOK requirement are visible in the public listing above. Provide an exact accessible signed macOS production installer and a durable fixture/import location for the full review period. The development-only demo app and `/private/tmp` files are not reviewer distribution artifacts.
 
 ## Listing assets
 
 - [x] Final 128×128 listing PNG: `extension/store-assets/listing-icon-128.png`; approved 96×96 mark with 16 px transparent padding. Packaged extension icon remains `extension/icons/128.png`.
-- [ ] At least one actual-product screenshot, preferably 1280×800 (640×400 accepted), up to five; square corners and full bleed. Capture review/fill, fit analysis, and pairing/privacy only after final UI validation, with fictional data and no tokens or keys.
+- [x] Actual-product screenshots saved in the Dashboard per the owner’s September 25 report. Before submission, confirm final UI, fictional data, no tokens or keys, and accepted dimensions (1280×800 preferred; 640×400 accepted).
 - [x] Required 440×280 small promotional tile: `extension/store-assets/promotional-tile-440x280.png`, using final branding and the desktop-app requirement.
 - [ ] Optional 1400×560 marquee promotional tile, if desired.
 - Public privacy-policy URL: `https://onpaper.pro/privacy.html` (verify the deployed page includes the Companion section before submission).
 - Public support URL: `https://github.com/ashproto/Resume-Designer/issues` (public; do not include private documents or credentials).
 - Homepage URL: `https://onpaper.pro`.
-- Support contact email: `support@hyperbuild.com` (owner-provided; mailbox/domain and Dashboard verification remain unverified).
+- Support contact email: `support@hyperbuild.com` (owner-provided; publisher verification is owner-reported complete; mailbox monitoring and domain ownership were not independently checked).
 
 ## Privacy-practices worksheet
+
+The owner reports the Store listing, privacy fields, and screenshots saved in the Dashboard as of September 25. Reconcile those saved fields with any later package or disclosure changes before submission.
 
 The final dashboard categories must match all handling, including local processing. Use this conservative inventory; inspect each current checkbox before certifying.
 

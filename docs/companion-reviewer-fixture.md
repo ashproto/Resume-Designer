@@ -11,7 +11,7 @@ Prepared source materials; **not deployed**. These are synthetic examples author
 
 ## First launch, if the welcome wizard blocks the main window
 
-When an OpenRouter key and model access are available for review, configure that key in the wizard, choose **Import existing resume**, and paste the fictional text below into **Import your resume**. Review the parsed facts, continue to **Create resume**, and finish onboarding. This initial parse uses real AI. Once the main window is available, follow the JSON import steps below for an exact source document; the first-run wizard’s file picker accepts TXT/PDF/DOCX, not this JSON document.
+The owner committed to supplying a dedicated OpenRouter key privately in the Dashboard **Password** field; actual supply remains unconfirmed. Once supplied, configure that key in the native wizard, choose **Import existing resume**, and paste the fictional text below into **Import your resume**. Review the parsed facts, continue to **Create resume**, and finish onboarding. This initial parse uses real AI. Once the main window is available, follow the JSON import steps below for an exact source document; the first-run wizard’s file picker accepts TXT/PDF/DOCX, not this JSON document.
 
 ```text
 Alex Morgan — Senior Product Designer
@@ -35,7 +35,7 @@ Skills: interaction design, user research, accessible design systems, Figma, HTM
 2. Open **Settings → Account → New profile**, name it **Companion Review (Fictional)**, and choose **Create & switch**. This workspace starts empty. If onboarding appears after switching profiles, use its **Cancel** control so you can import the prepared resume.
 3. Download `companion-reviewer-resume.json` using **Download the fictional resume (JSON)** in the page’s **Set up the fictional reviewer resume** section. In the main window’s **Resume actions** menu (the three dots beside the resume selector), choose **Import…** and select the downloaded file. In a narrow window, use **Menu → Import**. Do not use **Import profile** for this resume document. This imports one resume; it is not a full-workspace backup. Rename the imported resume to **Product Design** using the same menu if desired.
 4. Verify the resume shows **Alex Morgan**, `alex.morgan@example.com`, `+1 202-555-0147`, and `https://alex-morgan.example`. The companies, college, contact details, and career history are fictional. Keep the underlying career profile empty or enter only these same fictional facts through **Profile**; personal data is unnecessary.
-5. Configure permitted reviewer OpenRouter access directly in **Settings → AI** and select an available model. Accept the native AI-sharing disclosure. Do not put a key into this repository, fixture, extension, screenshots, or public reviewer notes. Provider operations are real and may be billable.
+5. Enter the dedicated review-only key from the Dashboard **Password** field directly in **Settings → AI** and select the tested **Claude Sonnet 4.6** model. Accept the native AI-sharing disclosure. Do not put a key into this repository, fixture, extension, screenshots, or public reviewer notes. Provider operations are real and may be billable.
 
 The resume explicitly states two-week availability. Other than the provided facts, no additional claims are needed. Do not add answers to sensitive work-authorization or EEO questions.
 
@@ -54,7 +54,7 @@ For Store review, deploy the page and its JSON asset together through the websit
 - Page and on-page setup: `https://onpaper.pro/companion-demo.html`
 - Fictional resume download: `https://onpaper.pro/assets/companion-reviewer-resume.json`
 
-The page uses a relative download link so the same source works locally and after deployment. Keep the website JSON byte-identical to `docs/fixtures/companion-reviewer-resume.json` when updating the fixture. No localhost server or private developer filesystem should be required of Store reviewers. No reviewer test account is currently available; a workable OpenRouter BYOK review arrangement remains open.
+The page uses a relative download link so the same source works locally and after deployment. Keep the website JSON byte-identical to `docs/fixtures/companion-reviewer-resume.json` when updating the fixture. No localhost server or private developer filesystem should be required of Store reviewers. The owner committed to providing the dedicated, spending-capped review key through the private Dashboard **Password** field, with **Username** blank. Actual supply and continued model access must be confirmed before review; no On Paper login or reviewer-funded OpenRouter account is required. The compatible signed macOS installer remains unavailable.
 
 ## Expected results
 

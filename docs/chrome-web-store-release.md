@@ -11,15 +11,15 @@ The main candidate passed local Chrome functional QA with the isolated macOS dem
 
 | Gate | Current disposition |
 | --- | --- |
-| Publisher/item/contact/trader setup | Owner selected HyperBuild, Inc, support@hyperbuild.com, and Unlisted for the first release. Registration/payment completed per the owner’s report. The trader declaration is in progress; account/item setup, mailbox/domain and Dashboard identity verification remain unconfirmed, as do trader completion and required legal details. |
+| Publisher/item/contact/trader setup | Owner selected HyperBuild, Inc, support@hyperbuild.com, and Unlisted for the first release. Registration/payment, publisher verification, and saved Store listing/privacy fields are complete per the owner’s September 25 report. Private legal details and mailbox/domain ownership were not independently checked. |
 | Production desktop dependency | First release is Unlisted and macOS-only (14.4+). Supply its exact signed compatible macOS installer; the isolated demo app is insufficient. |
 | Pairing | Warm native consent, rejection, extension cancel/manual recovery, retry/approval, and disconnect/revoke passed locally. Cold launch still requires a correctly registered production installation and its own check. |
 | Core companion flow | Local real-AI review/fill with PDF, two sensitive blanks, model search/override/reset, application logging, fit analysis, one tailored variant, saved-answer reuse, and query/fragment stale-review protection passed. This does not complete the full manual checklist. |
 | Native Library close | The close fix, desktop suite (2,051/129), lint, signed isolated app rebuild, and live Close/reopen/Escape checks passed. The full suite preceded final copy-only policy/neutral Library changes; the final app started after user-approved Keychain access, retained saved resumes, and passed focused Library Close and Chrome reconnect checks. |
 | Public policy/support/homepage | Verify deployed URLs, Companion disclosures, and affirmative Limited Use statement. Local source edits are not deployment. |
-| Real reviewer AI access | No reviewer test account is currently available. The product requires a user-provided OpenRouter account/key and available model; do not assume the reviewer has funded access. A workable BYOK reviewer path remains unresolved. Never bundle developer keys. |
+| Real reviewer AI access | The owner committed to providing a dedicated, spending-capped OpenRouter key privately in Dashboard **Password**, with **Username** blank; actual supply remains unconfirmed. Use the native welcome wizard if necessary, or desktop **Settings → AI**, and tested **Claude Sonnet 4.6**. Confirm access remains usable throughout review. Never bundle credentials. |
 | Reviewer fixture/import | Publish a durable fictional fixture/import through the normal authorized release process. |
-| Listing images | The 128×128 listing icon and 440×280 promo tile are complete in `extension/store-assets/`. Final UI was inspected, but screenshot PNG export was blocked by browser URL policy; no actual screenshot asset exists. |
+| Listing images | The 128×128 listing icon and 440×280 promo tile are complete in `extension/store-assets/`. The owner reports product screenshots saved in the Dashboard on September 25; verify their final UI and absence of private data before submission. The earlier local export block is preserved in the readiness history. |
 | Final artifact | Extension tests (413/14) and lint passed before the final manifest-description-only change; the final macOS-first package build, strict validator, and ZIP integrity passed. ZIP: 672,930 bytes, 12 files, SHA-256 `2c483546a2c390516d23006fa9f0bfedc47d0e5c219d0b92a31630218b77167e`. Runtime JavaScript is identical to the status-copy build that passed review/reconnect; final offline publisher/support copy and mail link rendered live. The last package change is only the macOS-first manifest description. The readiness record preserves all build provenance. |
 | First-release production/manual checks | Signed macOS installer, Store installation/update, URI cold launch, Chrome browser restart, and the applicable macOS README checklist remain open. |
 | Later Windows release | Windows GNU cross-target compilation passed. Windows signing, installation/runtime, and manual feature tests remain deferred; they do not block the macOS-only first release. |
@@ -73,21 +73,19 @@ asynchronous.
 
 ## What remains manual
 
-Use the [owner setup checklist](chrome-web-store-owner-checklist.md) for the remaining trader/verification, Unlisted macOS-first listing, and access steps.
+Use the [owner setup checklist](chrome-web-store-owner-checklist.md) for the remaining compatible installer, reviewer access, and final Unlisted macOS-first submission checks.
 
 Chrome requires human-owned publisher and listing setup before the API can
 publish an item. Complete these once in the Chrome Web Store Developer
 Dashboard. Registration includes a one-time developer fee; the owner reports both registration and payment completed.
 
-1. Confirm two-step verification and the publisher identity for **HyperBuild, Inc** in the Dashboard. Registration/payment completion does not establish identity verification.
-2. Finish the trader declaration currently in progress and verify the publisher contact email **support@hyperbuild.com**. Mailbox/domain, Dashboard identity verification, trader completion, and required legal details remain unconfirmed. A trader must also complete Google’s public identity/contact verification.
-3. Create the Store item and upload the first validated ZIP to establish its
-   extension ID.
-4. Complete Store Listing, Privacy practices, Test instructions, and
-   Distribution using `docs/chrome-web-store-listing.md`.
+1. Publisher verification for **HyperBuild, Inc** is complete per the owner’s September 25 report. Keep two-step verification enabled and resolve any new Dashboard warnings.
+2. Confirm **support@hyperbuild.com** is monitored. Any required trader declaration and legal identity details stay in Google’s Dashboard; they were not independently inspected here.
+3. The owner reports the Store draft saved. Replace any older uploaded ZIP with the final validated candidate before submission.
+4. Store Listing and Privacy practices are owner-reported saved; reconcile them with the final package and `docs/chrome-web-store-listing.md`. Finish Test instructions once the exact compatible installer and private reviewer key are available.
 5. Add the public privacy-policy, support, and homepage URLs.
-6. Upload screenshots and promotional artwork.
-7. Select **Unlisted** for the first release, as chosen by the owner. This choice has not yet been applied in the Dashboard.
+6. Screenshots are owner-reported saved. Verify the final screenshots and promotional artwork before submission.
+7. Confirm **Unlisted** for the first release in Distribution, as chosen by the owner.
 8. Manually publish once after establishing or changing visibility. The Web
    Store API preserves existing visibility and cannot activate a newly changed
    visibility until it has been published manually once.
@@ -266,7 +264,7 @@ the app-first guarantee for bridge changes.
 - [x] Document the pairing-token trust boundary and add a disconnect/revoke path.
 - [ ] Complete human review of the documented trust boundary before broad launch.
 - [x] Create the required listing icon and 440×280 promotional tile in `extension/store-assets/`.
-- [ ] Capture Store screenshots from the final UI.
+- [x] Store screenshots saved per the owner’s September 25 report; confirm they match the final UI before submission.
 - [ ] Complete `docs/chrome-web-store-reviewer-instructions.md` with stable reviewer fixture/import, the exact signed compatible macOS installer, and safe real AI access.
 - [ ] Copy and confirm the first-release platform in the live Dashboard listing: macOS 14.4 or later only, with Unlisted visibility. Windows support is deferred until its separate release checks pass.
 - [ ] Perform the manual Chrome QA checklist in `extension/README.md` against

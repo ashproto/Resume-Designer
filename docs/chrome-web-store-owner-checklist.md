@@ -1,6 +1,6 @@
 # On Paper Companion: first unlisted release
 
-Prepared September 24, 2026. This is an execution checklist; it does not claim anything has been uploaded, deployed, or published.
+Prepared September 24, 2026; owner-status update September 25. This execution checklist distinguishes owner-reported Dashboard progress from independently verified checks. It does not establish review submission, deployment, or publication.
 
 ## Already prepared
 
@@ -15,12 +15,12 @@ The first submission can be manual. Google Cloud, service accounts, and GitHub-t
 
 Open [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole) with the Google account that should own or administer HyperBuild's publisher.
 
-- [x] Developer registration and the one-time registration payment are complete, per the owner's September 24 report. The Dashboard is now requesting the Trader / Non-Trader declaration.
+- [x] Developer registration and the one-time registration payment are complete, per the owner’s report.
 - [ ] Enable Google Account **2-Step Verification** if it is not already enabled.
-- [ ] Set the publisher name to **HyperBuild, Inc**.
-- [ ] Set the contact email to **support@hyperbuild.com** and complete Google's verification email. Confirm this mailbox is monitored.
-- [ ] Complete the applicable **Trader / Non-Trader** declaration (currently in progress). You decide the correct classification and supply any required legal name, address, phone, identity documents, or Payments-profile details directly to Google. Trader contact information can be public.
-- [ ] Finish any remaining account verification and reach the publisher dashboard. Do not paste passwords, one-time codes, identity documents, or payment details into the chat.
+- [x] Publisher **HyperBuild, Inc** is configured and verified, per the owner’s September 25 report.
+- [ ] Confirm **support@hyperbuild.com** is monitored. Publisher verification is owner-reported complete; mailbox monitoring and domain ownership were not independently checked.
+- [x] Publisher verification is complete per the owner’s September 25 report. Any required **Trader / Non-Trader** declaration and legal details are handled directly in Google’s Dashboard; this checklist does not reproduce or independently verify private identity details.
+- [x] The owner reports reaching the publisher Dashboard and saving the Store draft. Do not paste passwords, one-time codes, identity documents, or payment details into the chat.
 
 An optional verified-website badge is separate from the required email/trader steps. Do not make a badge a prerequisite for the first submission.
 
@@ -39,35 +39,35 @@ Do not direct reviewers to an incompatible generic latest-release link. Do not d
 
 ## 3. You: provide bounded AI reviewer access
 
-No On Paper login account is needed. No reviewer AI access is currently available. Google needs a workable way to exercise the real AI features; do not assume the reviewer has a funded OpenRouter account.
+No On Paper login account is needed. The owner committed to providing a dedicated, spending-capped OpenRouter key privately through the Dashboard **Password** field. Actual supply is not yet confirmed. This arrangement does not require the reviewer to fund a personal OpenRouter account.
 
 Recommended setup:
 
 - [ ] In [OpenRouter Keys](https://openrouter.ai/settings/keys), create a separate ordinary inference key named **On Paper CWS review** yourself.
 - [ ] Use a small fixed lifetime credit cap, for example **$5 with no reset**. This is a suggested ceiling, not a purchase authorization or guarantee of sufficient review coverage. Confirm that the account already has sufficient credit; any credit purchase is your decision.
 - [ ] If the dashboard offers expiry, allow enough time for review and possible resubmission (for example 60 days). Otherwise revoke the key manually afterward.
-- [ ] Enter the key directly in the Chrome Dashboard's reviewer-only **Test instructions** field alongside the prepared instructions. Do not put it in this repository, the ZIP, a public listing, a screenshot, or this chat. Do not share your normal key, login, or a management key.
-- [ ] Identify the tested model and direct the reviewer to enter the key in **On Paper desktop Settings → AI**, never in the extension.
+- [ ] Enter the dedicated key directly in the Chrome Dashboard’s private **Password** field and leave **Username** blank. Do not put it in the instructions text, this repository, the ZIP, a public listing, a screenshot, or this chat. Do not share your normal key, login, or a management key.
+- [ ] Direct the reviewer to enter the key in the native welcome wizard if needed on first launch, or **On Paper desktop Settings → AI** afterward, and select the tested **Claude Sonnet 4.6** model. Never enter it in the extension or fixture website.
 - [ ] Keep the capped access available while review is pending, monitor usage, and revoke it when no longer needed. Later updates may need fresh review access.
 
 The Test instructions tab itself is optional, but leaving AI features inaccessible risks an incomplete review. Free models are not a reliable substitute until the exact flows are tested against one.
 
-## 4. You: capture one real product screenshot
+## 4. You: verify the saved product screenshots
 
-- [ ] Open the fictional reviewer application with the Companion panel visible and a completed review. Show the AI narrative, selected resume/model, and manual sensitive fields using fictional data only.
-- [ ] Capture a real screenshot with macOS's screenshot controls. Exclude keys, pairing tokens, account details, developer tools, and debugging banners.
-- [ ] Produce at least one **1280 × 800** PNG/JPEG (640 × 400 is also accepted). Use square corners and actual readable UI. The 440 × 280 promotional tile is already prepared and does not replace the screenshot.
+- [x] Product screenshots saved in the Dashboard, per the owner’s September 25 report.
+- [ ] Confirm saved screenshots show the final UI and fictional data only, excluding keys, pairing tokens, account details, developer tools, and debugging banners.
+- [ ] Confirm at least one **1280 × 800** PNG/JPEG (640 × 400 is also accepted), square corners, and readable UI. The 440 × 280 promotional tile does not replace the screenshot.
 
-Automated screenshot export was blocked by the browser's URL policy in this session. Capture/save this asset manually; it is still outstanding.
+Automated screenshot export was blocked at the September 24 local checkpoint. The owner subsequently reported screenshots saved in the Dashboard; that report does not add screenshot files to this repository.
 
 ## 5. Together: assemble the draft Store item
 
 Once the production URLs and reviewer access are ready:
 
-- [ ] Choose **New item** and upload **on-paper-companion-0.1.1.zip**. If a local handoff folder contains other files, upload only this extension ZIP here.
-- [ ] Complete **Store listing** using [the listing source](chrome-web-store-listing.md): name, description, English, the appropriate Productivity category, homepage/support/policy URLs, icon, small promotional tile, and the real screenshot.
-- [ ] Complete **Privacy practices** using the prepared single purpose, permission justifications, and data inventory. Answer remote code **No**. Check the actual current category labels against the inventory; confirm the truthful Limited Use certifications yourself.
-- [ ] Paste the finalized **Test instructions** with exact installers, public fictional fixtures, tested model, and your dedicated reviewer key in the private field only.
+- [x] Store item created and package uploaded, per the owner’s report. Confirm the uploaded package is the final **on-paper-companion-0.1.1.zip**; upload only this extension ZIP when replacing the package.
+- [x] **Store listing** saved per the owner’s September 25 report. Reconcile it with [the listing source](chrome-web-store-listing.md) and the final package before submission.
+- [x] **Privacy practices** saved per the owner’s September 25 report. Reconcile the saved categories, permission justifications, and Limited Use certifications with the final disclosures before submission.
+- [ ] Paste the finalized **Test instructions** with the exact compatible installer, public fictional fixtures, and tested model; enter the dedicated reviewer key separately in **Password**, leaving **Username** blank.
 - [ ] In **Distribution**, choose **Unlisted** and the intended regions. Unlisted means anyone who has the Store URL can install it; it is not access-controlled private testing.
 - [ ] Save and review the complete draft for missing fields and warnings. The assistant can help fill ordinary non-sensitive fields where browser access permits; browser control currently refused access to the developer console.
 

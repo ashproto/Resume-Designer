@@ -17,15 +17,15 @@ The final macOS-first package is identified below. The separate hashes preserve 
 - Local app: `/private/tmp/on-paper-demo/On Paper Demo.app`. This is an isolated, ad-hoc-signed **debug demo**, not a production installer. Its debug-only credential feature does not change production Keychain identifiers or behavior.
 - Rebuilt native executable SHA-256: `f480deb007abf2df458791e96a6bfd7c9c026aa5a1426f81f26b1c8a030d0355`; installed bundle signature verified. The latest native changes are copy only: shared publisher/support policy text and neutral Library empty-state text.
 
-## Owner choices
+## Owner choices — updated September 25
 
 - Publisher name: **HyperBuild, Inc**.
-- Support/contact email: **support@hyperbuild.com**. Mailbox/domain and Dashboard verification remain unverified.
-- First-release visibility: **Unlisted**; applying it in the Dashboard remains pending.
+- Support/contact email: **support@hyperbuild.com**. Publisher verification is owner-reported complete; mailbox monitoring and domain ownership were not independently checked.
+- First-release visibility: **Unlisted**; confirm the saved Distribution setting before submission.
 - First-release platform: **macOS 14.4 or later only**. Windows release support is deferred until its testing is complete.
-- Publisher registration and Google’s registration payment are completed per the owner’s report.
-- No reviewer test account is currently available. BYOK requires an OpenRouter account/key and an available model; reviewer access remains unresolved, and no funded reviewer key is assumed.
-- The trader declaration is in progress; completion and required legal details remain unconfirmed.
+- Publisher registration/payment and verification are complete per the owner’s September 25 report. The owner also reports the Store listing, privacy fields, and screenshots saved. This is owner-reported Dashboard progress, not additional local test evidence or proof of submission/publication.
+- The owner committed to providing a dedicated, spending-capped OpenRouter key privately in Dashboard **Password**, with **Username** blank. Actual supply remains unconfirmed. Enter the key in the native welcome wizard if needed or desktop **Settings → AI** afterward, and select tested **Claude Sonnet 4.6**; maintain access through review.
+- Any required trader declaration and legal details are handled privately in Google’s Dashboard and were not independently inspected. A signed compatible macOS installer remains unavailable.
 
 ## Changes in this polish pass
 
@@ -82,12 +82,12 @@ After the user reloaded the extension, the main-QA artifact identified above pas
 
 These are local functional checks, not completion of the full README manual checklist, Windows runtime coverage, or production-install verification. The status-copy build passed real-AI review and app reconnect checks. The final package retains identical runtime JavaScript and adds the verified offline publisher/support policy copy plus macOS-only manifest description. The separate native Library close bug was fixed and Close/Escape verified live; the final native copy build also passed its focused checks. The complete main-artifact functional sequence was not repeated on each later copy-only build.
 
-## Open gates
+## Open gates — updated September 25
 
-1. **Actual screenshots:** capture at least one final product screenshot with fictional data. The UI was inspected, but PNG export was blocked by browser URL policy; no actual screenshot asset exists. The required 128px listing icon and 440×280 promo tile are complete in [`extension/store-assets`](../extension/store-assets/README.md); the promotional tile is not an application screenshot.
+1. **Saved screenshots:** the owner reports screenshots saved in the Dashboard on September 25. Confirm they match the final UI and contain only fictional data. At the September 24 checkpoint, PNG export was blocked by browser URL policy and no screenshot asset had been exported locally; the later owner report does not change that historical result. The required 128px listing icon and 440×280 promo tile are complete in [`extension/store-assets`](../extension/store-assets/README.md).
 2. **Compatible public desktop release:** public stable `v2.2.0` lacks the required bridge protocol. Release an exact signed compatible macOS installer for the macOS-only first release. The local demo is not production installer or production Keychain validation. Windows signing/runtime checks are deferred to its future release.
 3. **Public website:** live `https://onpaper.pro/privacy.html` returned HTTP 200 on September 24 but had neither the Companion section nor Limited Use text. Deploy the prepared policy and fictional reviewer page/download through the authorized release process, then verify the public URLs.
-4. **Owner/store setup and reviewer access:** registration/payment are complete per the owner’s report. Finish the in-progress trader declaration and configure/verify the publisher account and item for HyperBuild, Inc, support@hyperbuild.com, and the selected macOS-only Unlisted first release. Mailbox/domain and Dashboard identity verification remain unconfirmed; trader completion and required legal details are also unconfirmed. No reviewer test account is currently available, so a workable BYOK review path remains open. Successful use of the owner’s AI access in the local demo does not provide reviewer access. No developer key should appear in a public asset or repository. Check the current Dashboard data categories against the prepared inventory.
+4. **Owner/store setup and reviewer access:** registration/payment, publisher verification, and saved listing/privacy fields/screenshots are complete per the owner’s September 25 report. Reconcile the saved draft with the final package and confirm macOS-only Unlisted Distribution. The owner committed to supplying a dedicated, spending-capped OpenRouter key privately through Dashboard **Password**, but actual supply remains unconfirmed. Successful use of the owner’s AI access in the local demo does not itself provide reviewer access. Confirm the dedicated key works with **Claude Sonnet 4.6** in native **Settings → AI** and stays usable throughout review. No credentials belong in public assets, instructions text, or the repository.
 5. **First-release production/manual checks:** signed macOS app + Store-installed extension, URI cold launch registration, Chrome browser restart, and update/session behavior remain unrun. Complete the applicable macOS manual checklist before publication.
 6. **Human trust-boundary review:** review the documented profile-wide pairing credential and same-user local-process trust model before broad launch.
 
