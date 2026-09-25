@@ -171,7 +171,7 @@ export function adoptStoredApplications() {
   notify();
 }
 
-function save() {
+function save(throwOnFailure = false) {
   // Writes during a destructive backup import are blocked centrally by
   // appStorage's restore guard (which replays this write if the restore fails),
   // so there is no per-writer suspension check here.
@@ -184,6 +184,7 @@ function save() {
       + 'space (delete resumes you no longer need) and try again.',
       { once: true },
     );
+    if (throwOnFailure) throw e;
   }
 }
 
@@ -206,6 +207,7 @@ export function getApplication(id) {
  * entry's `at`, so history stays honest — but is ignored for 'prepared'
  * drafts, which have no appliedAt at all. createdAt/updatedAt always reflect
  * when the record itself was created, never the backdated date.
+ * Strict callers can opt into synchronous write errors, then await appStorage.flush().
  */
 export function addApplication({
   variantId,
@@ -215,7 +217,7 @@ export function addApplication({
   status = 'prepared',
   notes = '',
   appliedAt,
-} = {}) {
+} = {}, { throwOnFailure = false } = {}) {
   const now = new Date().toISOString();
   const safeStatus = APPLICATION_STATUSES.includes(status) ? status : 'prepared';
   const appliedStamp = safeStatus === 'prepared' ? null : (appliedAt || now);
@@ -233,7 +235,14 @@ export function addApplication({
     notes,
   };
   applications.unshift(app);
-  save();
+  try {
+    save(throwOnFailure);
+  } catch (error) {
+    // A strict caller must be able to retry a rejected synchronous write
+    // without the next save also persisting this unsuccessful first attempt.
+    applications = applications.filter((entry) => entry !== app);
+    throw error;
+  }
   notify();
   return app;
 }

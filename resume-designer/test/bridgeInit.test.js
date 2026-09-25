@@ -138,3 +138,31 @@ describe('native pairing request wiring', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('bridge_respond', { id: 1, status: 202, body: '{"pending":true}' });
   });
 });
+
+describe('native save durability wiring', () => {
+  it.each([
+    ['/applications', { variantId: 'v-1', title: 'Engineer' }],
+    ['/profile/answers', { question: 'Notice period?', answer: 'Two weeks' }],
+  ])('does not send a successful native response for %s when disk flush fails', async (path, payload) => {
+    const { getVariants } = await import('../src/persistence.js');
+    getVariants.mockReturnValue({ 'v-1': { id: 'v-1', name: 'Resume' } });
+    const { addApplication } = await import('../src/applications.js');
+    const { saveLearnedAnswer } = await import('../src/learnedAnswers.js');
+    addApplication.mockReturnValue({ id: 'app-1' });
+    saveLearnedAnswer.mockReturnValue({ id: 'answer-1' });
+    await (await import('../src/bridge.js')).initBridge();
+    const handler = mocks.listen.mock.calls.find(([event]) => event === 'bridge:request')[1];
+    const authorization = `Bearer ${mocks.storage.get(TOKEN_KEY)}`;
+    await handler({ payload: { id: 1, method: 'GET', path: '/resumes', authorization } });
+    const { profileContextId } = JSON.parse(mocks.invoke.mock.calls.at(-1)[1].body);
+    mocks.flush.mockResolvedValueOnce(false);
+    await handler({ payload: {
+      id: 2, method: 'POST', path, authorization,
+      body: JSON.stringify({ profileContextId, ...payload }),
+    } });
+    const [command, response] = mocks.invoke.mock.calls.at(-1);
+    expect(command).toBe('bridge_respond');
+    expect(response).toMatchObject({ id: 2, status: 507 });
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'storage_full' });
+  });
+});

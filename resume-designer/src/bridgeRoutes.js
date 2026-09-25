@@ -72,6 +72,19 @@ export function createBridgeRouter(deps) {
   let authorizationGeneration = 0;
   let pendingRevocations = 0;
 
+  async function persistMutation(write, message) {
+    try {
+      if (typeof deps.flush !== 'function') throw new Error('Storage is unavailable');
+      // An overlapping answer upsert mutates the same cached object. Keep this
+      // response bound to the write being flushed, not a later unsaved edit.
+      const result = structuredClone(write());
+      if (await deps.flush() !== true) throw new Error('Storage write did not reach disk');
+      return result;
+    } catch (cause) {
+      throw Object.assign(new Error(message, { cause }), { status: 507, code: 'storage_full' });
+    }
+  }
+
   return async function handleBridgeRequest({ method, path, authorization, body }) {
     if (method === 'GET' && path === '/health') {
       return json(200, {
@@ -279,7 +292,7 @@ export function createBridgeRouter(deps) {
         const variant = findVariant(deps.getVariants(), variantId);
         if (!variant) return json(404, { error: `no resume with id ${variantId}` });
         assertAuthorized();
-        const application = deps.addApplication({
+        const application = await persistMutation(() => deps.addApplication({
           variantId,
           variantName: variant.name,
           jobSnapshot: {
@@ -288,7 +301,9 @@ export function createBridgeRouter(deps) {
           },
           status: 'applied',
           notes: typeof parsed.notes === 'string' ? parsed.notes : '',
-        });
+        }, { throwOnFailure: true }), 'Could not save the application');
+        assertAuthorized();
+        if (deps.writesSuspended?.()) return importInProgress();
         return json(201, { application });
       }
 
@@ -300,7 +315,12 @@ export function createBridgeRouter(deps) {
         const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
         if (!question || !answer) return json(400, { error: 'question and answer are required' });
         assertAuthorized();
-        const saved = deps.saveLearnedAnswer(question, answer);
+        const saved = await persistMutation(
+          () => deps.saveLearnedAnswer(question, answer, { throwOnFailure: true }),
+          'Could not save the reusable answer',
+        );
+        assertAuthorized();
+        if (deps.writesSuspended?.()) return importInProgress();
         return json(201, { answer: saved });
       }
 

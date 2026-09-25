@@ -17,6 +17,7 @@ function makeDeps(overrides = {}) {
     getLearnedAnswers: () => [{ id: 'ans-1', question: 'Notice period?', answer: '4 weeks' }],
     addApplication: vi.fn((fields) => ({ id: 'app-1', ...fields })),
     saveLearnedAnswer: vi.fn((q, a) => ({ id: 'ans-2', question: q, answer: a })),
+    flush: async () => true,
     complete: vi.fn(async () => 'ai says hi'),
     getAiModels: vi.fn(() => ({ models: [{ id: 'vendor/chosen', name: 'Chosen model' }], defaults: { mapping: 'vendor/chosen', analysis: 'vendor/chosen', tailoring: 'vendor/chosen' }, autoFallback: false })),
     claimPairing: vi.fn(async () => ({ status: 200, body: { token: 'tok-123' } })),
@@ -390,7 +391,7 @@ describe('POST /applications', () => {
       jobSnapshot: { title: 'Staff Engineer', company: 'Acme' },
       status: 'applied',
       notes: 'via extension',
-    });
+    }, { throwOnFailure: true });
     expect(res.body.application.id).toBe('app-1');
   });
   it('400s a missing variantId and 404s an unknown one', async () => {
@@ -435,7 +436,7 @@ describe('POST /profile/answers', () => {
       body: JSON.stringify({ profileContextId: 'context-1', question: 'Notice period?', answer: '4 weeks' }),
     });
     expect(res.status).toBe(201);
-    expect(deps.saveLearnedAnswer).toHaveBeenCalledWith('Notice period?', '4 weeks');
+    expect(deps.saveLearnedAnswer).toHaveBeenCalledWith('Notice period?', '4 weeks', { throwOnFailure: true });
   });
   it('400s empty question or answer', async () => {
     for (const body of [

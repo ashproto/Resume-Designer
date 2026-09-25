@@ -26,7 +26,7 @@ export function normalizeQuestion(q) {
     .trim();
 }
 
-function save() {
+function save(throwOnFailure = false) {
   // Writes during a destructive backup import are blocked centrally by
   // appStorage's restore guard, so there is no per-writer suspension check here.
   try {
@@ -38,6 +38,7 @@ function save() {
       + 'space (delete resumes you no longer need) and try again.',
       { once: true },
     );
+    if (throwOnFailure) throw e;
   }
 }
 
@@ -117,8 +118,11 @@ export function getAllLearnedAnswers() {
   return answers.slice();
 }
 
-/** Upsert by normalized question. Throws on empty question/answer. */
-export function saveLearnedAnswer(question, answer) {
+/**
+ * Upsert by normalized question. Throws on empty question/answer.
+ * Strict callers opt into synchronous write errors, then await appStorage.flush().
+ */
+export function saveLearnedAnswer(question, answer, { throwOnFailure = false } = {}) {
   const q = String(question ?? '').trim();
   const a = String(answer ?? '').trim();
   if (!q) throw new Error('learned answer needs a question');
@@ -127,15 +131,26 @@ export function saveLearnedAnswer(question, answer) {
   const now = new Date().toISOString();
   const existing = answers.find((e) => e.normalized === normalized);
   if (existing) {
+    const previous = { ...existing };
     existing.question = q;
     existing.answer = a;
     existing.updatedAt = now;
-    save();
+    try {
+      save(throwOnFailure);
+    } catch (error) {
+      Object.assign(existing, previous);
+      throw error;
+    }
     return existing;
   }
   const entry = { id: generateId('ans'), question: q, normalized, answer: a, createdAt: now, updatedAt: now };
   answers.push(entry);
-  save();
+  try {
+    save(throwOnFailure);
+  } catch (error) {
+    answers = answers.filter((answer) => answer !== entry);
+    throw error;
+  }
   return entry;
 }
 

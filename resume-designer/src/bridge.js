@@ -180,6 +180,7 @@ export async function initBridge({ profileId = null } = {}) {
     getLearnedAnswers: getAllLearnedAnswers,
     addApplication,
     saveLearnedAnswer,
+    flush: () => appStorage.flush(),
     complete: completeForBridge,
     getAiModels: getCompanionModels,
     exportVariantPdf,
