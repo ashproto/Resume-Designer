@@ -51,7 +51,7 @@
       <div class="intro">
         <p class="eyebrow">Your information</p>
         <h1>Privacy policy</h1>
-        <p class="date">Updated <time datetime="2026-09-22">September 22, 2026</time></p>
+        <p class="date">Updated <time datetime="2026-09-25">September 25, 2026</time></p>
       </div>
       <nav class="contents" aria-label="Policy contents">
         <p>In this policy</p>
@@ -60,6 +60,7 @@
       <li><a href="#your-information-on-your-device">Your information on your device</a></li>
       <li><a href="#icloud-sync">iCloud sync</a></li>
       <li><a href="#optional-ai-assistance">Optional AI assistance</a></li>
+      <li><a href="#chrome-companion-extension">Chrome companion extension</a></li>
       <li><a href="#your-api-key">Your API key</a></li>
       <li><a href="#fonts-model-lists-and-updates">Fonts, model lists, and updates</a></li>
       <li><a href="#export-retention-and-deletion">Export, retention, and deletion</a></li>
@@ -70,7 +71,7 @@
       <article aria-label="On Paper privacy policy">
     <section aria-labelledby="about-this-policy">
       <h2 id="about-this-policy">About this policy</h2>
-      <p>On Paper is developed by Ash Shah. This policy covers the On Paper app and its project website. You do not need an On Paper account to use the app. The developer does not operate a server that receives your career documents. Some features connect to the outside services described below.</p>
+      <p>On Paper is developed by Ash Shah. On Paper Companion is published by HyperBuild, Inc. This policy covers the On Paper app, On Paper Companion extension, and project website. You do not need an On Paper account to use the app. The developer does not operate a server that receives your career documents. Some features connect to the outside services described below.</p>
     </section>
 
     <section aria-labelledby="your-information-on-your-device">
@@ -90,7 +91,17 @@
       <p>AI assistance uses your OpenRouter API key. Before the first AI request on a device, the app asks for permission to share information with OpenRouter and the model providers it routes to. Depending on the feature, a request can include your message and conversation, resume, career profile and contact details, job descriptions, interview answers, or text extracted from an imported file. These services use that information to produce the result you requested.</p>
       <p>OpenRouter forwards requests to a model provider. Automatic fallback can send the request to a different model or provider when the selected one is unavailable. Enabling web search also allows OpenRouter’s search service to process search queries derived from the request. Outside services receive connection and request information, such as your IP address, as part of these requests.</p>
       <p>OpenRouter and model providers have their own retention, training, security, and deletion policies. Those practices can vary by provider and by your OpenRouter account settings. On Paper does not promise that every request has zero retention or is excluded from model training. Review OpenRouter’s policy at <a href="https://openrouter.ai/privacy">https://openrouter.ai/privacy</a> and provider details at <a href="https://openrouter.ai/providers">https://openrouter.ai/providers</a> before sharing sensitive information.</p>
+      <p>To show AI usage and costs, the app stores records with the request time, provider, model, feature, token counts (including cached and reasoning tokens when reported), and cost reported by OpenRouter. These records are saved on your device and may sync through your iCloud account. Usage records do not contain your API key or the text of your prompts and answers; chats and documents are stored separately as described above.</p>
       <p>You can withdraw permission for future AI requests in Settings. Removing your OpenRouter key also prevents new AI requests from this installation. These choices do not recall information already sent or erase a provider’s copies. Editing and exporting your documents remain available without AI.</p>
+    </section>
+
+    <section aria-labelledby="chrome-companion-extension">
+      <h2 id="chrome-companion-extension">Chrome companion extension</h2>
+      <p>On Paper Companion complies with the Chrome Web Store User Data Policy, including its Limited Use requirements. Information is used and transferred only for the disclosed application-assistance features. It is not sold, used for advertising, or used for credit or lending decisions. The developer has no access to your application data through an On Paper server.</p>
+      <p>On Paper Companion is the optional Chrome extension. Before connecting or processing page data, it asks you to accept a disclosure. When you request a scan, it reads the selected application’s address, compact form descriptors, and job context. The full tab address, including any query string and fragment, stays temporarily in extension memory to check that filling targets the reviewed tab and address. It is not saved to storage, included in application logs, or sent to the app or AI provider. A separate origin-and-path address is used for job context comparisons inside the extension. URL credentials, raw page HTML, and live DOM nodes are not sent to the app or AI provider. Password fields are excluded. Sensitive questions, including demographics, disability, veteran status, work authorization, and compensation, remain manual on the application page and are excluded from AI mapping, answer saving, and filling.</p>
+      <p>The extension communicates with your running desktop app over an authenticated connection on your own computer. AI suggestions, fit analysis, and tailoring can send the selected resume, profile, saved answers, supported field descriptors, and job context through the app to OpenRouter and the selected or fallback provider. The application URL is not included in those AI requests. Your API key stays in the app and is sent to OpenRouter to authorize requests; the extension does not receive it.</p>
+      <p>Choosing Fill sends the values you reviewed and any reviewed resume PDF to the application website, which may save edits or upload a file immediately. The extension never activates the final Submit button. Answers and application records you choose to save are stored in On Paper and may sync through your iCloud account as described above.</p>
+      <p>The pairing credential is held in memory-backed Chrome session storage, restricted to trusted extension contexts, and is cleared on browser restart or extension reload, update, or disable. The disclosure choice is stored locally in Chrome. Disconnect clears this browser’s credential, disclosure choice, and current review and asks the running app to revoke existing companion connections. If the app is unreachable, other connections are not revoked; reconnect and disconnect while the app is running. Disconnecting does not erase saved app records or recall data already sent to an application website or AI provider.</p>
     </section>
 
     <section aria-labelledby="your-api-key">
@@ -114,6 +125,7 @@
 
     <section aria-labelledby="website-and-support">
       <h2 id="website-and-support">Website and support</h2>
+      <p>For On Paper Companion support, email <a href="mailto:support@hyperbuild.com">support@hyperbuild.com</a>. Do not send API keys or pairing tokens.</p>
       <p>The project website is hosted by GitHub Pages. Its main page uses Google Fonts and saves your theme preference in your browser. This privacy page uses system fonts. The hosting and font services receive ordinary website request information; the website does not upload your app documents or include an analytics script.</p>
       <p>For questions about this policy or a privacy concern, contact the project through <a href="https://github.com/ashproto/Resume-Designer/issues">https://github.com/ashproto/Resume-Designer/issues</a>. GitHub issues and discussions are public: do not post API keys, resumes, or other private information. Information you choose to post is visible to the project maintainer and others and is handled under GitHub’s terms and privacy policy. If your request needs private details, ask for a private contact route without posting those details.</p>
     </section>

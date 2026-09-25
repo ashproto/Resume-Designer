@@ -314,12 +314,13 @@ export function setCurrentVariantId(id) {
 }
 
 // Save a variant
-export function saveVariant(id, name, data) {
+export function saveVariant(id, name, data, metadata = {}) {
   const storage = loadFromStorage();
   const existingVariant = isDeletedVariant(storage.variants[id]) ? null : storage.variants[id];
   const now = new Date().toISOString();
-  
-  storage.variants[id] = {
+  const companionRequest = metadata.companionRequest ?? existingVariant?.companionRequest;
+
+  const nextVariant = {
     id,
     name,
     data,
@@ -329,6 +330,17 @@ export function saveVariant(id, name, data) {
     jobAnalysis: existingVariant?.jobAnalysis || null,
     analysisUpdatedAt: existingVariant?.analysisUpdatedAt || null
   };
+  if (
+    companionRequest
+    && typeof companionRequest.requestId === 'string'
+    && typeof companionRequest.fingerprint === 'string'
+  ) {
+    nextVariant.companionRequest = {
+      requestId: companionRequest.requestId,
+      fingerprint: companionRequest.fingerprint,
+    };
+  }
+  storage.variants[id] = nextVariant;
   // Report whether the write actually landed. saveToStorage swallows
   // QuotaExceededError (full localStorage), so without this signal a caller
   // can't tell a saved variant from one that silently vanished.

@@ -200,7 +200,10 @@ fn extract_keys(source_leveldb: &Path) -> Result<BTreeMap<String, String>, Strin
         let _ = fs::remove_file(&lock);
     }
 
-    let opts = Options { create_if_missing: false, ..Default::default() };
+    let opts = Options {
+        create_if_missing: false,
+        ..Default::default()
+    };
 
     let mut db = DB::open(&staged, opts).map_err(|e| format!("leveldb open failed: {e}"))?;
     let mut iter = db
@@ -316,7 +319,8 @@ pub struct MigrationEnvelope {
 #[tauri::command]
 pub async fn import_legacy_electron_data() -> Result<MigrationEnvelope, String> {
     let src = find_existing().ok_or_else(|| {
-        "No legacy Electron data directory found (already migrated or no prior install).".to_string()
+        "No legacy Electron data directory found (already migrated or no prior install)."
+            .to_string()
     })?;
     let keys = extract_keys(&src)?;
     if keys.is_empty() {

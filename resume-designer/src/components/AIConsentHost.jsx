@@ -28,6 +28,8 @@ export function AIConsentHost() {
     });
     return () => { setAIConsentPresenter(null); settle.current?.(false); };
   }, []);
+  // Consent is settled; do not leave a modal waiting for an exit-animation event.
+  if (!request) return null;
   return (
     <Dialog open={!!request} onOpenChange={(open) => { if (!open) settle.current?.(false); }}>
       <DialogContent className="glass-card max-w-lg z-[3100]" overlayClassName="z-[3100]">

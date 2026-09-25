@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "On Paper Companion",
+  "version": "0.1.3",
+  "description": "Review and fill job applications with On Paper. Requires On Paper for macOS and your own OpenRouter key for AI.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "Open On Paper Companion",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; connect-src http://127.0.0.1:17872; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:17872/*"
+  ]
+}

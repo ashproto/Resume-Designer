@@ -1,0 +1,261 @@
+name: Chrome extension release
+
+on:
+  workflow_run:
+    workflows: [Release Desktop App]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Chrome Web Store operation
+        required: true
+        default: status-only
+        type: choice
+        options:
+          - status-only
+          - staged
+          - automatic
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-web-store-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build exact Store package
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.package.outputs.artifact_name }}
+      filename: ${{ steps.package.outputs.filename }}
+      release_required: ${{ steps.change.outputs.release_required }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Decide whether the Store package changed
+        id: change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "release_required=true" >> "${GITHUB_OUTPUT}"
+          elif previous_tag="$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD^ 2>/dev/null)"; then
+            node extension/scripts/store-version-gate.mjs "${previous_tag}" HEAD >> "${GITHUB_OUTPUT}"
+          else
+            echo "release_required=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Require a compatible completed desktop release
+        if: >-
+          steps.change.outputs.release_required == 'true' &&
+          (github.event_name == 'workflow_run' ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          inputs.mode != 'status-only'))
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            run_id="${UPSTREAM_RUN_ID}"
+          else
+            run_id="$(gh api \
+              "repos/${REPOSITORY}/actions/workflows/release.yml/runs?branch=main&status=completed&head_sha=${HEAD_SHA}&per_page=100" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success") | .id][0] // empty')"
+          fi
+          if [ -z "${run_id}" ]; then
+            echo "::error::No successful desktop release workflow exists for ${HEAD_SHA}."
+            exit 1
+          fi
+          conclusion="$(gh api --paginate "repos/${REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "release") | .conclusion' | tail -n 1)"
+          if [ "${conclusion}" != "success" ]; then
+            echo "::error::The desktop release job did not complete successfully (found: ${conclusion:-missing})."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        if: steps.change.outputs.release_required == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        if: steps.change.outputs.release_required == 'true'
+        run: npm ci
+        working-directory: extension
+
+      - name: Lint
+        if: steps.change.outputs.release_required == 'true'
+        run: npm run lint
+        working-directory: extension
+
+      - name: Unit tests
+        if: steps.change.outputs.release_required == 'true'
+        run: npm test
+        working-directory: extension
+
+      - name: Build and package twice
+        if: steps.change.outputs.release_required == 'true'
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run package:store
+          version="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json')).version")"
+          filename="on-paper-companion-${version}.zip"
+          first_sha="$(sha256sum "artifacts/${filename}" | cut -d ' ' -f 1)"
+          npm run package:store
+          second_sha="$(sha256sum "artifacts/${filename}" | cut -d ' ' -f 1)"
+          test "${first_sha}" = "${second_sha}"
+          unzip -t "artifacts/${filename}"
+          {
+            echo "artifact_name=on-paper-companion-${version}"
+            echo "filename=${filename}"
+            echo "sha256=${second_sha}"
+            echo "version=${version}"
+          } >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Companion extension ${version}"
+            echo "Validated SHA-256: \`${second_sha}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+        working-directory: extension
+
+      - name: Audit production dependencies
+        if: steps.change.outputs.release_required == 'true'
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: extension
+
+      - name: Upload the exact validated ZIP
+        if: steps.change.outputs.release_required == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: extension/artifacts/${{ steps.package.outputs.filename }}
+          if-no-files-found: error
+          retention-days: 30
+
+  submit:
+    name: Submit to Chrome Web Store
+    needs: build
+    if: >-
+      needs.build.outputs.release_required == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      vars.CWS_AUTO_PUBLISH == 'true'))
+    runs-on: ubuntu-latest
+    environment: chrome-web-store
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Download the validated package
+        if: github.event_name == 'workflow_run' || inputs.mode != 'status-only'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: chrome-extension-package
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Verify the downloaded package identity
+        if: github.event_name == 'workflow_run' || inputs.mode != 'status-only'
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
+          PACKAGE_PATH: chrome-extension-package/${{ needs.build.outputs.filename }}
+        run: |
+          set -euo pipefail
+          actual_sha256="$(sha256sum "${PACKAGE_PATH}" | cut -d ' ' -f 1)"
+          if [ "${actual_sha256}" != "${EXPECTED_SHA256}" ]; then
+            echo "::error::Downloaded package digest does not match the validated build artifact."
+            exit 1
+          fi
+          unzip -t "${PACKAGE_PATH}"
+          embedded_version="$(unzip -p "${PACKAGE_PATH}" manifest.json | jq -er '.version')"
+          if [ "${embedded_version}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Downloaded package version does not match the validated manifest version."
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud with GitHub OIDC
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.CWS_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          access_token_lifetime: 900s
+          create_credentials_file: false
+
+      - name: Verify Store authentication and item status
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'status-only'
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          CWS_OPERATION: status
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+        run: node extension/scripts/cws-publish.mjs
+
+      - name: Upload and submit for review
+        if: github.event_name == 'workflow_run' || inputs.mode != 'status-only'
+        id: store
+        shell: bash
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+          CWS_MANIFEST: extension/manifest.json
+          CWS_OPERATION: publish
+          CWS_PACKAGE: chrome-extension-package/${{ needs.build.outputs.filename }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_PUBLISH_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'staged' && 'STAGED_PUBLISH' || 'DEFAULT_PUBLISH' }}
+        run: |
+          set -euo pipefail
+          result="$(node extension/scripts/cws-publish.mjs)"
+          echo "${result}"
+          state="$(printf '%s' "${result}" | jq -er '.state')"
+          reason="$(printf '%s' "${result}" | jq -r '.reason // "submitted"')"
+          {
+            echo "state=${state}"
+            echo "reason=${reason}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Record Store operation outcome
+        if: github.event_name == 'workflow_run' || inputs.mode != 'status-only'
+        run: |
+          {
+            echo "### Companion extension ${{ needs.build.outputs.version }}"
+            echo "Store result: \`${{ steps.store.outputs.state }}\` (${{ steps.store.outputs.reason }})"
+            echo "Store review is asynchronous. Package SHA-256: \`${{ needs.build.outputs.sha256 }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
