@@ -17,10 +17,6 @@ import { storageErrorToast } from './storageToast.js';
 const STORAGE_KEY = 'resume-designer-learned-answers';
 
 let answers = [];
-// A newer failed upsert must not restore a predecessor whose own request was
-// rejected while the newer value was in flight. Weak keys retain no history
-// after the live answer and any pending rollback closures release it.
-const answerWrites = new WeakMap();
 
 /** Lowercase, strip punctuation, collapse whitespace — the upsert key. */
 export function normalizeQuestion(q) {
@@ -126,7 +122,8 @@ export function getAllLearnedAnswers() {
 /**
  * Upsert by normalized question. Throws on empty question/answer.
  * Strict callers opt into synchronous write errors, then await appStorage.flush().
- * registerRollback receives undo and commit callbacks for that durability check.
+ * registerRollback receives an undo callback for that durability check.
+ * The bridge serializes strict saves through their durability checks.
  */
 export function saveLearnedAnswer(question, answer, { throwOnFailure = false, registerRollback } = {}) {
   const q = String(question ?? '').trim();
@@ -153,33 +150,22 @@ export function saveLearnedAnswer(question, answer, { throwOnFailure = false, re
     throw error;
   }
   const written = JSON.stringify(entry);
-  const undo = { previous: existing, rejected: false };
-  if (registerRollback) answerWrites.set(entry, undo);
   registerRollback?.(() => {
-    undo.rejected = true;
     const active = getProfileMapping() === profile;
     if (active && answers.find((value) => value.id === entry.id) !== entry) return false;
     const key = active ? STORAGE_KEY : mapKey(profile, STORAGE_KEY);
     const stored = answersIn(appStorage.getItem(key));
     const index = stored?.findIndex((value) => value.id === entry.id) ?? -1;
     if (index < 0 || JSON.stringify(stored[index]) !== written) return false;
-    let previous = undo.previous;
-    while (previous && answerWrites.get(previous)?.rejected) {
-      previous = answerWrites.get(previous).previous;
-    }
-    if (previous) stored[index] = previous;
+    if (existing) stored[index] = existing;
     else stored.splice(index, 1);
     appStorage.setItem(key, JSON.stringify(stored));
     if (active) {
-      answers = previous
-        ? answers.map((value) => value === entry ? previous : value)
+      answers = existing
+        ? answers.map((value) => value === entry ? existing : value)
         : answers.filter((value) => value !== entry);
     }
     return true;
-  }, () => {
-    // A durable value is a valid rollback target on its own; release older
-    // versions instead of retaining the entire answer history through it.
-    undo.previous = undefined;
   });
   return entry;
 }

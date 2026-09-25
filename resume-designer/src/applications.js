@@ -246,12 +246,17 @@ export function addApplication({
     applications = applications.filter((entry) => entry !== app);
     throw error;
   }
+  const written = registerRollback ? JSON.stringify(app) : null;
   registerRollback?.(() => {
     const active = getProfileMapping() === profile;
     const current = applications.find((entry) => entry.id === app.id);
-    if (active && current && current !== app) return false;
+    // Native status/note edits mutate in place, so identity alone cannot
+    // distinguish this rejected creation from a newer user change.
+    if (active && current && (current !== app || JSON.stringify(current) !== written)) return false;
     const key = active ? STORAGE_KEY : mapKey(profile, STORAGE_KEY);
     const stored = applicationsIn(appStorage.getItem(key));
+    const storedCurrent = stored?.find((entry) => entry.id === app.id);
+    if (storedCurrent && JSON.stringify(storedCurrent) !== written) return false;
     const remaining = stored?.filter((entry) => entry.id !== app.id);
     const changed = stored && remaining.length !== stored.length;
     // Use the current collection, not a pre-request snapshot: another

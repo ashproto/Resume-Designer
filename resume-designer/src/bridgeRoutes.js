@@ -71,17 +71,16 @@ function pdfFilename(name) {
 export function createBridgeRouter(deps) {
   let authorizationGeneration = 0;
   let pendingRevocations = 0;
+  let saveTail;
 
   async function persistMutation(write, message) {
     let rollback;
-    let commit;
     try {
       if (typeof deps.flush !== 'function') throw new Error('Storage is unavailable');
       // Keep this response bound to the write being flushed, even if a later
       // edit changes a mutable application before storage settles.
-      const result = structuredClone(write((undo, accept) => { rollback = undo; commit = accept; }));
+      const result = structuredClone(write((undo) => { rollback = undo; }));
       if (await deps.flush() !== true) throw new Error('Storage write did not reach disk');
-      commit?.();
       return result;
     } catch (cause) {
       try {
@@ -93,7 +92,9 @@ export function createBridgeRouter(deps) {
     }
   }
 
-  return async function handleBridgeRequest({ method, path, authorization, body }) {
+  async function executeBridgeRequest({ method, path, authorization, body }, authorizationState = {
+    generation: authorizationGeneration, revoking: pendingRevocations > 0,
+  }) {
     if (method === 'GET' && path === '/health') {
       return json(200, {
         ok: true,
@@ -130,9 +131,9 @@ export function createBridgeRouter(deps) {
       return json(401, { error: 'invalid or missing bearer token' });
     }
 
-    const requestGeneration = authorizationGeneration;
     const assertAuthorized = () => {
-      if (requestGeneration !== authorizationGeneration || pendingRevocations > 0
+      if (authorizationState.generation !== authorizationGeneration
+        || authorizationState.revoking || pendingRevocations > 0
         || deps.getToken() !== token) {
         throw Object.assign(new Error('pairing was revoked; connect again to continue'), {
           status: 401, code: 'unauthorized',
@@ -339,5 +340,26 @@ export function createBridgeRouter(deps) {
       if (typeof err?.code === 'string' && err.code) response.code = err.code;
       return json(status, response);
     }
+  }
+
+  return function handleBridgeRequest(request) {
+    if (request.method !== 'POST' || !['/applications', '/profile/answers'].includes(request.path)) {
+      return executeBridgeRequest(request);
+    }
+    // appStorage reads the current cached value when a queued write runs. Keep
+    // each bridge save and its durability check together so another save cannot
+    // replace that value before it reaches disk. All request checks run again
+    // when its turn starts; reads and revocation never wait behind this queue.
+    const authorizationState = {
+      generation: authorizationGeneration, revoking: pendingRevocations > 0,
+    };
+    const execute = () => executeBridgeRequest(request, authorizationState);
+    const response = saveTail ? saveTail.then(execute) : execute();
+    const settled = response.then(() => undefined, () => undefined);
+    saveTail = settled;
+    void settled.then(() => {
+      if (saveTail === settled) saveTail = undefined;
+    });
+    return response;
   };
 }

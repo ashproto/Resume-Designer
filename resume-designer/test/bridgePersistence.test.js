@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBridgeRouter } from '../src/bridgeRoutes.js';
 import { appStorage, initAppStorage, __resetAppStorageForTests, setProfileMapping } from '../src/appStorage.js';
-import { addApplication, getAllApplications, initApplications } from '../src/applications.js';
+import { addApplication, getAllApplications, initApplications, setApplicationStatus, updateApplication } from '../src/applications.js';
 import { saveLearnedAnswer, getAllLearnedAnswers, initLearnedAnswers } from '../src/learnedAnswers.js';
 
 const AUTH = 'Bearer test-token';
@@ -203,6 +203,72 @@ describe.each(ENDPOINTS)('$path durable acknowledgement', (endpoint) => {
       }
     },
   );
+
+  it.each(['token change', 'revocation', 'failed revocation', 'pending failed revocation', 'import', 'profile change'])(
+    'rechecks a queued save after %s without mutating storage',
+    async (change) => {
+      let token = 'test-token';
+      let suspended = false;
+      let release;
+      const pendingWrite = new Promise((resolve) => { release = resolve; });
+      let firstStarted;
+      const started = new Promise((resolve) => { firstStarted = resolve; });
+      let finishRevocation;
+      const pendingRevocation = new Promise((resolve) => { finishRevocation = resolve; });
+      const disk = backend(async (files, key, value) => {
+        firstStarted();
+        await pendingWrite;
+        files.set(key, value);
+      });
+      await initAppStorage({ backend: disk });
+      const deps = {
+        getToken: () => token,
+        profileContextId: 'context-1',
+        getVariants: () => ({ 'v-1': { id: 'v-1', name: 'Resume' } }),
+        addApplication: vi.fn(addApplication),
+        saveLearnedAnswer: vi.fn(saveLearnedAnswer),
+        flush: () => appStorage.flush(),
+        writesSuspended: () => suspended,
+        revokePairing: async () => {
+          if (change === 'pending failed revocation') await pendingRevocation;
+          if (change.includes('failed revocation')) throw new Error('Token rotation failed');
+          token = 'new-token';
+        },
+      };
+      const handle = createBridgeRouter(deps);
+      const first = handle(request(ENDPOINTS[0]));
+      await started;
+      // Reads and revocation must remain available while a save holds the queue.
+      expect((await handle({ method: 'GET', path: '/resumes', authorization: AUTH })).status).toBe(200);
+      const revoke = () => handle({ method: 'POST', path: '/pairing/revoke', authorization: AUTH, body: '{}' });
+      const revoking = change === 'pending failed revocation' ? revoke() : null;
+      const queued = handle(request(endpoint));
+      try {
+        if (change === 'token change') token = 'new-token';
+        else if (change === 'import') suspended = true;
+        else if (change === 'profile change') deps.profileContextId = 'context-2';
+        else if (revoking) {
+          finishRevocation();
+          expect((await revoking).status).toBe(500);
+        } else {
+          expect((await revoke()).status).toBe(change === 'failed revocation' ? 500 : 200);
+        }
+        release();
+        await first;
+        const expectedStatus = change === 'import' ? 503 : change === 'profile change' ? 409 : 401;
+        expect((await queued).status).toBe(expectedStatus);
+        expect(deps.addApplication).toHaveBeenCalledTimes(1);
+        expect(deps.saveLearnedAnswer).not.toHaveBeenCalled();
+        expect(JSON.parse(disk.files.get(ENDPOINTS[0].key))).toHaveLength(1);
+        expect(disk.files.has(ENDPOINTS[1].key)).toBe(false);
+      } finally {
+        release();
+        finishRevocation();
+        await Promise.all([first, queued, revoking]);
+        await appStorage.flush();
+      }
+    },
+  );
 });
 
 it('does not resurrect a rejected application during an unrelated later flush', async () => {
@@ -268,6 +334,36 @@ it('restores the previous answer after a rejected queued upsert', async () => {
   expect(JSON.parse(disk.files.get(ENDPOINTS[1].key))).toEqual([original]);
 });
 
+it.each(['notes', 'status'])('preserves a newer native application %s edit when the bridge save is rejected', async (field) => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let release;
+  const pendingWrite = new Promise((resolve) => { release = resolve; });
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  let attempts = 0;
+  const disk = backend(async (files, key, value) => {
+    attempts += 1;
+    if (attempts <= 2) {
+      firstStarted();
+      await pendingWrite;
+      throw new Error('Write rejected');
+    }
+    files.set(key, value);
+  });
+  await initAppStorage({ backend: disk });
+  const rejected = router()(request(ENDPOINTS[0]));
+  await started;
+  const application = getAllApplications()[0];
+  const newer = field === 'notes'
+    ? updateApplication(application.id, { notes: 'Updated in On Paper' })
+    : setApplicationStatus(application.id, 'interview');
+  release();
+  expect((await rejected).status).toBe(507);
+  await appStorage.flush();
+  expect(getAllApplications()).toEqual([newer]);
+  expect(JSON.parse(disk.files.get(ENDPOINTS[0].key))).toEqual([newer]);
+});
+
 it.each(['Six weeks', 'Two weeks'])('preserves the newer answer %s when an older queued upsert is rejected', async (answer) => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -329,7 +425,7 @@ it.each([undefined, 'Four weeks'])('does not restore an earlier rejected answer 
   expect(JSON.parse(disk.files.get(endpoint.key))).toEqual(original ? [original] : []);
 });
 
-it('preserves a newer acknowledged answer when an earlier failure is reported later', async () => {
+it('waits for an earlier rollback before accepting the next queued answer', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   let rejectWrites = true;
   const disk = backend(async (files, key, value) => {
@@ -356,10 +452,15 @@ it('preserves a newer acknowledged answer when an earlier failure is reported la
   const rejected = handle(request(endpoint));
   await failed;
   rejectWrites = false;
-  const accepted = await handle(request({ ...endpoint, payload: { ...endpoint.payload, answer: 'Six weeks' } }));
-  expect(accepted.status).toBe(201);
-  reportFailure();
+  const next = handle(request({ ...endpoint, payload: { ...endpoint.payload, answer: 'Six weeks' } }));
+  try {
+    expect(getAllLearnedAnswers()[0].answer).toBe('Two weeks');
+  } finally {
+    reportFailure();
+  }
   expect((await rejected).status).toBe(507);
+  const accepted = await next;
+  expect(accepted.status).toBe(201);
   expect(getAllLearnedAnswers()).toEqual([accepted.body.answer]);
   expect(JSON.parse(disk.files.get(endpoint.key))).toEqual([accepted.body.answer]);
 });
@@ -444,7 +545,7 @@ it('preserves the previous answer when a strict upsert hits the localStorage quo
   expect(getAllLearnedAnswers()[0].answer).toBe('Four weeks');
 });
 
-it('does not acknowledge a later answer whose disk write is still pending', async () => {
+it.each(['same turn', 'after first starts'])('persists each overlapping answer before acknowledging it (%s)', async (timing) => {
   let firstStarted;
   const started = new Promise((resolve) => { firstStarted = resolve; });
   let releaseFirst;
@@ -466,7 +567,7 @@ it('does not acknowledge a later answer whose disk write is still pending', asyn
   const handle = router();
   const endpoint = ENDPOINTS[1];
   const first = handle(request(endpoint));
-  await started;
+  if (timing === 'after first starts') await started;
   const second = handle(request({ ...endpoint, payload: { ...endpoint.payload, answer: 'Four weeks' } }));
   try {
     releaseFirst();
