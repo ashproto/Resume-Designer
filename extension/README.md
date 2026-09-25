@@ -100,6 +100,17 @@ the extension clears the old workflow, returns to pairing, and requires the
 token from the restored install. Ordinarily the approval flow replaces it
 without manual copying.
 
+Production automatic pairing accepts only the Chrome Web Store extension ID
+`keggfbelidgpjiapcbgkjidenhdjmega`. The app binds the request and claim to that
+browser origin. Normal frontend/native development builds additionally allow
+this workspace’s unpacked ID, `jejabnlfgdapamjoechlgmgpmldekffo`; other unpacked
+IDs use explicit manual pairing. A native debug build with a production-built
+frontend does not enable the frontend development allowlist.
+
+Disconnect aborts active extension mutation requests and invalidates pending
+app writes before they commit. A completed save is preserved; a tailoring
+result still waiting on AI cannot create a resume after revocation.
+
 ## Review and fill an application
 
 1. Choose **Autofill**, then choose **Resume to fill from** and **AI model** within that workflow. The model picker initially shows the actual model configured in On Paper; choosing a different model applies to this companion session without changing app defaults. The API key stays in On Paper. If automatic fallback is enabled there, it still applies. A failed model-list request shows its cause and a retry action.

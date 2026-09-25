@@ -69,6 +69,9 @@ function pdfFilename(name) {
 }
 
 export function createBridgeRouter(deps) {
+  let authorizationGeneration = 0;
+  let pendingRevocations = 0;
+
   return async function handleBridgeRequest({ method, path, authorization, body }) {
     if (method === 'GET' && path === '/health') {
       return json(200, {
@@ -106,6 +109,16 @@ export function createBridgeRouter(deps) {
       return json(401, { error: 'invalid or missing bearer token' });
     }
 
+    const requestGeneration = authorizationGeneration;
+    const assertAuthorized = () => {
+      if (requestGeneration !== authorizationGeneration || pendingRevocations > 0
+        || deps.getToken() !== token) {
+        throw Object.assign(new Error('pairing was revoked; connect again to continue'), {
+          status: 401, code: 'unauthorized',
+        });
+      }
+    };
+
     let parsed = null;
     if (method === 'POST') {
       try {
@@ -120,8 +133,16 @@ export function createBridgeRouter(deps) {
 
     try {
       if (method === 'POST' && path === '/pairing/revoke') {
-        await deps.revokePairing();
-        return json(200, { ok: true });
+        // Invalidate pending operations even if durable rotation fails and the
+        // old token is restored. Only a new request can use that restored token.
+        authorizationGeneration += 1;
+        pendingRevocations += 1;
+        try {
+          await deps.revokePairing();
+          return json(200, { ok: true });
+        } finally {
+          pendingRevocations -= 1;
+        }
       }
 
       // A destructive import updates appStorage before the success-modal reload,
@@ -239,7 +260,7 @@ export function createBridgeRouter(deps) {
           resumeId: parsed.resumeId,
           requestId: parsed.requestId,
           job: parsed.job,
-        });
+        }, { assertAuthorized });
         if (deps.writesSuspended?.()) return importInProgress();
         return json(result.created ? 201 : 200, {
           profileId: deps.profileId,
@@ -257,6 +278,7 @@ export function createBridgeRouter(deps) {
         if (!variantId) return json(400, { error: 'variantId is required' });
         const variant = findVariant(deps.getVariants(), variantId);
         if (!variant) return json(404, { error: `no resume with id ${variantId}` });
+        assertAuthorized();
         const application = deps.addApplication({
           variantId,
           variantName: variant.name,
@@ -277,6 +299,7 @@ export function createBridgeRouter(deps) {
         const question = typeof parsed.question === 'string' ? parsed.question.trim() : '';
         const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
         if (!question || !answer) return json(400, { error: 'question and answer are required' });
+        assertAuthorized();
         const saved = deps.saveLearnedAnswer(question, answer);
         return json(201, { answer: saved });
       }

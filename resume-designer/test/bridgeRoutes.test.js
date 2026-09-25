@@ -315,7 +315,7 @@ describe('purpose-specific companion AI routes', () => {
       resumeId: 'v-1',
       requestId: '550e8400-e29b-41d4-a716-446655440000',
       job,
-    });
+    }, { assertAuthorized: expect.any(Function) });
   });
 
   it.each(['/ai/job-fit', '/ai/tailored-resume'])('409s stale context before %s work', async (path) => {
@@ -706,5 +706,30 @@ describe('POST /pairing/request', () => {
       method: 'POST', path: '/pairing/request', body: '{}',
     })).toMatchObject({ status: 503 });
     expect(requestPairing).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('mutation authorization during durable revocation', () => {
+  it.each([
+    ['/applications', { variantId: 'v-1', company: 'Example' }, 'addApplication'],
+    ['/profile/answers', { question: 'Notice period?', answer: 'Two weeks' }, 'saveLearnedAnswer'],
+  ])('blocks %s until token rotation has finished', async (path, payload, writer) => {
+    let token = 'tok-123';
+    const durability = deferred();
+    const deps = makeDeps({
+      getToken: () => token,
+      revokePairing: vi.fn(async () => { token = 'new-token'; await durability.promise; }),
+    });
+    const handle = createBridgeRouter(deps);
+    const revoke = handle({ method: 'POST', path: '/pairing/revoke', authorization: AUTH, body: '{}' });
+    const request = { method: 'POST', path, authorization: 'Bearer new-token',
+      body: JSON.stringify({ profileContextId: 'context-1', ...payload }) };
+    expect(await handle(request)).toMatchObject({ status: 401, body: { code: 'unauthorized' } });
+    expect(deps[writer]).not.toHaveBeenCalled();
+    durability.resolve();
+    expect((await revoke).status).toBe(200);
+    expect((await handle(request)).status).toBe(201);
+    expect(deps[writer]).toHaveBeenCalledOnce();
   });
 });

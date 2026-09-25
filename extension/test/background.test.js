@@ -1419,9 +1419,14 @@ describe('AI model and narrative context transport', () => {
     const router = createBridgeRouter({ version: '1.0.0', profileId: 'profile-1', profileContextId: 'context-1',
       getToken: () => 'native-install-token', getVariants: () => ({}), requestPairing: pairing.request, claimPairing: pairing.claim });
     const { chromeApi, getStoredToken } = createChrome();
+    chromeApi.runtime.id = 'keggfbelidgpjiapcbgkjidenhdjmega';
     const fetchImpl = vi.fn(async (url, options) => {
+      // Rust derives the claim client ID from the validated browser Origin.
+      const body = url.endsWith('/pairing/claim')
+        ? JSON.stringify({ ...JSON.parse(options.body), clientId: chromeApi.runtime.id })
+        : options.body;
       const response = await router({ method: options.method, path: new URL(url).pathname,
-        authorization: options.headers.get('Authorization'), body: options.body });
+        authorization: options.headers.get('Authorization'), body });
       return jsonResponse(response.body, { status: response.status });
     });
     const service = createBackgroundService({ chromeApi, fetchImpl, waitImpl: () => nextPoll.promise, pollAttempts: 3 });
@@ -1436,5 +1441,55 @@ describe('AI model and narrative context transport', () => {
     expect(ensureToken).toHaveBeenCalledOnce();
     expect(getStoredToken()).toBe('native-install-token');
     expect(chromeApi.tabs.create).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('disconnecting pending profile mutations', () => {
+  const mutations = [
+    ['answer.save', '/profile/answers', { question: 'Notice period?', answer: 'Two weeks' }],
+    ['application.log', '/applications', { variantId: 'resume-1', company: 'Example' }],
+    ['resume.tailor', '/ai/tailored-resume', { resumeId: 'resume-1', requestId: 'request-id', job: { description: 'Build products' } }],
+  ];
+
+  it.each(mutations)('does not send %s after disconnect during its profile preflight', async (type, path, payload) => {
+    const preflight = deferred();
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/pairing/revoke')) return jsonResponse({ ok: true });
+      if (url.endsWith('/resumes')) return preflight.promise;
+      return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1' });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    const operation = service.handleMessage({ type, profileContextId: 'context-1', ...payload });
+    const outcome = operation.catch((error) => error);
+    await vi.waitFor(() => expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/resumes'))).toBe(true));
+    await service.handleMessage({ type: 'pairing.disconnect' });
+    await service.handleMessage({ type: 'privacy.accept', accepted: true });
+    await chromeApi.storage.session.set({ bridgeToken: 'new-session' });
+    preflight.resolve(jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] }));
+    expect(await outcome).toMatchObject({ code: 'not_paired', retryable: false });
+    expect(fetchImpl.mock.calls.some(([url]) => url.endsWith(path))).toBe(false);
+  });
+
+  it.each(mutations)('aborts in-flight %s when another panel disconnects', async (type, path, payload) => {
+    const response = deferred();
+    const { chromeApi } = createChrome({ token: 'paired' });
+    let requestSignal;
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/pairing/revoke')) return jsonResponse({ ok: true });
+      if (url.endsWith(path)) { requestSignal = options.signal; return response.promise; }
+      return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    const operation = service.handleMessage({ type, profileContextId: 'context-1', ...payload });
+    const outcome = operation.catch((error) => error);
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
+    await service.handleMessage({ type: 'pairing.disconnect' });
+    response.resolve(jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', created: true }));
+    expect(requestSignal.aborted).toBe(true);
+    expect(await outcome).toMatchObject({ code: 'not_paired', retryable: false });
   });
 });

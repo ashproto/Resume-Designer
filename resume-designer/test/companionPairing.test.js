@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createCompanionPairing } from '../src/companionPairing.js';
 
+const CLIENT_ID = 'keggfbelidgpjiapcbgkjidenhdjmega';
 const REQUEST_ID = 'abcdefghijklmnopqrstuv';
 const VERIFIER = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFG';
 
@@ -17,7 +18,7 @@ async function pairUrl(overrides = {}) {
   const challenge = overrides.challenge ?? await challengeFor(verifier);
   const protocolVersion = overrides.protocolVersion ?? '2';
   return `resume-designer://companion/pair?protocolVersion=${protocolVersion}`
-    + `&requestId=${requestId}&challenge=${challenge}&clientId=test-extension`;
+    + `&requestId=${requestId}&challenge=${challenge}&clientId=${overrides.clientId ?? CLIENT_ID}`;
 }
 
 function deferred() {
@@ -25,6 +26,79 @@ function deferred() {
   const promise = new Promise((resolvePromise) => { resolve = resolvePromise; });
   return { promise, resolve };
 }
+
+describe('companion pairing identity', () => {
+  it('rejects an unrelated extension deep link before requesting native consent', async () => {
+    const confirmPairing = vi.fn(async () => true);
+    const pairing = createCompanionPairing({ confirmPairing });
+    expect(await pairing.registerUrl(await pairUrl({ clientId: 'b'.repeat(32) }))).toBeNull();
+    expect(confirmPairing).not.toHaveBeenCalled();
+    expect(pairing.pendingCount()).toBe(0);
+  });
+
+  it('rejects an unrelated extension HTTP request before requesting native consent', async () => {
+    const confirmPairing = vi.fn(async () => true);
+    const pairing = createCompanionPairing({ confirmPairing });
+    expect(pairing.request({
+      protocolVersion: '2', requestId: REQUEST_ID,
+      challenge: await challengeFor(VERIFIER), clientId: 'b'.repeat(32),
+    })).toMatchObject({ status: 403, body: { code: 'untrusted_pairing_client' } });
+    expect(confirmPairing).not.toHaveBeenCalled();
+    expect(pairing.pendingCount()).toBe(0);
+  });
+});
+
+describe('companion pairing client binding', () => {
+  it.each([false, true])('allows the unpacked client only in a development frontend: %s', async (development) => {
+    vi.stubEnv('DEV', development);
+    try {
+      const clientId = 'jejabnlfgdapamjoechlgmgpmldekffo';
+      const confirmPairing = vi.fn(async () => true);
+      const pairing = createCompanionPairing({ confirmPairing, ensureToken: () => 'install-token' });
+      const registration = await pairing.registerUrl(await pairUrl({ clientId }));
+      if (development) {
+        expect(registration).toEqual({ kind: 'pair', requestId: REQUEST_ID });
+        expect(await pairing.claim({ clientId, requestId: REQUEST_ID, verifier: VERIFIER }))
+          .toMatchObject({ status: 200 });
+      } else {
+        expect(registration).toBeNull();
+        expect(pairing.request({
+          protocolVersion: '2', requestId: REQUEST_ID, challenge: await challengeFor(VERIFIER), clientId,
+        })).toMatchObject({ status: 403 });
+        expect(confirmPairing).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('binds an approved cold-link grant and duplicate requests to one trusted client', async () => {
+    vi.stubEnv('DEV', true);
+    try {
+      const otherClientId = 'jejabnlfgdapamjoechlgmgpmldekffo';
+      const confirmPairing = vi.fn(async () => true);
+      const ensureToken = vi.fn(() => 'install-token');
+      const pairing = createCompanionPairing({ confirmPairing, ensureToken });
+      await pairing.registerUrl(await pairUrl());
+      expect(await pairing.registerUrl(await pairUrl({ clientId: otherClientId }))).toBeNull();
+      expect(pairing.request({
+        protocolVersion: '2', requestId: REQUEST_ID,
+        challenge: await challengeFor(VERIFIER), clientId: otherClientId,
+      })).toMatchObject({ status: 409 });
+      for (const clientId of [undefined, 'b'.repeat(32), otherClientId]) {
+        expect(await pairing.claim({ clientId, requestId: REQUEST_ID, verifier: VERIFIER }))
+          .toMatchObject({ status: 404 });
+      }
+      expect(confirmPairing).toHaveBeenCalledOnce();
+      expect(ensureToken).not.toHaveBeenCalled();
+      expect(await pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER }))
+        .toMatchObject({ status: 200, body: { token: 'install-token' } });
+      expect(ensureToken).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe('companion pairing grants', () => {
   it('accepts only exact launch and pair deep-link shapes', async () => {
@@ -56,19 +130,19 @@ describe('companion pairing grants', () => {
 
     const registration = pairing.registerUrl(await pairUrl());
     await vi.waitFor(() => expect(pairing.pendingCount()).toBe(1));
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
       status: 425,
       body: { error: 'pairing approval is pending', code: 'pairing_pending' },
     });
 
     confirmation.resolve(true);
     await expect(registration).resolves.toEqual({ kind: 'pair', requestId: REQUEST_ID });
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
       status: 200,
       body: { token: 'install-token' },
     });
     expect(events).toEqual(['token', 'flush']);
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toMatchObject({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toMatchObject({
       status: 404,
       body: { code: 'pairing_not_found' },
     });
@@ -83,13 +157,13 @@ describe('companion pairing grants', () => {
       flush,
     });
     await pairing.registerUrl(await pairUrl());
-    const operation = pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER });
+    const operation = pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER });
     await vi.waitFor(() => expect(flush).toHaveBeenCalledOnce());
     pairing.revokeAll();
     durability.resolve(true);
     expect(await operation).toMatchObject({ status: 404 });
     expect(pairing.pendingCount()).toBe(0);
-    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 404 });
+    expect(await pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 404 });
   });
 
   it('does not revive an approval dialog that completes after revocation', async () => {
@@ -99,7 +173,7 @@ describe('companion pairing grants', () => {
     pairing.revokeAll();
     approval.resolve(true);
     await operation;
-    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 404 });
+    expect(await pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 404 });
   });
 
   it('never exposes a token for wrong, rejected, expired, or malformed claims', async () => {
@@ -108,19 +182,18 @@ describe('companion pairing grants', () => {
     const pairing = createCompanionPairing({
       now: () => now,
       ttlMs: 100,
-      confirmPairing: vi.fn(async ({ clientId }) => clientId !== 'reject-me'),
+      confirmPairing: vi.fn(async ({ requestId }) => requestId !== 'rejectedrequestid12345'),
       ensureToken,
     });
 
     await pairing.registerUrl(await pairUrl());
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: `${VERIFIER}wrong` }))
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: `${VERIFIER}wrong` }))
       .resolves.toMatchObject({ status: 404 });
 
     const rejectedId = 'rejectedrequestid12345';
-    const rejectedUrl = (await pairUrl({ requestId: rejectedId }))
-      .replace('clientId=test-extension', 'clientId=reject-me');
+    const rejectedUrl = await pairUrl({ requestId: rejectedId });
     await pairing.registerUrl(rejectedUrl);
-    await expect(pairing.claim({ requestId: rejectedId, verifier: VERIFIER })).resolves.toMatchObject({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: rejectedId, verifier: VERIFIER })).resolves.toMatchObject({
       status: 403,
       body: { code: 'pairing_rejected' },
     });
@@ -128,11 +201,11 @@ describe('companion pairing grants', () => {
     const expiredId = 'expiredrequestid123456';
     await pairing.registerUrl(await pairUrl({ requestId: expiredId }));
     now += 101;
-    await expect(pairing.claim({ requestId: expiredId, verifier: VERIFIER })).resolves.toMatchObject({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: expiredId, verifier: VERIFIER })).resolves.toMatchObject({
       status: 404,
       body: { code: 'pairing_not_found' },
     });
-    await expect(pairing.claim({ requestId: '', verifier: '' })).resolves.toMatchObject({ status: 400 });
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: '', verifier: '' })).resolves.toMatchObject({ status: 400 });
     expect(ensureToken).not.toHaveBeenCalled();
   });
 
@@ -147,11 +220,11 @@ describe('companion pairing grants', () => {
     });
     await pairing.registerUrl(await pairUrl());
 
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
       status: 503,
       body: { error: 'pairing token could not be saved', code: 'pairing_unavailable' },
     });
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
       status: 200,
       body: { token: 'install-token' },
     });
@@ -168,11 +241,11 @@ describe('companion pairing grants', () => {
     });
     await pairing.registerUrl(await pairUrl());
 
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
       status: 503,
       body: { error: 'pairing token could not be saved', code: 'pairing_unavailable' },
     });
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
       status: 200,
       body: { token: 'install-token' },
     });
@@ -188,9 +261,9 @@ describe('companion pairing grants', () => {
     });
     await pairing.registerUrl(await pairUrl());
 
-    const first = pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER });
+    const first = pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER });
     await vi.waitFor(() => expect(ensureToken).toHaveBeenCalledOnce());
-    await expect(pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
+    await expect(pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).resolves.toEqual({
       status: 425,
       body: { error: 'pairing approval is pending', code: 'pairing_pending' },
     });
@@ -205,7 +278,7 @@ describe('companion pairing grants', () => {
 });
 
  describe('loopback pairing requests', () => {
-  const clientId = 'a'.repeat(32);
+  const clientId = CLIENT_ID;
   async function request(overrides = {}) {
     return { protocolVersion: '2', requestId: REQUEST_ID, challenge: await challengeFor(VERIFIER), clientId, ...overrides };
   }
@@ -220,11 +293,11 @@ describe('companion pairing grants', () => {
     expect(pairing.request(input)).toEqual({ status: 202, body: { pending: true } });
     expect(confirmPairing).toHaveBeenCalledOnce();
     expect(ensureToken).not.toHaveBeenCalled();
-    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 425 });
+    expect(await pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 425 });
     approval.resolve(true);
     await Promise.resolve();
-    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER + 'wrong' })).toMatchObject({ status: 404 });
-    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 200, body: { token: 'install-token' } });
+    expect(await pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER + 'wrong' })).toMatchObject({ status: 404 });
+    expect(await pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 200, body: { token: 'install-token' } });
   });
 
   it('rejects malformed requests and bounds both pending prompts and repeated new attempts', async () => {
@@ -241,7 +314,7 @@ describe('companion pairing grants', () => {
     expect(pairing.request(await request({ requestId: 'differentrequestid12345' }))).toMatchObject({ status: 429 });
     approval.resolve(false);
     await Promise.resolve();
-    expect(await pairing.claim({ requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 403 });
+    expect(await pairing.claim({ clientId: CLIENT_ID, requestId: REQUEST_ID, verifier: VERIFIER })).toMatchObject({ status: 403 });
     expect(pairing.request(await request({ requestId: 'differentrequestid12345' }))).toMatchObject({ status: 202 });
     await Promise.resolve();
     expect(pairing.request(await request({ requestId: 'anotherrequestid1234567' }))).toMatchObject({ status: 429 });

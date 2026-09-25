@@ -129,7 +129,7 @@ describe('native pairing request wiring', () => {
     await (await import('../src/bridge.js')).initBridge();
     const handler = mocks.listen.mock.calls.find(([event]) => event === 'bridge:request')[1];
     await handler({ payload: { id: 1, method: 'POST', path: '/pairing/request', body: JSON.stringify({
-      protocolVersion: '2', requestId: 'a'.repeat(32), challenge: 'A'.repeat(43), clientId: 'a'.repeat(32),
+      protocolVersion: '2', requestId: 'a'.repeat(32), challenge: 'A'.repeat(43), clientId: 'keggfbelidgpjiapcbgkjidenhdjmega',
     }) } });
     await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledOnce());
     expect(mocks.show).toHaveBeenCalledOnce();

@@ -509,3 +509,20 @@ describe('createBridgeClient', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+
+describe('mutation cancellation while reading the session token', () => {
+  it.each(['saveAnswer', 'logApplication', 'createTailoredResume'])('does not dispatch cancelled %s after token lookup resolves', async (method) => {
+    let resolveToken;
+    const token = new Promise((resolve) => { resolveToken = resolve; });
+    const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }));
+    const client = makeClient(fetchImpl, () => token);
+    const controller = new AbortController();
+    const outcome = captureError(client[method]({}, { signal: controller.signal }));
+    controller.abort();
+    resolveToken('new-session-token');
+    expect(await outcome).toMatchObject({ code: 'request_cancelled', retryable: false });
+    await Promise.resolve();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});

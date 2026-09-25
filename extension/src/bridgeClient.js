@@ -216,6 +216,10 @@ export function createBridgeClient({
       headers.set('Authorization', `Bearer ${token}`);
     }
 
+    if (signal?.aborted) {
+      throw new BridgeError('Request cancelled', { code: 'request_cancelled', retryable: false });
+    }
+
     const options = { method, headers, signal };
     if (payload !== undefined) {
       const body = JSON.stringify(payload);
@@ -318,10 +322,10 @@ export function createBridgeClient({
     analyzeJobFit: (payload) => request('/ai/job-fit', {
       method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
     }),
-    createTailoredResume: (payload) => request('/ai/tailored-resume', {
-      method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
+    createTailoredResume: (payload, options = {}) => request('/ai/tailored-resume', {
+      ...options, method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
     }),
-    logApplication: (payload) => request('/applications', { method: 'POST', payload }),
-    saveAnswer: (payload) => request('/profile/answers', { method: 'POST', payload }),
+    logApplication: (payload, options = {}) => request('/applications', { ...options, method: 'POST', payload }),
+    saveAnswer: (payload, options = {}) => request('/profile/answers', { ...options, method: 'POST', payload }),
   };
 }

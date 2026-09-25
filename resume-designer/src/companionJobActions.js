@@ -342,7 +342,10 @@ export function createCompanionJobActions(deps) {
     return { resumeId: variant.id, analysis: validateAnalysis(result) };
   }
 
-  async function createTailoredResume({ resumeId, requestId, job, model: selectedModel }) {
+  async function createTailoredResume(
+    { resumeId, requestId, job, model: selectedModel },
+    { assertAuthorized = () => {} } = {},
+  ) {
     if (!REQUEST_ID_PATTERN.test(requestId ?? '')) {
       throw actionError(400, 'invalid_request_id', 'requestId must be a UUID');
     }
@@ -350,6 +353,7 @@ export function createCompanionJobActions(deps) {
     ensureAvailable();
     const normalizedJob = normalizeJob(job);
     const fingerprint = await requestFingerprint(resumeId, normalizedJob, selectedModel);
+    assertAuthorized();
     const variantId = `companion-${requestId}`;
     const existing = ownVariant(deps.getVariants(), variantId);
     if (existing) {
@@ -360,6 +364,7 @@ export function createCompanionJobActions(deps) {
         throw actionError(409, 'idempotency_conflict', 'requestId was already used for different tailoring input');
       }
       ensureAvailable();
+      assertAuthorized();
       if (!deps.loadVariant(variantId)) {
         throw actionError(507, 'storage_full', 'Could not load the tailored resume');
       }
@@ -372,7 +377,14 @@ export function createCompanionJobActions(deps) {
       if (active.fingerprint !== fingerprint) {
         throw actionError(409, 'idempotency_conflict', 'requestId was already used for different tailoring input');
       }
-      return active.operation;
+      try {
+        active.assertAuthorized();
+        return active.operation;
+      } catch (error) {
+        if (error?.status !== 401) throw error;
+        // An explicit request under a new authorization may replace cancelled
+        // work. The old operation still cannot commit, and cleanup is identity-bound.
+      }
     }
 
     const operation = (async () => {
@@ -400,6 +412,10 @@ export function createCompanionJobActions(deps) {
       const baseName = [normalizedJob.title, normalizedJob.company].filter(Boolean).join(' — ')
         || `${base.name} — Tailored`;
       const name = deps.generateUniqueVariantName(baseName, deps.getVariants());
+      // No await between this guard and the synchronous save/select block.
+      // Once saved, finish durability and report success even if disconnected;
+      // replay uses the deterministic variant ID and must never create a copy.
+      assertAuthorized();
       if (!deps.saveVariant(variantId, name, data, {
         companionRequest: { requestId, fingerprint },
       })) {
@@ -414,7 +430,7 @@ export function createCompanionJobActions(deps) {
       return { created: true, resume: resumeSummary(saved) };
     })();
 
-    inFlight.set(requestId, { fingerprint, operation });
+    inFlight.set(requestId, { fingerprint, operation, assertAuthorized });
     void operation.then(() => {
       if (inFlight.get(requestId)?.operation === operation) inFlight.delete(requestId);
     }, () => {

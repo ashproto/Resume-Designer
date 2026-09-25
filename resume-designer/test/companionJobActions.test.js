@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createBridgeRouter } from '../src/bridgeRoutes.js';
 
 import {
   MAX_JOB_DESCRIPTION_BYTES,
@@ -432,5 +433,106 @@ describe('request-specific companion models', () => {
     await expect(actions.createTailoredResume({ ...input, model: 'vendor/second' }))
       .rejects.toMatchObject({ status: 409, code: 'idempotency_conflict' });
     expect(deps.generateResumeChangesForData).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('revocation before tailored resume persistence', () => {
+  function setup(overrides = {}) {
+    let token = 'initial-token';
+    const deps = makeDeps(overrides);
+    const actions = createCompanionJobActions(deps);
+    const routerDeps = {
+      ...deps, ...actions, profileId: 'profile-1', profileContextId: 'context-1',
+      getToken: () => token,
+      revokePairing: vi.fn(async () => { token = 'rotated-token'; }),
+    };
+    const handle = createBridgeRouter(routerDeps);
+    const request = (path, payload = {}, currentToken = token) => handle({
+      method: 'POST', path, authorization: `Bearer ${currentToken}`,
+      body: JSON.stringify({ profileContextId: 'context-1', ...payload }),
+    });
+    const tailor = () => request('/ai/tailored-resume', { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB });
+    return { deps, routerDeps, request, tailor, rotate: () => { token = 'rotated-token'; } };
+  }
+
+  it.each([false, true])('rejects an authorized generation after revoke (rollback=%s), without saving or selecting', async (rollback) => {
+    const generation = deferred();
+    const fixture = setup({ generateResumeChangesForData: vi.fn(() => generation.promise) });
+    if (rollback) fixture.routerDeps.revokePairing.mockImplementation(async () => {
+      throw Object.assign(new Error('Revocation could not persist'), { status: 503 });
+    });
+    const operation = fixture.tailor();
+    await vi.waitFor(() => expect(fixture.deps.generateResumeChangesForData).toHaveBeenCalledOnce());
+    expect((await fixture.request('/pairing/revoke')).status).toBe(rollback ? 503 : 200);
+    generation.resolve({ changes: { summary: 'Must not be saved after disconnect' } });
+    expect(await operation).toMatchObject({ status: 401, body: { code: 'unauthorized' } });
+    expect(fixture.deps.saveVariant).not.toHaveBeenCalled();
+    expect(fixture.deps.loadVariant).not.toHaveBeenCalled();
+    expect(fixture.deps.flush).not.toHaveBeenCalled();
+  });
+
+  it('revalidates the current token even if it changes outside the revoke route', async () => {
+    const generation = deferred();
+    const fixture = setup({ generateResumeChangesForData: vi.fn(() => generation.promise) });
+    const operation = fixture.tailor();
+    await vi.waitFor(() => expect(fixture.deps.generateResumeChangesForData).toHaveBeenCalledOnce());
+    fixture.rotate();
+    generation.resolve({ changes: { summary: 'Revoked' } });
+    expect(await operation).toMatchObject({ status: 401 });
+    expect(fixture.deps.saveVariant).not.toHaveBeenCalled();
+  });
+
+  it('lets a newly authorized retry replace revoked in-flight work without creating duplicates', async () => {
+    const oldGeneration = deferred();
+    const newGeneration = deferred();
+    const generate = vi.fn().mockImplementationOnce(() => oldGeneration.promise)
+      .mockImplementationOnce(() => newGeneration.promise);
+    const fixture = setup({ generateResumeChangesForData: generate });
+    const oldOperation = fixture.tailor();
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    await fixture.request('/pairing/revoke');
+    const newOperation = fixture.tailor();
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    newGeneration.resolve({ changes: { summary: 'Authorized new session' } });
+    expect(await newOperation).toMatchObject({ status: 201 });
+    oldGeneration.resolve({ changes: { summary: 'Old revoked session' } });
+    expect(await oldOperation).toMatchObject({ status: 401 });
+    expect(fixture.deps.saveVariant).toHaveBeenCalledOnce();
+    expect(fixture.deps.saveVariant.mock.calls[0][2].summary).toBe('Authorized new session');
+    expect(await fixture.tailor()).toMatchObject({ status: 200, body: { created: false } });
+    expect(fixture.deps.saveVariant).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('blocks revoke during asynchronous fingerprinting (existing variant=%s)', async (existing) => {
+    const fixture = setup();
+    if (existing) await fixture.tailor();
+    fixture.deps.saveVariant.mockClear();
+    fixture.deps.loadVariant.mockClear();
+    const fingerprint = deferred();
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(() => fingerprint.promise);
+    try {
+      const operation = fixture.tailor();
+      expect(digest).toHaveBeenCalledOnce();
+      await fixture.request('/pairing/revoke');
+      fingerprint.resolve(new ArrayBuffer(32));
+      expect(await operation).toMatchObject({ status: 401 });
+      expect(fixture.deps.saveVariant).not.toHaveBeenCalled();
+      expect(fixture.deps.loadVariant).not.toHaveBeenCalled();
+    } finally {
+      digest.mockRestore();
+    }
+  });
+
+  it('preserves a committed mutation while durability completes, then replays without a second save', async () => {
+    const durability = deferred();
+    const fixture = setup({ flush: vi.fn(() => durability.promise) });
+    const operation = fixture.tailor();
+    await vi.waitFor(() => expect(fixture.deps.saveVariant).toHaveBeenCalledOnce());
+    expect((await fixture.request('/pairing/revoke')).status).toBe(200);
+    durability.resolve(true);
+    expect(await operation).toMatchObject({ status: 201, body: { created: true } });
+    expect(await fixture.tailor()).toMatchObject({ status: 200, body: { created: false } });
+    expect(fixture.deps.saveVariant).toHaveBeenCalledOnce();
   });
 });

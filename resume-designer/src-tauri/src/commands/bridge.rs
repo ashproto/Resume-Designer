@@ -20,6 +20,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 /// the app itself is unaffected.
 pub const BRIDGE_PORT: u16 = 17872;
 const BRIDGE_HOST: &str = "127.0.0.1:17872";
+const COMPANION_EXTENSION_ID: &str = "keggfbelidgpjiapcbgkjidenhdjmega";
+#[cfg(debug_assertions)]
+const DEVELOPMENT_EXTENSION_ID: &str = "jejabnlfgdapamjoechlgmgpmldekffo";
 
 /// Cap request bodies well above any realistic payload (AI messages).
 const MAX_BODY_BYTES: usize = 1_048_576; // 1 MiB
@@ -198,16 +201,52 @@ fn respond_json(request: tiny_http::Request, status: u16, body: &str) {
     let _ = request.respond(response);
 }
 
-/// This unauthenticated endpoint may show native consent. Reject ordinary
-/// web-page/form requests before forwarding: only an extension JSON fetch can
-/// initiate it. No CORS headers are added; the pairing proof is still required.
+fn is_trusted_extension_id(id: &str) -> bool {
+    match id {
+        COMPANION_EXTENSION_ID => true,
+        #[cfg(debug_assertions)]
+        DEVELOPMENT_EXTENSION_ID => true,
+        _ => false,
+    }
+}
+
+/// Only the published Companion (or the explicit debug-only unpacked ID) may
+/// initiate or claim a grant. No CORS headers are added; approval and proof are
+/// still required. An extension-shaped origin alone is not a trusted identity.
 fn is_allowed_pairing_request(origin: Option<&str>, content_type: Option<&str>) -> bool {
     let extension_id = origin.and_then(|value| value.strip_prefix("chrome-extension://"));
     let json = content_type
         .and_then(|value| value.split(';').next())
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
-    json && extension_id
-        .is_some_and(|id| id.len() == 32 && id.bytes().all(|byte| (b'a'..=b'p').contains(&byte)))
+    json && extension_id.is_some_and(is_trusted_extension_id)
+}
+
+fn pairing_body_for_origin(
+    path: &str,
+    origin: Option<&str>,
+    content_type: Option<&str>,
+    body: &str,
+) -> Option<String> {
+    if !is_allowed_pairing_request(origin, content_type) {
+        return None;
+    }
+    let client_id = origin?.strip_prefix("chrome-extension://")?;
+    let mut parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let fields = parsed.as_object_mut()?;
+    match path {
+        "/pairing/request" => {
+            if fields.get("clientId").and_then(serde_json::Value::as_str) != Some(client_id) {
+                return None;
+            }
+        }
+        "/pairing/claim" => {
+            // A cold deep link can spoof a clientId. Derive the claiming client
+            // from the browser header, never from an HTTP body supplied by it.
+            fields.insert("clientId".into(), client_id.into());
+        }
+        _ => return None,
+    }
+    serde_json::to_string(&parsed).ok()
 }
 
 fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
@@ -237,7 +276,7 @@ fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
 
     let method = request.method().as_str().to_string();
     let path = request.url().split('?').next().unwrap_or("").to_string();
-    if path == "/pairing/request" {
+    if matches!(path.as_str(), "/pairing/request" | "/pairing/claim") {
         let header = |name: &str| {
             request
                 .headers()
@@ -245,15 +284,20 @@ fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
                 .find(|header| header.field.as_str().as_str().eq_ignore_ascii_case(name))
                 .map(|header| header.value.as_str())
         };
-        if method != "POST" || !is_allowed_pairing_request(header("Origin"), header("Content-Type"))
-        {
+        let trusted_body = (method == "POST")
+            .then(|| {
+                pairing_body_for_origin(&path, header("Origin"), header("Content-Type"), &body)
+            })
+            .flatten();
+        let Some(trusted_body) = trusted_body else {
             respond_json(
                 request,
                 403,
-                r#"{"error":"pairing requires an extension JSON request"}"#,
+                r#"{"error":"pairing requires a trusted Companion JSON request","code":"untrusted_pairing_client"}"#,
             );
             return;
-        }
+        };
+        body = trusted_body;
     }
     let authorization = request
         .headers()
@@ -314,8 +358,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pairing_request_rejects_unrelated_extension_origins() {
+        assert!(!is_allowed_pairing_request(
+            Some("chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            Some("application/json")
+        ));
+    }
+
+    #[test]
     fn pairing_request_rejects_web_origins_and_simple_form_posts() {
-        let origin = format!("chrome-extension://{}", "a".repeat(32));
+        let origin = format!("chrome-extension://{COMPANION_EXTENSION_ID}");
         assert!(is_allowed_pairing_request(
             Some(&origin),
             Some("application/json")
@@ -346,6 +398,77 @@ mod tests {
         ] {
             assert!(!is_allowed_pairing_request(Some(&origin), invalid));
         }
+    }
+
+    #[test]
+    fn pairing_binds_request_identity_and_claim_identity_to_the_trusted_origin() {
+        let origin = format!("chrome-extension://{COMPANION_EXTENSION_ID}");
+        let unrelated = "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let input = serde_json::json!({
+            "clientId": COMPANION_EXTENSION_ID, "requestId": "request", "verifier": "proof"
+        })
+        .to_string();
+        for path in ["/pairing/request", "/pairing/claim"] {
+            assert!(
+                pairing_body_for_origin(path, Some(&origin), Some("application/json"), &input)
+                    .is_some()
+            );
+            assert!(pairing_body_for_origin(
+                path,
+                Some(unrelated),
+                Some("application/json"),
+                &input
+            )
+            .is_none());
+            assert!(
+                pairing_body_for_origin(path, None, Some("application/json"), &input).is_none()
+            );
+            assert!(
+                pairing_body_for_origin(path, Some(&origin), Some("text/plain"), &input).is_none()
+            );
+            for invalid in ["{", "[]", "null", "true", "42", "\"string\""] {
+                assert!(pairing_body_for_origin(
+                    path,
+                    Some(&origin),
+                    Some("application/json"),
+                    invalid
+                )
+                .is_none());
+            }
+        }
+        for mismatched in [
+            "{}",
+            r#"{"clientId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#,
+            r#"{"clientId":7}"#,
+        ] {
+            assert!(pairing_body_for_origin(
+                "/pairing/request",
+                Some(&origin),
+                Some("application/json"),
+                mismatched
+            )
+            .is_none());
+            let claim = pairing_body_for_origin(
+                "/pairing/claim",
+                Some(&origin),
+                Some("application/json"),
+                mismatched,
+            )
+            .unwrap();
+            let claim: serde_json::Value = serde_json::from_str(&claim).unwrap();
+            assert_eq!(claim["clientId"], COMPANION_EXTENSION_ID);
+        }
+    }
+
+    #[test]
+    fn unpacked_origin_is_allowed_only_in_debug_builds() {
+        assert_eq!(
+            is_allowed_pairing_request(
+                Some("chrome-extension://jejabnlfgdapamjoechlgmgpmldekffo"),
+                Some("application/json")
+            ),
+            cfg!(debug_assertions)
+        );
     }
 
     #[test]

@@ -118,6 +118,7 @@ export function createBackgroundService({
   let pendingDisconnects = 0;
   let openingAttempt = null;
   let tokenWriteQueue = Promise.resolve();
+  const pendingMutations = new Set();
 
   function cancelledError() {
     return new BridgeError('Connection cancelled. You can pair manually.', { code: 'pairing_cancelled', retryable: false });
@@ -244,8 +245,8 @@ export function createBackgroundService({
     return response;
   }
 
-  async function assertProfileContext(expectedContextId) {
-    const context = await bridge.listResumes();
+  async function assertProfileContext(expectedContextId, options) {
+    const context = await bridge.listResumes(options);
     return assertResponseContext(expectedContextId, context);
   }
 
@@ -270,15 +271,23 @@ export function createBackgroundService({
     }
   }
 
-  async function withinProfileMutation(expectedContextId, operation) {
-    await assertProfileContext(expectedContextId);
+  async function withinProfileMutation(expectedContextId, expectedEpoch, operation) {
+    assertConnectionEpoch(expectedEpoch);
+    const controller = new AbortController();
+    pendingMutations.add(controller);
+    const options = { signal: controller.signal };
     try {
-      // The bridge validates the same context atomically before persisting.
-      // Once it acknowledges the write, a later reload must not turn that
-      // committed success into a retryable error and invite a duplicate write.
-      return await operation();
+      await assertProfileContext(expectedContextId, options);
+      assertConnectionEpoch(expectedEpoch);
+      // The desktop also revalidates authorization at the persistence boundary:
+      // aborting HTTP alone cannot cancel a write already waiting on AI there.
+      // Preserve acknowledged success rather than inviting a duplicate retry.
+      return await operation(options);
     } catch (error) {
+      assertConnectionEpoch(expectedEpoch);
       return rethrowAfterContextCheck(expectedContextId, error);
+    } finally {
+      pendingMutations.delete(controller);
     }
   }
 
@@ -566,6 +575,7 @@ export function createBackgroundService({
     // Invalidate work in every panel before waiting for the desktop app.
     connectionEpoch += 1;
     pendingDisconnects += 1;
+    for (const controller of pendingMutations) controller.abort();
     try {
       await cancelled;
       const token = await getStoredToken();
@@ -643,11 +653,11 @@ export function createBackgroundService({
             code: 'sensitive_field', retryable: false,
           });
         }
-        return withinProfileMutation(message.profileContextId, () => bridge.saveAnswer({
+        return withinProfileMutation(message.profileContextId, expectedEpoch, (options) => bridge.saveAnswer({
           profileContextId: message.profileContextId,
           question: message.question,
           answer: message.answer,
-        }));
+        }, options));
       case 'application.log': {
         const payload = {
           profileContextId: message.profileContextId,
@@ -660,7 +670,8 @@ export function createBackgroundService({
         }
         return withinProfileMutation(
           message.profileContextId,
-          () => bridge.logApplication(payload),
+          expectedEpoch,
+          (options) => bridge.logApplication(payload, options),
         );
       }
       case 'job.fit.analyze':
@@ -676,7 +687,7 @@ export function createBackgroundService({
           )
         ));
       case 'resume.tailor':
-        return withinProfileMutation(message.profileContextId, async () => (
+        return withinProfileMutation(message.profileContextId, expectedEpoch, async (options) => (
           assertResponseContext(
             message.profileContextId,
             await bridge.createTailoredResume({
@@ -685,7 +696,7 @@ export function createBackgroundService({
               requestId: message.requestId,
               job: message.job,
               ...(message.model ? { model: message.model } : {}),
-            }),
+            }, options),
           )
         ));
       default:

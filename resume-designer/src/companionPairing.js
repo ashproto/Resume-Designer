@@ -1,4 +1,6 @@
 const PROTOCOL_VERSION = '2';
+const COMPANION_CLIENT_ID = 'keggfbelidgpjiapcbgkjidenhdjmega';
+const DEVELOPMENT_CLIENT_ID = 'jejabnlfgdapamjoechlgmgpmldekffo';
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_MAX_PENDING = 8;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
@@ -6,6 +8,11 @@ const VERIFIER_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 const json = (status, body) => ({ status, body });
+
+function isTrustedClient(clientId) {
+  return clientId === COMPANION_CLIENT_ID
+    || (import.meta.env.DEV && clientId === DEVELOPMENT_CLIENT_ID);
+}
 
 function notFound() {
   return json(404, { error: 'pairing request was not found or has expired', code: 'pairing_not_found' });
@@ -53,7 +60,8 @@ function pairingUrl(rawUrl) {
   const requestId = url.searchParams.get('requestId') ?? '';
   const challenge = url.searchParams.get('challenge') ?? '';
   const clientId = String(url.searchParams.get('clientId') ?? '').slice(0, 128);
-  if (!REQUEST_ID_PATTERN.test(requestId) || !CHALLENGE_PATTERN.test(challenge)) return null;
+  if (!REQUEST_ID_PATTERN.test(requestId) || !CHALLENGE_PATTERN.test(challenge)
+    || !isTrustedClient(clientId)) return null;
   return { kind: 'pair', requestId, challenge, clientId };
 }
 
@@ -83,7 +91,7 @@ export function createCompanionPairing({
     prune();
     const existing = pending.get(parsed.requestId);
     if (existing) {
-      if (constantTimeEqual(existing.challenge, parsed.challenge)) {
+      if (existing.clientId === parsed.clientId && constantTimeEqual(existing.challenge, parsed.challenge)) {
         return { kind: 'pair', requestId: parsed.requestId };
       }
       return null;
@@ -96,6 +104,7 @@ export function createCompanionPairing({
     }
 
     const grant = {
+      clientId: parsed.clientId,
       challenge: parsed.challenge,
       expiresAt: now() + ttlMs,
       status: 'pending',
@@ -126,10 +135,13 @@ export function createCompanionPairing({
       || !CHALLENGE_PATTERN.test(challenge ?? '') || !/^[a-p]{32}$/.test(clientId ?? '')) {
       return json(400, { error: 'valid pairing challenge and extension ID are required', code: 'invalid_pairing_request' });
     }
+    if (!isTrustedClient(clientId)) {
+      return json(403, { error: 'only On Paper Companion may pair', code: 'untrusted_pairing_client' });
+    }
     prune();
     const existing = pending.get(requestId);
     if (existing) {
-      return constantTimeEqual(existing.challenge, challenge)
+      return existing.clientId === clientId && constantTimeEqual(existing.challenge, challenge)
         ? json(202, { pending: true })
         : json(409, { error: 'pairing request ID is already in use', code: 'invalid_pairing_request' });
     }
@@ -147,14 +159,15 @@ export function createCompanionPairing({
     return json(202, { pending: true });
   }
 
-  async function claim({ requestId, verifier } = {}) {
+  async function claim({ requestId, verifier, clientId } = {}) {
     if (!REQUEST_ID_PATTERN.test(requestId ?? '') || !VERIFIER_PATTERN.test(verifier ?? '')) {
       return json(400, { error: 'requestId and verifier are required', code: 'invalid_pairing_claim' });
     }
 
     prune();
     const grant = pending.get(requestId);
-    if (!grant) return notFound();
+    // The native HTTP boundary derives clientId from the trusted browser Origin.
+    if (!grant || !isTrustedClient(clientId) || grant.clientId !== clientId) return notFound();
 
     const actualChallenge = await challengeFor(verifier);
     if (pending.get(requestId) !== grant) return notFound();

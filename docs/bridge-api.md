@@ -190,10 +190,11 @@ curl -s http://127.0.0.1:17872/health
 
 Start native approval in an already-running app. Public, but the native HTTP
 boundary accepts only `POST` with `Content-Type: application/json` (an optional
-charset is allowed) and an `Origin` of `chrome-extension://<32 a–p characters>`.
-The fixed loopback Host check also applies. Ordinary web origins, absent/null
-origins, simple form/text posts, and preflights are rejected with `403`; no CORS
-access is enabled. Local processes can forge HTTP headers, so these checks do
+charset is allowed) and the exact production `Origin`
+`chrome-extension://keggfbelidgpjiapcbgkjidenhdjmega`. The body’s `clientId` must
+match that origin. The fixed loopback Host check also applies. Other extension
+IDs, ordinary web origins, absent/null origins, simple form/text posts, and
+preflights are rejected with `403`; no CORS access is enabled. Local processes can forge HTTP headers, so these checks do
 not replace native approval or the verifier proof.
 
 **Request**
@@ -203,13 +204,13 @@ not replace native approval or the verifier proof.
   "protocolVersion": "2",
   "requestId": "a-random-base64url-request-id",
   "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-  "clientId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  "clientId": "keggfbelidgpjiapcbgkjidenhdjmega"
 }
 ```
 
 All fields are strings. The request ID must be 16–128 base64url characters,
-the challenge exactly 43, and the client ID a Chrome extension ID. Duplicate
-requests with the same ID/challenge reuse their existing grant and never open
+the challenge exactly 43, and the client ID the trusted extension ID. Duplicate
+requests with the same ID/challenge/client reuse their existing grant and never open
 another prompt. Only one approval dialog may be pending; new HTTP attempts
 must be at least five seconds apart. Approval follows the same 60-second grant
 TTL and one-time proof validation as deep-link pairing.
@@ -229,7 +230,9 @@ One-time unauthenticated exchange used only after the app receives a valid
 and the user approves it. The verifier
 must be 43–128 base64url characters and hash to the challenge registered by the
 pairing request. Grants expire after 60 seconds and are deleted after the first
-successful claim or a rejection.
+successful claim or a rejection. The native HTTP boundary also requires the
+trusted extension JSON origin for claims and binds the grant to that client;
+setting a different `clientId` in the JSON or a launch link cannot bypass it.
 
 **Request**
 
@@ -259,6 +262,11 @@ unknown, expired, wrong-verifier, or replayed claims; `425
 Authenticated. Rotate the app's install token, invalidate pending grants, and
 wait for durable storage before returning `200 {"ok":true}`. Failure returns
 `503 pairing_unavailable` and must not be presented as successful revocation.
+The extension aborts its active mutation requests and rejects operations that
+were waiting in a preflight when disconnect began. The desktop rechecks the
+request’s authorization generation and token immediately before a mutation
+commits, so an AI result still in flight cannot save after revocation. A write
+committed before revocation is not undone or relabeled as a retryable failure.
 The extension still forgets its own session token and consent on disconnect,
 and distinguishes local disconnection from acknowledged app-wide revocation.
 

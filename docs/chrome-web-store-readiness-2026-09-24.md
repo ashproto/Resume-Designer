@@ -2,9 +2,20 @@
 
 **Status: automated checks, main-candidate local live QA, final-build review/reconnect checks, and the native Library close recheck passed; production submission gates remain open.** This report records the pre-commit verification checkpoint. No Store upload, publication, or website deployment was performed. The owner subsequently authorized committing and pushing the Companion work and opening a draft PR to `next`; merge and release remain pending.
 
-## September 25 review-fix candidate — 0.1.2
+## September 25 security review candidate — 0.1.3
 
-Version **0.1.2** supersedes the previously uploaded 0.1.1 draft. Replace the Dashboard package before submission.
+Version **0.1.3** supersedes both 0.1.2 and the uploaded 0.1.1 draft. Replace the Dashboard package before submission.
+
+- Pairing now accepts only the official Store extension origin, matches the requested client ID to that origin, and derives claim identity from the browser origin. Approved grants are bound to that client. The known unpacked development ID requires both native debug and frontend DEV builds.
+- Disconnect aborts extension mutation requests and invalidates desktop authorization before pending AI results can commit. Already committed writes retain durable success and idempotent replay; new authorization can replace revoked in-flight work.
+- RED evidence: two pairing JavaScript cases and one Rust case, six extension disconnect races, three desktop stale-save cases, and one same-request retry case failed before their fixes.
+- GREEN: **424 extension tests/14 files**, **2,065 desktop tests/129 files**, **11 Rust bridge tests**, and Windows cross-target compilation. The release-config origin helper rejects the unpacked ID. Extension lint passes; desktop lint has no errors and two existing unrelated warnings.
+- Production build, strict Store validator, and ZIP integrity pass. ZIP: [`extension/artifacts/on-paper-companion-0.1.3.zip`](../extension/artifacts/on-paper-companion-0.1.3.zip), **674,051 bytes**, **12 files**; SHA-256 `09b56c74fb08c550208a889ca31d6194853a7f34087557094b14b2328bc1dd7c`.
+- These changes have automated coverage and independent source review. The live Chrome sequence has not been repeated on 0.1.3, and no signed compatible production desktop installer has been released. Production pairing, cold launch/browser restart, and Store installation/update remain open gates.
+
+## September 25 review-fix candidate — 0.1.2 (superseded)
+
+Historical 0.1.2 evidence is retained below. Use 0.1.3 for the replacement package.
 
 - Fix: if the active profile context changes after tailoring succeeds but before its connection refresh returns, discard the old result, clear profile-scoped review state, and adopt the current resume list without mapping or filling from the old context.
 - Meaningful regression evidence: both a different-profile switch and a same-profile reload with a reused resume ID failed before the guard; all **50 sidepanel tests** passed after the fix, including same-context tailoring and changed-page behavior.

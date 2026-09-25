@@ -4,7 +4,7 @@ Prepared September 24, 2026; owner-status update September 25. This execution ch
 
 ## Already prepared
 
-- Extension 0.1.2 ZIP, validated packaging, listing icon, and small promotional tile.
+- Extension 0.1.3 ZIP, validated packaging, listing icon, and small promotional tile.
 - Listing description, permission explanations, privacy-practices worksheet, and reviewer test flow.
 - Publisher choice: **HyperBuild, Inc**. Contact: **support@hyperbuild.com**. First visibility: **Unlisted**, with **macOS-only** support (macOS 14.4 or later). Windows will be added after testing.
 - Functional macOS demo checks and automated checks recorded in [the readiness report](chrome-web-store-readiness-2026-09-24.md).
@@ -65,7 +65,7 @@ Automated screenshot export was blocked at the September 24 local checkpoint. Th
 Once the production URLs and reviewer access are ready:
 
 - [x] Store item created and 0.1.1 package uploaded, per the owner’s report.
-- [ ] Replace the uploaded draft package with **on-paper-companion-0.1.2.zip**, which fixes the reviewed profile-switch race. Upload only this extension ZIP when replacing the package.
+- [ ] Replace the uploaded draft package with **on-paper-companion-0.1.3.zip**, which includes the reviewed profile-switch, pairing identity, and disconnect persistence fixes. Upload only this extension ZIP when replacing the package.
 - [x] **Store listing** saved per the owner’s September 25 report. Reconcile it with [the listing source](chrome-web-store-listing.md) and the final package before submission.
 - [x] **Privacy practices** saved per the owner’s September 25 report. Reconcile the saved categories, permission justifications, and Limited Use certifications with the final disclosures before submission.
 - [ ] Paste the finalized **Test instructions** with the exact compatible installer, public fictional fixtures, and tested model; enter the dedicated reviewer key separately in **Password**, leaving **Username** blank.
