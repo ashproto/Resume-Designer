@@ -4,10 +4,10 @@ Prepared September 24, 2026; owner-status update September 25. This execution ch
 
 ## Already prepared
 
-- Extension 0.1.3 ZIP, validated packaging, listing icon, and small promotional tile.
+- Extension **0.1.3** uploaded per the owner’s report, with the exact Additional instructions pasted and a dedicated reviewer key supplied privately. Security candidate **0.1.4** changes patched build/test dependency inputs; application UI source is unchanged. Its tests, lint, frontend build, and strict Store packaging passed; the committed version gate and both full dependency audits passed. Listing icon and small promotional tile are prepared.
 - Listing description, permission explanations, privacy-practices worksheet, and reviewer test flow.
 - Publisher choice: **HyperBuild, Inc**. Contact: **support@hyperbuild.com**. First visibility: **Unlisted**, with **macOS-only** support (macOS 14.4 or later). Windows will be added after testing.
-- Functional macOS demo checks and automated checks recorded in [the readiness report](chrome-web-store-readiness-2026-09-24.md).
+- **0.1.4** validation: **424 extension tests/14 files**, **2,065 desktop tests/129 files**, and **77 release-automation tests** passed. Lint has no errors; desktop retains two prior warnings. ZIP: **674,051 bytes**, **12 files**, SHA-256 `11567f192f157a17378dc3c89264896f2872612226e68e8f47d945e7517fd7a3`. Both full dependency audits are clear after integrating the `fast-uri` patch from PR #131; its remote merge remains pending. Earlier live checks remain historical in [the readiness report](chrome-web-store-readiness-2026-09-24.md).
 
 The first submission can be manual. Google Cloud, service accounts, and GitHub-to-Store automation are optional later work. Leave `CWS_AUTO_PUBLISH` disabled.
 
@@ -26,27 +26,25 @@ An optional verified-website badge is separate from the required email/trader st
 
 ## 2. Together: release the compatible desktop app and website
 
-The public stable desktop app predates this Companion bridge. The isolated demo bundle is not a distributable release.
+Public stable **v2.2.0** predates this Companion bridge. The intermediate **2.3.0-next.153** beta is signed and notarized, but the security follow-up and final production verification remain pending. The isolated demo bundle is not a distributable release.
 
-- [x] Owner explicitly authorized staging and committing the finished Companion work, pushing `feat/companion-extension`, and opening a draft PR to `next` on September 24, 2026. Merge and publication remain separate decisions.
-- [ ] The assistant can create that PR, handle failures, and prepare the release notes once authorized.
-- [ ] Review and authorize merging to `next`; test the signed beta artifacts produced by the existing desktop release workflow. Authorization to create a PR does not authorize merging it.
+- [x] The owner authorized merging PR #137 and completing the remaining release work, with dependency/security cleanup required **before opening the `next` → `main` promotion PR**.
+- [x] PR #137 received the Codex thumbs-up and merged into `next` at `504c3ae986aa3dab254db9a76d8324c651bb7dca`.
+- [x] [Beta release run 36189775315](https://github.com/ashproto/Resume-Designer/actions/runs/36189775315) succeeded. The Apple Silicon and Intel **2.3.0-next.153** artifact hashes, strict signatures, Gatekeeper acceptance, and app notarization staples were verified without launching the apps. This intermediate beta does not include the pending dependency follow-up.
 - [ ] Confirm launch, Keychain access, PDF generation, cold app launch from Companion, Chrome restart/re-pairing, and the core review/fill/tailor flow in a production-style installation. The owner selected a macOS-only first listing. Keep Windows support out of this initial listing; add it only after separate Windows validation.
-- [ ] Review and authorize the promotion PR from `next` to `main`. This can release the desktop app and deploy website changes, so it is a separate release decision.
+- [ ] Finish and validate dependency/security fixes, merge the follow-up into `next`, then open and complete the authorized promotion from `next` to `main`. Verify the resulting desktop release and website deployment; no promotion is claimed complete here.
 - [ ] The assistant verifies the resulting installer version, download URLs, signing/notarization evidence, and deployed policy/demo/JSON URLs, then inserts the exact versioned links into reviewer instructions.
 
 Do not direct reviewers to an incompatible generic latest-release link. Do not distribute `/private/tmp/on-paper-demo/On Paper Demo.app`. Windows runtime/publisher-signing work is deferred beyond this macOS-only release. A cross-target compile is not a Windows runtime check. Do not regenerate the existing updater signing keys. Do not dispatch the desktop release from the feature branch: its current workflow treats every branch except `next` as the stable channel.
 
 ## 3. You: provide bounded AI reviewer access
 
-No On Paper login account is needed. The owner committed to providing a dedicated, spending-capped OpenRouter key privately through the Dashboard **Password** field. Actual supply is not yet confirmed. This arrangement does not require the reviewer to fund a personal OpenRouter account.
+No On Paper login account is needed. The owner reports supplying a dedicated OpenRouter key privately in Dashboard **Password**, with a **$5 budget** and **30-day expiry**, and pasting the exact Additional instructions. This arrangement does not require the reviewer to fund a personal OpenRouter account. The key’s remaining credit and expiry have not been independently inspected.
 
-Recommended setup:
+Reported setup and remaining checks:
 
-- [ ] In [OpenRouter Keys](https://openrouter.ai/settings/keys), create a separate ordinary inference key named **On Paper CWS review** yourself.
-- [ ] Use a small fixed lifetime credit cap, for example **$5 with no reset**. This is a suggested ceiling, not a purchase authorization or guarantee of sufficient review coverage. Confirm that the account already has sufficient credit; any credit purchase is your decision.
-- [ ] If the dashboard offers expiry, allow enough time for review and possible resubmission (for example 60 days). Otherwise revoke the key manually afterward.
-- [ ] Enter the dedicated key directly in the Chrome Dashboard’s private **Password** field and leave **Username** blank. Do not put it in the instructions text, this repository, the ZIP, a public listing, a screenshot, or this chat. Do not share your normal key, login, or a management key.
+- [x] Dedicated review-only inference key supplied in private **Password**, with a **$5 budget** and **30-day expiry**, per the owner’s report. Keep **Username** blank. Never copy the key into the instructions text, repository, ZIP, public listing, screenshot, or chat.
+- [ ] Confirm the remaining credit and expiry cover review and any resubmission; renew reviewer access if needed. Do not assume the $5 budget guarantees enough credit for every review attempt.
 - [ ] Direct the reviewer to enter the key in the native welcome wizard if needed on first launch, or **On Paper desktop Settings → AI** afterward, and select the tested **Claude Sonnet 4.6** model. Never enter it in the extension or fixture website.
 - [ ] Keep the capped access available while review is pending, monitor usage, and revoke it when no longer needed. Later updates may need fresh review access.
 
@@ -64,17 +62,18 @@ Automated screenshot export was blocked at the September 24 local checkpoint. Th
 
 Once the production URLs and reviewer access are ready:
 
-- [x] Store item created and 0.1.1 package uploaded, per the owner’s report.
-- [ ] Replace the uploaded draft package with **on-paper-companion-0.1.3.zip**, which includes the reviewed profile-switch, pairing identity, and disconnect persistence fixes. Upload only this extension ZIP when replacing the package.
+- [x] Store item created and **0.1.3** uploaded, per the owner’s report.
+- [ ] Once **0.1.4** passes its tests, build, strict packaging and version checks, replace the draft package with **on-paper-companion-0.1.4.zip**. The patch addresses build/test dependency inputs; UI source is unchanged. Upload only the validated extension ZIP.
 - [x] **Store listing** saved per the owner’s September 25 report. Reconcile it with [the listing source](chrome-web-store-listing.md) and the final package before submission.
 - [x] **Privacy practices** saved per the owner’s September 25 report. Reconcile the saved categories, permission justifications, and Limited Use certifications with the final disclosures before submission.
-- [ ] Paste the finalized **Test instructions** with the exact compatible installer, public fictional fixtures, and tested model; enter the dedicated reviewer key separately in **Password**, leaving **Username** blank.
+- [x] Exact **463-character Additional instructions** pasted and dedicated key entered separately in private **Password**, per the owner’s report. Keep **Username** blank.
+- [ ] Complete the linked public guide with the final verified, versioned compatible macOS installer and confirm the fictional fixture/download are deployed before submission.
 - [ ] In **Distribution**, choose **Unlisted** and the intended regions. Unlisted means anyone who has the Store URL can install it; it is not access-controlled private testing.
 - [ ] Save and review the complete draft for missing fields and warnings. The assistant can help fill ordinary non-sensitive fields where browser access permits; browser control currently refused access to the developer console.
 
-## 6. You: authorize submission and release
+## 6. Complete the authorized submission and release
 
-- [ ] Approve the completed package/listing and submit it for review. If desired, use deferred publication so approval does not immediately publish it.
+- [ ] After the security, installer, website, and production/manual gates pass, submit the completed package/listing for review under the owner’s existing authorization. If using deferred publication, approval does not immediately publish it.
 - [ ] Respond to reviewer requests; keep installer/fixture URLs and capped AI access working. Review duration is variable. Deferred approved submissions must be published within Google's current allowed window (currently 30 days).
 - [ ] After approval, publish the item as **Unlisted** when ready.
 - [ ] Install from the actual Store URL and run the final install/update/re-pairing smoke check. Save the Store extension ID and URL in the release record.

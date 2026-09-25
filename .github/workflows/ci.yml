@@ -62,8 +62,8 @@ jobs:
         run: unzip -t artifacts/on-paper-companion-*.zip
         working-directory: extension
 
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit all dependencies
+        run: npm audit --audit-level=low
         working-directory: extension
 
       - name: Retain the reviewed Store package
@@ -114,8 +114,8 @@ jobs:
         run: npm run build
         working-directory: resume-designer
 
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit all dependencies
+        run: npm audit --audit-level=low
         working-directory: resume-designer
 
   rust-check:
