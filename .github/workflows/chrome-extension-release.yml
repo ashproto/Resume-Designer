@@ -141,9 +141,9 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
         working-directory: extension
 
-      - name: Audit production dependencies
+      - name: Audit all dependencies
         if: steps.change.outputs.release_required == 'true'
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=low
         working-directory: extension
 
       - name: Upload the exact validated ZIP

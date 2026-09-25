@@ -29,6 +29,14 @@ updates:
     commit-message:
       prefix: chore
 
+  - package-ecosystem: npm
+    directory: /extension
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: chore
+
   # src-tauri: the Rust side ships in the signed binary, so an advisory here
   # reaches users directly rather than only the build.
   - package-ecosystem: cargo
