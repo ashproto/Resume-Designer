@@ -25,15 +25,18 @@ their locally running On Paper desktop app.
 
 ### Detailed description
 
-On Paper Companion helps you prepare and review a job application beside the page in Chrome. This first release requires the On Paper desktop app for macOS. AI suggestions, fit analysis, and tailoring require your own OpenRouter account, API key, and access to a model; provider charges may apply. The extension does not include AI credits.
+Apply with less repetition and more confidence.
 
-Choose a resume from your On Paper workspace, scan the application you opened, and review suggested answers before filling. Edit or leave out values, attach the selected resume PDF, save a reusable answer, and record the application in On Paper. You can also analyze the role and create a tailored resume copy.
+On Paper Companion brings your On Paper resumes into Chrome, helping you prepare each application with care.
 
-You remain in control. The extension fills only after you choose **Fill reviewed fields** and never activates a website’s final Submit button. Sensitive questions are kept manual on the application page. Some websites use custom controls that require manual entry; this extension does not promise support for every application form. A website may save edits or upload an attached PDF before you submit.
+• Draft answers that reflect your background.
+• Check your fit and tailor your resume for the role.
+• Fill repetitive details and attach your resume as a PDF.
+• Save reusable answers and keep track of your applications.
 
-Before connecting, you see a disclosure explaining the data flow. Selected resume/profile content, saved answers, supported field descriptors, and job context can pass through On Paper to OpenRouter and the selected or fallback model provider. Your OpenRouter key stays in the desktop app. The extension has no advertising, developer telemetry, or hosted companion backend. Saved workspace records may sync through your own iCloud account on supported Apple devices.
+Review every suggestion, make it your own, and submit when you’re ready.
 
-Requires Chrome 116 or later and a compatible On Paper desktop release on macOS 14.4 or later. This release supports macOS only; Windows is not supported in this release. Keep the desktop app running while using the extension. ChromeOS and Linux are not supported. No On Paper account is required. Desktop download: onpaper.pro. Support: support@hyperbuild.com.
+Requires On Paper for macOS. AI features require your own OpenRouter key; usage charges may apply.
 
 ### Listing fields to enter
 
@@ -156,6 +159,8 @@ The final dashboard categories must match all handling, including local processi
 | Location | Resume/profile or application location; there is no geolocation permission or location tracking. |
 | Web history / browsing activity | Selected page address, including query/fragment, held temporarily in extension memory to bind filling to the reviewed tab and address; origin/path used separately for job comparisons. No history API, continuous browsing collection, URL persistence/logging, or URL sent to the app or AI. |
 | Website content | Job description, supported labels/options and other compact form descriptors from the page the user selected. |
+| User activity | Companion AI calls create timestamped feature/model/token usage records in the paired app, potentially synced through the user's iCloud account. No developer analytics service or click/keystroke/scroll tracking. |
+| Financial and payment information (conservative classification) | The app records actual provider-reported AI request costs and accumulated AI spend. It does not collect card, bank, or payment-method information. Google's published guidance does not explicitly classify this specific cost-record case. |
 | User-provided content | Resume PDF, edited answers, pasted job context, saved answers, and application log details. |
 | Other sensitive content | Free-text resumes/answers can contain sensitive information even though recognized sensitive form questions are manual. Do not certify that sensitive information can never occur. |
 

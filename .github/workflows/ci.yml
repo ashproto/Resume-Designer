@@ -31,7 +31,16 @@ jobs:
           cache-dependency-path: extension/package-lock.json
 
       - name: Require a Store version bump for package changes
-        run: node extension/scripts/store-version-gate.mjs "${{ github.event.pull_request.base.sha }}" HEAD
+        env:
+          STORE_VERSION_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base_ref="${STORE_VERSION_BASE_SHA:?Missing Store version comparison base}"
+          if [[ "${base_ref}" =~ ^0+$ ]]; then
+            # A new branch has no previous tip; compare against the empty tree.
+            base_ref="$(git hash-object -t tree /dev/null)"
+          fi
+          node extension/scripts/store-version-gate.mjs "${base_ref}" HEAD
 
       - name: Install dependencies
         run: npm ci

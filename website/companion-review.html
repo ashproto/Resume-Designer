@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Setup and fictional test materials for reviewing On Paper Companion on macOS.">
+  <meta name="robots" content="noindex,nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Companion reviewer setup — On Paper</title>
+  <style>
+    :root { color-scheme:light dark; --paper:#f4efe6; --ink:#0c0a08; --muted:#62594e; --link:#943125; --line:#c9bfb2; --card:#fcfaf6; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .page { max-width:49rem; margin:auto; padding:0 1.5rem; }
+    header,footer { padding:1.5rem 0; }
+    header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:1rem; border-bottom:1px solid var(--line); }
+    a { color:var(--link); text-underline-offset:.2em; overflow-wrap:anywhere; }
+    a:hover { text-decoration-thickness:2px; }
+    a:focus-visible { outline:2px solid var(--link); outline-offset:4px; }
+    .brand { color:var(--ink); font-weight:750; text-decoration:none; }
+    .skip { position:absolute; top:-5rem; left:1rem; background:var(--paper); padding:.5rem 1rem; }
+    .skip:focus { top:1rem; }
+    main { padding:2.5rem 0; }
+    h1 { margin:0 0 1rem; font-size:clamp(2rem,6vw,3rem); line-height:1.15; letter-spacing:-.04em; }
+    h2 { margin:0 0 .7rem; font-size:1.3rem; line-height:1.3; }
+    p { margin:0 0 1rem; }
+    section { margin-top:2rem; }
+    li { margin:.6rem 0; }
+    ol,ul { padding-left:1.4rem; }
+    .prerequisite { padding:1.3rem; background:var(--card); border:1px solid var(--line); border-left:4px solid var(--link); border-radius:6px; }
+    .prerequisite p:last-child { margin-bottom:0; }
+    .muted,footer { color:var(--muted); font-size:.93rem; }
+    footer { border-top:1px solid var(--line); }
+    @media (prefers-color-scheme:dark) { :root { --paper:#171410; --ink:#f4efe6; --muted:#bfb4a5; --link:#ffad99; --line:#50473d; --card:#211c17; } }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#review">Skip to reviewer setup</a>
+  <div class="page">
+    <header><a class="brand" href="index.html">On Paper</a><a href="privacy.html">Privacy policy</a></header>
+    <main id="review">
+      <h1>Companion reviewer setup</h1>
+      <p>Review On Paper Companion with a fictional resume and application page. The first release supports Chrome 116 or later on macOS 14.4 or later.</p>
+
+      <section class="prerequisite" aria-labelledby="installer-heading" id="desktop-installer">
+        <h2 id="installer-heading">Compatible macOS installer is not yet available</h2>
+        <p>End-to-end review requires a signed On Paper for macOS release with Companion support. Its versioned installer link will appear here when that release is available.</p>
+        <p><strong>The current public stable v2.2.0 does not support this Companion version.</strong> The general desktop download is not a substitute. You can inspect the fictional materials now; the complete test flow must wait for the compatible installer and working AI access.</p>
+        <!-- When a compatible signed build is released, replace this notice with its exact version and persistent versioned macOS installer URL. Never use a generic latest-release link. -->
+      </section>
+
+      <section aria-labelledby="materials-heading">
+        <h2 id="materials-heading">Fictional test materials</h2>
+        <ul>
+          <li><a href="companion-demo.html">Open the fictional application</a> — browser preview only; no employer submission or file upload.</li>
+          <li><a href="assets/companion-reviewer-resume.json" download="companion-reviewer-resume.json">Download the fictional resume (JSON)</a> — Alex Morgan, with fictional career history and reserved example contact details.</li>
+        </ul>
+        <p>AI features use OpenRouter; provider charges may apply. For Chrome Web Store review, the review-only OpenRouter key is supplied privately in the Dashboard <strong>Password</strong> field. Enter it only in the desktop app’s <strong>Settings → AI</strong> and choose <strong>Claude Sonnet 4.6</strong>, the tested model. No credential is published on this page.</p>
+      </section>
+
+      <section aria-labelledby="setup-heading">
+        <h2 id="setup-heading">Set up the app and extension</h2>
+        <ol>
+          <li>Once the compatible versioned installer above is available, install it and keep one On Paper instance running. Use the extension revision supplied for this review.</li>
+          <li>Open <strong>Settings → Account → New profile</strong>, name it <strong>Companion Review (Fictional)</strong>, and choose <strong>Create &amp; switch</strong>. If onboarding appears after switching, use its <strong>Cancel</strong> control.</li>
+          <li>Choose <strong>Resume actions → Import…</strong> beside the resume selector, or <strong>Menu → Import</strong> in a narrow window. Select the downloaded JSON. This imports one resume, not a profile or full backup. Check for <strong>Alex Morgan</strong> and <strong>alex.morgan@example.com</strong>; optionally rename the resume <strong>Product Design</strong>.</li>
+          <li>Copy the review-only OpenRouter key from the Chrome Web Store Dashboard <strong>Password</strong> field into the desktop app’s <strong>Settings → AI</strong>. Select <strong>Claude Sonnet 4.6</strong> and accept the native AI-sharing disclosure when prompted. Never put a key into this page, the extension, a screenshot, or a public support message.</li>
+          <li>Open the <a href="companion-demo.html">fictional application</a> in Chrome and invoke Companion from the toolbar on that tab. Read <strong>Before you connect</strong>, then choose <strong>Agree and continue</strong>.</li>
+          <li>Choose <strong>Open and connect</strong> and approve the request in On Paper. Confirm <strong>Connected</strong>. If pairing does not complete, choose <strong>Cancel and pair manually</strong>, or open <strong>Pair manually</strong>. Copy the token from <strong>Settings → Data → Companion extension</strong> in On Paper, paste it only into the extension, and choose <strong>Pair with token</strong>.</li>
+        </ol>
+        <p class="muted">If a first-launch welcome wizard blocks the main window, use <a href="companion-demo.html#reviewer-setup">the fictional first-launch text and instructions</a> in the demo page’s setup section. The wizard parses TXT/PDF/DOCX or pasted text using AI; import the JSON through Resume actions afterward.</p>
+      </section>
+
+      <section aria-labelledby="test-heading">
+        <h2 id="test-heading">Review the main flow</h2>
+        <ol>
+          <li>Select the fictional resume and choose <strong>Prepare autofill review</strong>. Review all nine fields. Work authorization and EEO gender should stay manual. Edit a supported answer before filling.</li>
+          <li>Choose <strong>Fill reviewed fields</strong>. Check the supported values and visible PDF filename on the page. Confirm availability if the model leaves it unanswered. With six ordinary answers and the PDF present, <strong>Preview demo application</strong> reports <strong>7 of 9 fields completed</strong>; the two sensitive controls remain blank.</li>
+          <li>Open <strong>Tailor resume</strong> and choose <strong>Analyze fit</strong>. Check that an explanation appears; scores and wording vary. Choose <strong>Create tailored resume</strong> and confirm a separate resume copy is created and selected, with a fresh review and no automatic fill. Real AI operations can take about a minute.</li>
+          <li>If an unanswered editable, non-sensitive field offers <strong>Save answer</strong> after you enter a fictional value, save it and confirm <strong>Answer saved</strong>. Skip this check if every supported field already has a suggestion. Separately choose <strong>Log application</strong> and check the fictional record in On Paper.</li>
+          <li>Choose <strong>Disconnect</strong> while On Paper is running. Confirm browser access is cleared and app access revoked. Reconnect to continue. Quit the app to check recovery, then open it again and choose <strong>Check connection again</strong>.</li>
+        </ol>
+      </section>
+
+      <section aria-labelledby="boundaries-heading">
+        <h2 id="boundaries-heading">Data and test boundaries</h2>
+        <p>Use only the fictional materials. The demo page keeps form values and the selected PDF in the tab and cancels form submission. Requesting Companion assistance still sends the disclosed resume/profile, supported field, and job context through On Paper to OpenRouter and the selected or fallback model provider. Workspace records may sync through your own iCloud account.</p>
+        <p>Companion never activates a site’s final Submit control. On real application sites, filling may trigger the site’s autosave or file upload. Some custom controls and recognized sensitive questions require manual entry. Read the <a href="privacy.html">privacy policy</a> before using AI or personal information.</p>
+      </section>
+    </main>
+    <footer><p>On Paper Companion is published by HyperBuild, Inc. Setup support: <a href="mailto:support@hyperbuild.com">support@hyperbuild.com</a>. Do not send API keys, pairing tokens, or personal resumes.</p></footer>
+  </div>
+</body>
+</html>

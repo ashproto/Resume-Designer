@@ -1,7 +1,7 @@
 // Shared, offline-readable policy copy. Keep website/privacy.html in step when
 // this text changes; the website is published separately from app releases.
 export const PRIVACY_POLICY_TITLE = 'On Paper privacy policy';
-export const PRIVACY_POLICY_DATE = '2026-09-24';
+export const PRIVACY_POLICY_DATE = '2026-09-25';
 export const PRIVACY_POLICY_URL = 'https://onpaper.pro/privacy.html';
 export const PRIVACY_SUPPORT_URL = 'https://github.com/ashproto/Resume-Designer/issues';
 
@@ -32,6 +32,7 @@ export const PRIVACY_POLICY_SECTIONS = [
       'AI assistance uses your OpenRouter API key. Before the first AI request on a device, the app asks for permission to share information with OpenRouter and the model providers it routes to. Depending on the feature, a request can include your message and conversation, resume, career profile and contact details, job descriptions, interview answers, or text extracted from an imported file. These services use that information to produce the result you requested.',
       'OpenRouter forwards requests to a model provider. Automatic fallback can send the request to a different model or provider when the selected one is unavailable. Enabling web search also allows OpenRouter’s search service to process search queries derived from the request. Outside services receive connection and request information, such as your IP address, as part of these requests.',
       'OpenRouter and model providers have their own retention, training, security, and deletion policies. Those practices can vary by provider and by your OpenRouter account settings. On Paper does not promise that every request has zero retention or is excluded from model training. Review OpenRouter’s policy at https://openrouter.ai/privacy and provider details at https://openrouter.ai/providers before sharing sensitive information.',
+      'To show AI usage and costs, the app stores records with the request time, provider, model, feature, token counts (including cached and reasoning tokens when reported), and cost reported by OpenRouter. These records are saved on your device and may sync through your iCloud account. Usage records do not contain your API key or the text of your prompts and answers; chats and documents are stored separately as described above.',
       'You can withdraw permission for future AI requests in Settings. Removing your OpenRouter key also prevents new AI requests from this installation. These choices do not recall information already sent or erase a provider’s copies. Editing and exporting your documents remain available without AI.',
     ],
   },
