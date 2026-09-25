@@ -7,7 +7,7 @@ release workflow succeeds.
 
 ## Current submission gates
 
-The main candidate passed local Chrome functional QA with the isolated macOS demo and real AI after the user reloaded the extension. The subsequent status-copy extension build passed a fresh AI review and app quit/relaunch/reconnect; its runtime JavaScript is unchanged in the final publisher/support-policy package. The rebuilt native Library passed Close/Escape checks, and final native copy changes passed focused live verification. See [`chrome-web-store-readiness-2026-09-24.md`](chrome-web-store-readiness-2026-09-24.md) for exact artifact provenance and observed checks. This is not production-platform validation, Store approval, or publication.
+The current candidate is **0.1.2**, which adds the reviewed profile-context guard during tailoring and passes 415 extension tests, lint, and strict packaging. It must replace the uploaded 0.1.1 draft. The earlier candidate passed local Chrome functional QA with the isolated macOS demo and real AI after the user reloaded the extension. The subsequent status-copy extension build passed a fresh AI review and app quit/relaunch/reconnect; its runtime JavaScript was unchanged in the 0.1.1 publisher/support-policy package. The 0.1.2 guard has automated regression coverage; its live Chrome flow has not been repeated. The rebuilt native Library passed Close/Escape checks, and final native copy changes passed focused live verification. See [`chrome-web-store-readiness-2026-09-24.md`](chrome-web-store-readiness-2026-09-24.md) for exact artifact provenance and observed checks. This is not production-platform validation, Store approval, or publication.
 
 | Gate | Current disposition |
 | --- | --- |
@@ -20,10 +20,10 @@ The main candidate passed local Chrome functional QA with the isolated macOS dem
 | Real reviewer AI access | The owner committed to providing a dedicated, spending-capped OpenRouter key privately in Dashboard **Password**, with **Username** blank; actual supply remains unconfirmed. Use the native welcome wizard if necessary, or desktop **Settings → AI**, and tested **Claude Sonnet 4.6**. Confirm access remains usable throughout review. Never bundle credentials. |
 | Reviewer fixture/import | Publish a durable fictional fixture/import through the normal authorized release process. |
 | Listing images | The 128×128 listing icon and 440×280 promo tile are complete in `extension/store-assets/`. The owner reports product screenshots saved in the Dashboard on September 25; verify their final UI and absence of private data before submission. The earlier local export block is preserved in the readiness history. |
-| Final artifact | Extension tests (413/14) and lint passed before the final manifest-description-only change; the final macOS-first package build, strict validator, and ZIP integrity passed. ZIP: 672,930 bytes, 12 files, SHA-256 `2c483546a2c390516d23006fa9f0bfedc47d0e5c219d0b92a31630218b77167e`. Runtime JavaScript is identical to the status-copy build that passed review/reconnect; final offline publisher/support copy and mail link rendered live. The last package change is only the macOS-first manifest description. The readiness record preserves all build provenance. |
+| Final artifact | Version **0.1.2**: **415 tests/14 files**, lint, production build, strict Store validator, and ZIP integrity passed. Two profile-switch/reload regression cases failed before the fix; all 50 sidepanel cases pass afterward. ZIP: **673,259 bytes**, 12 files, SHA-256 `986da1028dff5348057155b66e6de1cc5d6e3573bc766960adf999d681def502`. Runtime differs from 0.1.1; historical live checks are not a fresh 0.1.2 Chrome check. |
 | First-release production/manual checks | Signed macOS installer, Store installation/update, URI cold launch, Chrome browser restart, and the applicable macOS README checklist remain open. |
 | Later Windows release | Windows GNU cross-target compilation passed. Windows signing, installation/runtime, and manual feature tests remain deferred; they do not block the macOS-only first release. |
-| Store status | No upload/submission/publication performed by preparing these files. |
+| Store status | Owner reports the 0.1.1 draft and screenshots uploaded. Replace the package with 0.1.2 before submission; no review submission or publication is established. |
 
 ## What is automated
 

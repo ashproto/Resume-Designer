@@ -40,4 +40,6 @@ The user remains responsible for reviewing values and deciding whether to submit
 
 ## Evidence is separate from submission readiness
 
+The current extension candidate is **0.1.2** and must replace the uploaded 0.1.1 draft. Its profile-context tailoring fix passes two regression cases, the complete 415-test extension suite, lint, and strict packaging. The live checks below describe earlier builds; they have not been repeated on 0.1.2.
+
 The local macOS checks passed warm automatic native consent, rejection, extension cancel/manual recovery, retry/approval, and disconnect/revoke. Real provider mapping filled seven fields including a PDF, left two sensitive fields blank, and produced a 7/9 local preview; fit analysis, application logging, saved-answer reuse, and a tailored resume copy also passed. Later real-AI review and app reconnect checks passed. See the [readiness record](chrome-web-store-readiness-2026-09-24.md) for exact build provenance and remaining gates. For the first macOS release, URI cold launch, Chrome restart, the production signed macOS installer, and an actual Store-installed extension still require their own checks. Windows runtime/signing and release validation are deferred to a future Windows release and do not block this macOS-only submission.

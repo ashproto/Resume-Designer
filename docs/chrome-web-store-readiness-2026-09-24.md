@@ -2,9 +2,20 @@
 
 **Status: automated checks, main-candidate local live QA, final-build review/reconnect checks, and the native Library close recheck passed; production submission gates remain open.** This report records the pre-commit verification checkpoint. No Store upload, publication, or website deployment was performed. The owner subsequently authorized committing and pushing the Companion work and opening a draft PR to `next`; merge and release remain pending.
 
-## Candidate
+## September 25 review-fix candidate — 0.1.2
 
-The final macOS-first package is identified below. The separate hashes preserve which builds received the main functional checks and subsequent review/reconnect checks.
+Version **0.1.2** supersedes the previously uploaded 0.1.1 draft. Replace the Dashboard package before submission.
+
+- Fix: if the active profile context changes after tailoring succeeds but before its connection refresh returns, discard the old result, clear profile-scoped review state, and adopt the current resume list without mapping or filling from the old context.
+- Meaningful regression evidence: both a different-profile switch and a same-profile reload with a reused resume ID failed before the guard; all **50 sidepanel tests** passed after the fix, including same-context tailoring and changed-page behavior.
+- Full extension suite: **415 tests passed across 14 files**. Extension lint, production build, strict Store validator, and ZIP integrity passed.
+- ZIP: [`extension/artifacts/on-paper-companion-0.1.2.zip`](../extension/artifacts/on-paper-companion-0.1.2.zip), **673,259 bytes**, **12 files**.
+- SHA-256: `986da1028dff5348057155b66e6de1cc5d6e3573bc766960adf999d681def502`.
+- The package contains a runtime change; the earlier Chrome live checks below remain evidence for 0.1.1 and its predecessors, not a repeated live check of 0.1.2. Production installer, cold-launch/browser-restart, and Store-install gates remain open.
+
+## September 24 candidate — 0.1.1 (superseded)
+
+The previous macOS-first package is identified below. The separate hashes preserve which builds received the main functional checks and subsequent review/reconnect checks.
 
 - Source state at verification: `feat/companion-extension`, based on `4840a475` plus the completed implementation later authorized for commit. The rebased history contains `next` commit `a955735f2c838ffe562a396947f5453c9c3f3bb0`.
 - Version: **0.1.1**.

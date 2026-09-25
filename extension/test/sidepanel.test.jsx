@@ -1327,7 +1327,7 @@ describe('App explicit workflow', () => {
         .mockResolvedValueOnce({
           connected: true,
           profileId: 'profile-1',
-          profileContextId: 'context-2',
+          profileContextId: 'context-1',
           resumes: [{ id: tailoredId, name: 'Staff Product Engineer — Acme' }],
         }),
       scanPage: vi.fn()
@@ -1369,7 +1369,7 @@ describe('App explicit workflow', () => {
     expect(client.fillPage).not.toHaveBeenCalled();
     expect(labelled('Resume').value).toBe(tailoredId);
     expect(client.createMapping).toHaveBeenLastCalledWith(
-      'context-2', tailoredId, [tailoredDescriptors[0]], { job: { company: 'Acme', title: 'Staff Product Engineer', description: 'Lead product development.' }, model: 'provider/test-model' },
+      'context-1', tailoredId, [tailoredDescriptors[0]], { job: { company: 'Acme', title: 'Staff Product Engineer', description: 'Lead product development.' }, model: 'provider/test-model' },
     );
     expect(labelled('Full name').value).toBe('Tailored Jane');
     expect(container.textContent).toContain('Country');
@@ -1398,7 +1398,7 @@ describe('App explicit workflow', () => {
         .mockResolvedValueOnce({
           connected: true,
           profileId: 'profile-1',
-          profileContextId: 'context-2',
+          profileContextId: 'context-1',
           resumes: [{ id: tailoredId, name: 'Tailored résumé' }],
         }),
       scanPage: vi.fn()
@@ -1421,6 +1421,65 @@ describe('App explicit workflow', () => {
     expect(client.fillPage).not.toHaveBeenCalled();
     expect(container.querySelector('.workflow-status')?.textContent)
       .toMatch(/page changed.*prepare a new autofill review/i);
+  });
+
+  it.each([
+    { scenario: 'a different profile', profileId: 'profile-2', currentResumeId: 'resume-2' },
+    { scenario: 'a reloaded profile with a reused resume id', profileId: 'profile-1', currentResumeId: 'resume-tailored' },
+  ])('discards a tailored result when the refresh observes $scenario', async ({ profileId, currentResumeId }) => {
+    const refresh = deferred();
+    const descriptors = [descriptor('name', { label: 'Full name' })];
+    const page = {
+      company: 'Old Company', title: 'Old role', description: 'Build products.',
+      url: 'https://jobs.test/one', fingerprint: 'job-one',
+    };
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors, page })),
+      createMapping: vi.fn(async () => ({
+        fields: [mapped('name', 'Old profile answer')], needs_human: [],
+      })),
+      createTailoredResume: vi.fn(async () => ({
+        created: true,
+        profileContextId: 'context-1',
+        resume: { id: 'resume-tailored', name: 'Private old-profile tailored resume' },
+      })),
+    });
+    await renderApp(client, { heartbeatMs: 0 });
+    await scanAndCreate(client);
+    expect(labelled('Full name').value).toBe('Old profile answer');
+    client.checkConnection.mockImplementationOnce(() => refresh.promise);
+    await click(button('Tailor resume'));
+    await click(button('Create tailored resume'));
+    expect(client.createTailoredResume).toHaveBeenCalledOnce();
+    expect(client.checkConnection).toHaveBeenCalledTimes(2);
+
+    // The old-context mutation has succeeded; the app switches before its
+    // following connection refresh returns. No background error rejects it.
+    await act(async () => refresh.resolve({
+      connected: true,
+      profileId,
+      profileContextId: 'context-2',
+      resumes: [{ id: currentResumeId, name: 'Current profile resume' }],
+    }));
+    await settle();
+
+    expect([...container.querySelector('#resume-picker').options]
+      .map((option) => ({ id: option.value, name: option.textContent })))
+      .toEqual([{ id: currentResumeId, name: 'Current profile resume' }]);
+    expect(container.querySelector('#resume-picker').value).toBe(currentResumeId);
+    expect(container.textContent).not.toContain('Private old-profile tailored resume');
+    expect(container.textContent).toMatch(/reloaded or switched profiles/i);
+    expect(client.scanPage).toHaveBeenCalledTimes(2);
+    expect(client.createMapping).toHaveBeenCalledOnce();
+    expect(client.fillPage).not.toHaveBeenCalled();
+    await click(button('Autofill'));
+    expect(container.querySelector('.review-list')).toBeNull();
+    expect(button('Prepare autofill review').disabled).toBe(false);
+
+    await click(button('Prepare autofill review'));
+    expect(client.createMapping).toHaveBeenLastCalledWith(
+      'context-2', currentResumeId, descriptors, expect.any(Object),
+    );
   });
 
   it('contains no submit capability and uses explicit button types', async () => {

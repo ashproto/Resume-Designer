@@ -970,6 +970,13 @@ function Workspace({
         setConnection(refreshed);
         return;
       }
+      if (refreshed.profileContextId !== ready.connection.profileContextId) {
+        resetProfileScopedState();
+        setConnection(refreshed);
+        setSelectedResumeId(refreshed.resumes[0]?.id ?? '');
+        setJobActionStatus('On Paper reloaded or switched profiles. Review the refreshed resume list before continuing.');
+        return;
+      }
       if (!refreshed.resumes.some((resume) => resume.id === tailored.id)) {
         refreshed = { ...refreshed, resumes: [...refreshed.resumes, tailored] };
       }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "On Paper Companion",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Review and fill job applications with On Paper. Requires On Paper for macOS and your own OpenRouter key for AI.",
   "minimum_chrome_version": "116",
   "icons": {
