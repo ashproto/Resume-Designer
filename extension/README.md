@@ -161,7 +161,7 @@ field.
 - **Disconnected startup:** the panel does not launch anything by itself. It shows an explicit open/connect action plus a download path for users who have not installed the app.
 - **Wrong process on the fixed port:** a health response with the wrong identity is shown as a port conflict and no bearer token is sent.
 - **Incompatible app:** an old protocol or missing required capability is shown as **Update On Paper** rather than as connected.
-- **Ambiguous write failure:** answer saving and application logging are not blindly replayed. Check the app before trying the write again.
+- **Ambiguous write failure:** retries of the same application log reuse its request identity so a late save cannot create a duplicate. Pending identity survives panel reopening within the browser session. If reopened details differ from an uncertain earlier log, check On Paper and restore those details to retry, or choose **Start over** to begin another application. Answer saving remains an explicit action.
 - **Restricted browser page:** move to an HTTPS application page; Chrome does
   not allow injection into pages such as `chrome://extensions`, and the
   extension refuses non-loopback plain HTTP pages.
