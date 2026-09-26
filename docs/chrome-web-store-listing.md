@@ -62,7 +62,7 @@ Requires On Paper for macOS. AI features require your own OpenRouter key; usage 
 | `sidePanel` | Displays the field-review, autofill, connection, resume, fit-analysis, and application-log interface beside the current job application. |
 | `activeTab` | Grants temporary access only to the HTTPS application page where the user invokes the extension, instead of persistent access to every visited site. HTTP is accepted only for loopback development fixtures. |
 | `scripting` | Injects packaged scanning and filling code into that explicitly selected page after a user action. It is not used for remote code or persistent monitoring. |
-| `storage` | Stores the first-use disclosure choice locally and the On Paper loopback pairing credential in memory-backed session storage, restricted to trusted extension contexts. The credential is cleared on extension reload, update, disable, or browser restart and is never persisted to Chrome’s local or sync storage. |
+| `storage` | Stores the first-use disclosure choice locally. Memory-backed session storage, restricted to trusted extension contexts, holds the On Paper pairing credential and a pending application request identifier/fingerprint used to prevent duplicate saves after an interruption. The credential is cleared on extension reload, update, disable, or browser restart and is never persisted to Chrome’s local or sync storage. |
 | `http://127.0.0.1:17872/*` | Communicates only with the On Paper desktop app's loopback bridge on the user's own computer. It provides no general website access. |
 
 The extension does not request `<all_urls>`, does not install a persistent

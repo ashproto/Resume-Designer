@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   BRIDGE_BASE_URL,
+  REQUIRED_CAPABILITIES,
   BridgeError,
   createBridgeClient,
 } from '../src/bridgeClient.js';
@@ -65,17 +66,7 @@ describe('createBridgeClient', () => {
       ok: true,
       app: 'resume-designer',
       protocolVersion: 2,
-      capabilities: [
-        'app.launch',
-        'pairing.challenge',
-        'profile.context',
-        'resume.pdf',
-        'ai.complete',
-        'ai.job-fit',
-        'ai.tailored-resume',
-        'profile.answers',
-        'applications.log',
-      ],
+      capabilities: [...REQUIRED_CAPABILITIES],
     }));
     const getToken = vi.fn(async () => 'must-not-leak');
 
@@ -525,4 +516,10 @@ describe('mutation cancellation while reading the session token', () => {
     await Promise.resolve();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+});
+
+
+it('requires durable application idempotency before connecting', async () => {
+  const client = createBridgeClient({ fetchImpl: async () => jsonResponse({ ok: true, app: 'resume-designer', protocolVersion: 2, capabilities: REQUIRED_CAPABILITIES.filter((capability) => capability !== 'applications.idempotent') }) });
+  await expect(client.health()).rejects.toMatchObject({ code: 'app_update_required' });
 });

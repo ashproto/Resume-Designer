@@ -22,6 +22,8 @@ const INCOMPATIBLE_ERROR_CODES = new Set([
 const LAUNCH_ERROR_CODES = new Set(['launch_failed', 'port_conflict']);
 const RECONNECT_DELAY_MS = 500;
 const DEFAULT_HEARTBEAT_MS = 5_000;
+const APPLICATION_REQUEST_KEY = 'pendingApplicationRequest';
+const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function visibleError(error) {
   const message = error instanceof Error && error.message
@@ -184,6 +186,7 @@ function Workspace({
   client = runtimeClient,
   heartbeatMs = DEFAULT_HEARTBEAT_MS,
   createRequestId = defaultRequestId,
+  applicationRequestStorage = globalThis.chrome?.storage?.session,
   onDisconnected,
 }) {
   const [connection, setConnection] = useState({
@@ -226,10 +229,47 @@ function Workspace({
   const logPending = useRef(false);
   const heartbeatPending = useRef(false);
   const tailoringRequest = useRef(null);
+  const applicationRequest = useRef(null);
+  const applicationDraft = useRef(null);
+  const freshApplicationIntent = useRef(false);
+  const applicationStorageQueue = useRef(Promise.resolve());
   const pairingGeneration = useRef(0);
   const pairingAttempt = useRef(null);
 
+  const withApplicationStorage = useCallback((operation) => {
+    const result = applicationStorageQueue.current.then(() => operation(applicationRequestStorage));
+    applicationStorageQueue.current = result.catch(() => {});
+    return result;
+  }, [applicationRequestStorage]);
+
+  const clearApplicationRequest = useCallback(async () => {
+    await withApplicationStorage(async (storage) => {
+      await storage?.remove(APPLICATION_REQUEST_KEY);
+      applicationRequest.current = null;
+      applicationDraft.current = null;
+      freshApplicationIntent.current = true;
+    });
+  }, [withApplicationStorage]);
+
+  useEffect(() => {
+    if (connection.kind !== 'connected') return undefined;
+    let active = true;
+    void withApplicationStorage(async (storage) => {
+      const pending = applicationRequest.current
+        ?? (await storage?.get(APPLICATION_REQUEST_KEY))?.[APPLICATION_REQUEST_KEY];
+      if (!active || !pending || pending.profileId === connection.profileId) return;
+      await storage?.remove(APPLICATION_REQUEST_KEY);
+      if (!active || applicationRequest.current?.profileId === connection.profileId) return;
+      applicationRequest.current = null;
+      applicationDraft.current = null;
+      freshApplicationIntent.current = true;
+    }).catch((error) => { if (active) setRuntimeError(error); });
+    return () => { active = false; };
+  }, [connection.kind, connection.profileId, withApplicationStorage]);
+
   const resetPostScanState = useCallback(() => {
+    // A lost response or nonce-only desktop restart invalidates the review,
+    // but the same application may already be durable. Keep its request ID.
     setReviewStatus('');
     setPendingReview(null);
     setReviewItems([]);
@@ -406,6 +446,7 @@ function Workspace({
       return;
     }
     if (PAIRING_ERROR_CODES.has(error?.code)) {
+      await clearApplicationRequest().catch(() => {});
       resetProfileScopedState();
       setConnection({
         kind: 'needs_pairing', profileId: '', profileContextId: '', resumes: [],
@@ -590,14 +631,21 @@ function Workspace({
     }
   }
 
-  function handleResumeChange(event) {
+  async function handleResumeChange(event) {
     if (!beginOperation('resume-change')) return;
-    setSelectedResumeId(event.target.value);
-    setFitAnalysis(null);
-    setJobActionStatus('');
-    tailoringRequest.current = null;
-    resetPostScanState();
-    queueMicrotask(() => finishOperation('resume-change'));
+    const nextResumeId = event.target.value;
+    try {
+      await clearApplicationRequest();
+      setSelectedResumeId(nextResumeId);
+      setFitAnalysis(null);
+      setJobActionStatus('');
+      tailoringRequest.current = null;
+      resetPostScanState();
+    } catch (error) {
+      setRuntimeError(error);
+    } finally {
+      finishOperation('resume-change');
+    }
   }
 
   function handleModelChange(event) {
@@ -644,8 +692,15 @@ function Workspace({
         const result = await client.scanPage();
         const descriptors = Array.isArray(result?.descriptors) ? result.descriptors : [];
         const page = result?.page && typeof result.page === 'object' ? result.page : {};
-        setCompany(String(page.company ?? ''));
-        setTitle(String(page.title ?? ''));
+        const pendingLog = applicationDraft.current;
+        const samePendingApplication = pendingLog
+          && pendingLog.profileId === activeConnection.profileId
+          && pendingLog.variantId === activeResumeId
+          && pendingLog.url === String(page.url ?? '')
+          && pendingLog.pageCompany === String(page.company ?? '')
+          && pendingLog.pageTitle === String(page.title ?? '');
+        setCompany(samePendingApplication ? pendingLog.company : String(page.company ?? ''));
+        setTitle(samePendingApplication ? pendingLog.title : String(page.title ?? ''));
         const matchesJobDraft = samePage(page, jobDraft);
         const job = jobFromPage(page, matchesJobDraft ? manualJobDescription : '');
         setJobDraft(page);
@@ -720,13 +775,19 @@ function Workspace({
     }
   }
 
-  function handleStartOver() {
+  async function handleStartOver() {
     if (!beginOperation('start-over')) return;
     setRuntimeError(null);
-    setCompany('');
-    setTitle('');
-    resetPostScanState();
-    queueMicrotask(() => finishOperation('start-over'));
+    try {
+      await clearApplicationRequest();
+      setCompany('');
+      setTitle('');
+      resetPostScanState();
+    } catch (error) {
+      setRuntimeError(error);
+    } finally {
+      finishOperation('start-over');
+    }
   }
 
   function handleReviewChange(fieldId, value) {
@@ -857,13 +918,50 @@ function Workspace({
         setLogState('idle');
         return;
       }
-      await client.logApplication({
+      const payload = {
         profileContextId: ready.connection.profileContextId,
         variantId: selectedResumeId,
         company,
         title,
-      });
+      };
+      // Keep only opaque identity metadata in browser-session storage. The
+      // desktop nonce and mutable form fingerprint must not change a retry.
+      const identityBytes = new TextEncoder().encode(JSON.stringify([
+        ready.connection.profileId, payload.variantId, payload.company,
+        payload.title, payload.notes ?? '', reviewContext?.page?.url ?? '',
+      ]));
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', identityBytes);
+      const fingerprint = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+      let pending = applicationRequest.current;
+      if (!pending && !freshApplicationIntent.current && applicationRequestStorage) {
+        pending = (await withApplicationStorage((storage) => storage.get(APPLICATION_REQUEST_KEY)))[APPLICATION_REQUEST_KEY];
+        // A reopened panel has only a hash, not the user's edited job fields.
+        // A mismatch cannot safely imply they intended a second application.
+        if (pending?.profileId === ready.connection.profileId && pending.fingerprint !== fingerprint) {
+          throw new Error('An earlier application log may have completed. Check On Paper, then choose Start over before logging another application.');
+        }
+      }
+      if (pending?.fingerprint !== fingerprint || pending?.profileId !== ready.connection.profileId
+        || !REQUEST_ID_PATTERN.test(pending?.requestId ?? '')) {
+        pending = { profileId: ready.connection.profileId, fingerprint, requestId: createRequestId() };
+      }
+      applicationRequest.current = pending;
+      applicationDraft.current = {
+        profileId: ready.connection.profileId, variantId: payload.variantId,
+        company: payload.company, title: payload.title, url: String(reviewContext?.page?.url ?? ''),
+        pageCompany: String(reviewContext?.page?.company ?? ''),
+        pageTitle: String(reviewContext?.page?.title ?? ''),
+      };
+      // Fail before dispatch if identity cannot survive a panel close/reopen.
+      await withApplicationStorage((storage) => storage?.set({ [APPLICATION_REQUEST_KEY]: pending }));
+      freshApplicationIntent.current = false;
+      await client.logApplication({ ...payload, requestId: pending.requestId });
       setLogState('logged');
+      applicationRequest.current = null;
+      applicationDraft.current = null;
+      // A cleanup failure cannot turn an acknowledged write into a failed log.
+      // Retaining the old ID is safe: a reopened panel receives the same record.
+      await withApplicationStorage((storage) => storage?.remove(APPLICATION_REQUEST_KEY)).catch(() => {});
     } catch (error) {
       await handleWorkflowError(error);
       setLogState('idle');

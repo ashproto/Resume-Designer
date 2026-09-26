@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { BridgeError } from '../src/bridgeClient.js';
+import { BridgeError, REQUIRED_CAPABILITIES } from '../src/bridgeClient.js';
 import { createBackgroundService } from '../src/background.js';
 
 const HEALTH = {
@@ -8,17 +8,7 @@ const HEALTH = {
   app: 'resume-designer',
   version: '1.0.0',
   protocolVersion: 2,
-  capabilities: [
-    'app.launch',
-    'pairing.challenge',
-    'profile.context',
-    'resume.pdf',
-    'ai.complete',
-    'ai.job-fit',
-    'ai.tailored-resume',
-    'profile.answers',
-    'applications.log',
-  ],
+  capabilities: [...REQUIRED_CAPABILITIES],
 };
 
 function jsonResponse(body, { status = 200 } = {}) {
@@ -42,12 +32,14 @@ function createChrome({
   token = '',
   consent = true,
   legacyLocalToken = '',
+  pendingApplicationRequest = null,
   tab = { id: 17, windowId: 4, url: 'https://jobs.example.test/apply' },
   contentResponse,
 } = {}) {
   let storedConsent = consent ? 1 : null;
   let storedToken = token;
   let storedLegacyToken = legacyLocalToken;
+  let storedApplicationRequest = pendingApplicationRequest;
   const listeners = {};
   const chromeApi = {
     action: {
@@ -85,9 +77,11 @@ function createChrome({
         }),
       },
       session: {
-        get: vi.fn(async () => ({ bridgeToken: storedToken })),
+        remove: vi.fn(async (key) => { if (key === 'pendingApplicationRequest') storedApplicationRequest = null; }),
+        get: vi.fn(async () => ({ bridgeToken: storedToken, pendingApplicationRequest: storedApplicationRequest })),
         set: vi.fn(async (value) => {
-          storedToken = value.bridgeToken;
+          if ('bridgeToken' in value) storedToken = value.bridgeToken;
+          if ('pendingApplicationRequest' in value) storedApplicationRequest = value.pendingApplicationRequest;
         }),
         setAccessLevel: vi.fn(async () => undefined),
       },
@@ -1008,6 +1002,7 @@ describe('createBackgroundService', () => {
       variantId: 'resume-1',
       company: 'Acme',
       title: 'Engineer',
+      requestId: '550e8400-e29b-41d4-a716-446655440000',
       notes: 'Referred',
       ignored: 'do not send',
     });
@@ -1018,7 +1013,7 @@ describe('createBackgroundService', () => {
       { profileContextId: 'context-1', question: 'Notice period?', answer: 'Two weeks' },
       {
         profileContextId: 'context-1', variantId: 'resume-1', company: 'Acme',
-        title: 'Engineer', notes: 'Referred',
+        title: 'Engineer', requestId: '550e8400-e29b-41d4-a716-446655440000', notes: 'Referred',
       },
     ]);
   });
@@ -1492,4 +1487,18 @@ describe('disconnecting pending profile mutations', () => {
     expect(requestSignal.aborted).toBe(true);
     expect(await outcome).toMatchObject({ code: 'not_paired', retryable: false });
   });
+});
+
+
+it('purges pending application identity on disconnect', async () => {
+  const { chromeApi } = createChrome({ token: 'paired', pendingApplicationRequest: { profileId: 'profile-old', fingerprint: 'opaque-hash', requestId: '550e8400-e29b-41d4-a716-446655440000' } });
+  const fetchImpl = vi.fn(async (url) => {
+    if (url.endsWith('/health')) return jsonResponse(HEALTH);
+    if (url.endsWith('/resumes')) return jsonResponse({ profileId: 'profile-new', profileContextId: 'context-new', resumes: [] });
+    if (url.endsWith('/pairing/revoke')) return jsonResponse({ ok: true });
+    throw new Error(`Unexpected URL ${url}`);
+  });
+  const service = createBackgroundService({ chromeApi, fetchImpl });
+  await service.handleMessage({ type: 'pairing.disconnect' });
+  expect((await chromeApi.storage.session.get('pendingApplicationRequest')).pendingApplicationRequest).toBeNull();
 });

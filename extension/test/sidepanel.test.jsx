@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { readFile } from 'node:fs/promises';
+import { webcrypto } from 'node:crypto';
 import { resolve } from 'node:path';
 
 import { act } from 'react';
@@ -178,6 +179,7 @@ async function scanAndCreate(client) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('crypto', webcrypto);
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -187,6 +189,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('runtimeClient', () => {
@@ -204,7 +207,7 @@ describe('runtimeClient', () => {
     await client.fillPage('context-1', 'resume-1', fields);
     await client.saveAnswer('context-1', 'Question?', 'Answer');
     await client.logApplication({
-      profileContextId: 'context-1', variantId: 'resume-1', company: 'Acme', title: 'Engineer', notes: 'Optional',
+      profileContextId: 'context-1', requestId: '550e8400-e29b-41d4-a716-446655440000', variantId: 'resume-1', company: 'Acme', title: 'Engineer', notes: 'Optional',
     });
 
     expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
@@ -217,6 +220,7 @@ describe('runtimeClient', () => {
       { type: 'answer.save', profileContextId: 'context-1', question: 'Question?', answer: 'Answer' },
       {
         type: 'application.log',
+        requestId: '550e8400-e29b-41d4-a716-446655440000',
         profileContextId: 'context-1',
         variantId: 'resume-1',
         company: 'Acme',
@@ -1074,8 +1078,9 @@ describe('App explicit workflow', () => {
       await Promise.resolve();
     });
 
-    expect(client.logApplication).toHaveBeenCalledOnce();
+    await waitFor(() => expect(client.logApplication).toHaveBeenCalledOnce());
     expect(client.logApplication).toHaveBeenCalledWith({
+      requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       profileContextId: 'context-1',
       variantId: 'resume-1',
       company: 'Edited Co',
@@ -1774,5 +1779,248 @@ describe('review page binding', () => {
     expect(labelled('Full name').value).toBe('Fresh Jordan');
     await click(button('Fill reviewed fields'));
     expect(client.fillPage).toHaveBeenLastCalledWith('context-1', 'resume-1', [{ field_id: 'name', value: 'Fresh Jordan' }], { page: second, descriptors });
+  });
+});
+
+
+describe('idempotent application logging', () => {
+  const requestIds = ['550e8400-e29b-41d4-a716-446655440000', '650e8400-e29b-41d4-a716-446655440000'];
+  function loggingClient() {
+    return makeClient({
+      scanPage: vi.fn(async () => ({ descriptors: [descriptor('name', { label: 'Full name' })], page: { url: 'https://jobs.test/one', fingerprint: 'form-one', company: 'Acme', title: 'Engineer' } })),
+      createMapping: vi.fn(async () => ({ fields: [mapped('name', 'Jane')], needs_human: [] })),
+      fillPage: vi.fn(async () => ({ filled: ['name'], unfilled: [] })),
+      logApplication: vi.fn().mockRejectedValueOnce(new RuntimeMessageError({ message: 'Response was lost', code: 'app_timeout', status: 504, retryable: true })).mockResolvedValue({ application: { id: 'app-1' } }),
+    });
+  }
+  async function readyToLog() {
+    await click(button('Prepare autofill review'));
+    await waitFor(() => expect(button('Fill reviewed fields').disabled).toBe(false));
+    await click(button('Fill reviewed fields'));
+    await waitFor(() => expect(button('Log application').disabled).toBe(false));
+  }
+  async function firstTimeout(client) {
+    await click(button('Log application'));
+    await waitFor(() => expect(client.logApplication).toHaveBeenCalledOnce());
+    await waitFor(() => expect(button('Log application').disabled).toBe(false));
+  }
+  async function successfulRetry(client) {
+    await click(button('Log application'));
+    await waitFor(() => expect(button('Application logged').disabled).toBe(true));
+    expect(client.logApplication).toHaveBeenCalledTimes(2);
+  }
+  function sessionStorage() {
+    const data = {};
+    return {
+      data,
+      get: vi.fn(async (key) => ({ [key]: data[key] })),
+      set: vi.fn(async (values) => Object.assign(data, values)),
+      remove: vi.fn(async (key) => { delete data[key]; }),
+    };
+  }
+  const requestIdsSent = (client) => client.logApplication.mock.calls.map(([payload]) => payload.requestId);
+  const requestIdFactory = () => vi.fn().mockReturnValueOnce(requestIds[0]).mockReturnValueOnce(requestIds[1]);
+
+  it('reuses the request after a timeout and reconnect', async () => {
+    const client = loggingClient();
+    const createRequestId = requestIdFactory();
+    await renderApp(client, { heartbeatMs: 0, createRequestId });
+    await readyToLog();
+    await firstTimeout(client);
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual([requestIds[0], requestIds[0]]);
+    expect(createRequestId).toHaveBeenCalledOnce();
+  });
+
+  it('retains pending identity and edited job details through a same-profile restart and refreshed form', async () => {
+    const client = loggingClient();
+    const createRequestId = requestIdFactory();
+    await renderApp(client, { heartbeatMs: 0, createRequestId });
+    await readyToLog();
+    await change(labelled('Role title'), 'User-edited role');
+    await firstTimeout(client);
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-2', resumes: [{ id: 'resume-1', name: 'Backend résumé' }] });
+    client.scanPage.mockResolvedValue({ descriptors: [descriptor('name', { label: 'Full name' })], page: { url: 'https://jobs.test/one', fingerprint: 'form-changed', company: 'Acme', title: 'Engineer' } });
+    await click(button('Log application'));
+    await readyToLog();
+    expect(labelled('Role title').value).toBe('User-edited role');
+    await successfulRetry(client);
+    expect(client.logApplication.mock.calls.map(([payload]) => [payload.profileContextId, payload.requestId])).toEqual([['context-1', requestIds[0]], ['context-2', requestIds[0]]]);
+  });
+
+  it('uses a new identity when a refreshed page reports a different job', async () => {
+    const client = loggingClient();
+    await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory() });
+    await readyToLog();
+    await firstTimeout(client);
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-2', resumes: [{ id: 'resume-1', name: 'Backend résumé' }] });
+    client.scanPage.mockResolvedValue({ descriptors: [descriptor('name', { label: 'Full name' })], page: { url: 'https://jobs.test/one', fingerprint: 'form-changed', company: 'Another company', title: 'Designer' } });
+    await click(button('Log application'));
+    await readyToLog();
+    expect(labelled('Company').value).toBe('Another company');
+    expect(labelled('Role title').value).toBe('Designer');
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual(requestIds);
+  });
+
+  it('uses a new identity when the application payload changes', async () => {
+    const client = loggingClient();
+    await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory() });
+    await readyToLog();
+    await firstTimeout(client);
+    await change(labelled('Role title'), 'Senior Engineer');
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual(requestIds);
+  });
+
+  it('uses a new identity after explicitly starting a new review', async () => {
+    const client = loggingClient();
+    await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory() });
+    await readyToLog();
+    await firstTimeout(client);
+    await click(button('Start over'));
+    await readyToLog();
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual(requestIds);
+  });
+
+  it('recovers only hashed pending identity after closing and reopening the panel', async () => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    const createRequestId = requestIdFactory();
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    await readyToLog();
+    await firstTimeout(client);
+    const stored = JSON.stringify(applicationRequestStorage.data);
+    expect(stored).toContain(requestIds[0]);
+    for (const privateValue of ['Acme', 'Engineer', 'jobs.test', 'Jane']) expect(stored).not.toContain(privateValue);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    client.checkConnection.mockClear();
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    await readyToLog();
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual([requestIds[0], requestIds[0]]);
+    await waitFor(() => expect(applicationRequestStorage.data).toEqual({}));
+  });
+
+  it.each(['Start over', 'restore details'])('blocks a mismatched restored intent until the user chooses to %s', async (recovery) => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    const createRequestId = requestIdFactory();
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    await readyToLog();
+    await change(labelled('Role title'), 'User-edited role');
+    await firstTimeout(client);
+    const stored = structuredClone(applicationRequestStorage.data);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    client.checkConnection.mockClear();
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    await readyToLog();
+    expect(labelled('Role title').value).toBe('Engineer');
+    await click(button('Log application'));
+    await waitFor(() => expect(container.textContent).toContain('An earlier application log may have completed. Check On Paper, then choose Start over before logging another application.'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    expect(createRequestId).toHaveBeenCalledOnce();
+    expect(applicationRequestStorage.data).toEqual(stored);
+    if (recovery === 'Start over') {
+      await click(button('Start over'));
+      await readyToLog();
+    } else {
+      await change(labelled('Role title'), 'User-edited role');
+    }
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual(recovery === 'Start over' ? requestIds : [requestIds[0], requestIds[0]]);
+  });
+
+  it('waits for stored identity before dispatching after a panel restart', async () => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    await renderApp(client, { heartbeatMs: 0, createRequestId: () => requestIds[0], applicationRequestStorage });
+    await readyToLog();
+    await firstTimeout(client);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    client.checkConnection.mockClear();
+    const storedIdentity = deferred();
+    applicationRequestStorage.get.mockImplementation(() => storedIdentity.promise);
+    await renderApp(client, { heartbeatMs: 0, createRequestId: () => requestIds[1], applicationRequestStorage });
+    await readyToLog();
+    await click(button('Log application'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    storedIdentity.resolve({ ...applicationRequestStorage.data });
+    await waitFor(() => expect(client.logApplication).toHaveBeenCalledTimes(2));
+    expect(client.logApplication.mock.calls[1][0].requestId).toBe(requestIds[0]);
+  });
+
+  it.each(['resume', 'profile'])('uses a new identity after changing the %s', async (kind) => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }] });
+    await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory(), applicationRequestStorage });
+    await readyToLog();
+    await firstTimeout(client);
+    if (kind === 'resume') {
+      await change(labelled('Resume'), 'resume-2');
+    } else {
+      client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-2', profileContextId: 'context-2', resumes: [{ id: 'resume-1', name: 'Other profile résumé' }] });
+      await click(button('Log application'));
+    }
+    await waitFor(() => expect(applicationRequestStorage.data).toEqual({}));
+    await readyToLog();
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual(requestIds);
+  });
+
+  it('waits for delayed resume cleanup before permitting another log', async () => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }] });
+    await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory(), applicationRequestStorage });
+    await readyToLog();
+    await firstTimeout(client);
+    const cleanup = deferred();
+    applicationRequestStorage.remove.mockImplementationOnce(async (key) => { await cleanup.promise; delete applicationRequestStorage.data[key]; });
+    await change(labelled('Resume'), 'resume-2');
+    await click(button('Log application'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    cleanup.resolve();
+    await waitFor(() => expect(labelled('Resume').value).toBe('resume-2'));
+    await readyToLog();
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual(requestIds);
+  });
+
+  it.each(['Start over', 'resume change'])('preserves retry identity when %s cleanup fails', async (action) => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    const createRequestId = requestIdFactory();
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }] });
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    await readyToLog();
+    await firstTimeout(client);
+    const stored = structuredClone(applicationRequestStorage.data);
+    applicationRequestStorage.remove.mockRejectedValueOnce(new Error('Could not clear pending identity'));
+    if (action === 'Start over') await click(button('Start over'));
+    else await change(labelled('Resume'), 'resume-2');
+    await waitFor(() => expect(container.textContent).toContain('Could not clear pending identity'));
+    expect(labelled('Resume').value).toBe('resume-1');
+    expect(button('Log application').disabled).toBe(false);
+    expect(applicationRequestStorage.data).toEqual(stored);
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual([requestIds[0], requestIds[0]]);
+    expect(createRequestId).toHaveBeenCalledOnce();
+  });
+
+  it('does not dispatch a mutation when pending identity cannot be retained', async () => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    applicationRequestStorage.set.mockRejectedValue(new Error('Session storage unavailable'));
+    await renderApp(client, { heartbeatMs: 0, applicationRequestStorage });
+    await readyToLog();
+    await click(button('Log application'));
+    await waitFor(() => expect(container.textContent).toContain('Session storage unavailable'));
+    expect(client.logApplication).not.toHaveBeenCalled();
   });
 });

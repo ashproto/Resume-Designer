@@ -26,7 +26,7 @@ vi.mock('../src/persistence.js', () => ({
   generateUniqueVariantName: vi.fn(), getSettings: vi.fn(), getVariants: vi.fn(),
   getUserProfile: vi.fn(), saveVariant: vi.fn(),
 }));
-vi.mock('../src/applications.js', () => ({ addApplication: vi.fn() }));
+vi.mock('../src/applications.js', () => ({ addApplication: vi.fn(), getCompanionApplication: vi.fn(() => null) }));
 vi.mock('../src/learnedAnswers.js', () => ({ getAllLearnedAnswers: vi.fn(), saveLearnedAnswer: vi.fn() }));
 vi.mock('../src/aiService.js', () => ({
   analyzeResumeDataAgainstJobs: vi.fn(), completeForBridge: vi.fn(),
@@ -141,7 +141,7 @@ describe('native pairing request wiring', () => {
 
 describe('native save durability wiring', () => {
   it.each([
-    ['/applications', { variantId: 'v-1', title: 'Engineer' }],
+    ['/applications', { requestId: '550e8400-e29b-41d4-a716-446655440000', variantId: 'v-1', title: 'Engineer' }],
     ['/profile/answers', { question: 'Notice period?', answer: 'Two weeks' }],
   ])('does not send a successful native response for %s when disk flush fails', async (path, payload) => {
     const { getVariants } = await import('../src/persistence.js');

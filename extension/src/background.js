@@ -4,6 +4,7 @@ import { isSensitiveQuestion } from './sensitivity.js';
 
 const STORAGE_KEY = 'bridgeToken';
 const CONSENT_KEY = 'privacyConsentVersion';
+const APPLICATION_REQUEST_KEY = 'pendingApplicationRequest';
 const CONSENT_VERSION = 1;
 
 const SUPPORTED_MESSAGES = new Set([
@@ -591,6 +592,7 @@ export function createBackgroundService({
         }
       }
       await chromeApi.storage.session.set({ [STORAGE_KEY]: '' });
+      await chromeApi.storage.session.remove(APPLICATION_REQUEST_KEY);
       await chromeApi.storage.local.remove(CONSENT_KEY);
       return { disconnected: true, revoked };
     } finally {
@@ -661,6 +663,7 @@ export function createBackgroundService({
       case 'application.log': {
         const payload = {
           profileContextId: message.profileContextId,
+          requestId: message.requestId,
           variantId: message.variantId,
           company: message.company,
           title: message.title,

@@ -201,6 +201,17 @@ export function getApplication(id) {
   return applications.find((a) => a.id === id) || null;
 }
 
+/** Match the original Companion request, even after native edits or an app restart. */
+export function getCompanionApplication({ requestId, fingerprint }) {
+  const existing = applications.find((app) => app.companionRequest?.requestId === requestId);
+  if (existing && existing.companionRequest.fingerprint !== fingerprint) {
+    throw Object.assign(new Error('This application request was already used with different details'), {
+      status: 409, code: 'idempotency_conflict',
+    });
+  }
+  return existing || null;
+}
+
 /**
  * Add an application. Defaults to a 'prepared' draft; creating directly at a
  * later status (the manual "Add application" flow) stamps appliedAt too. An
@@ -219,13 +230,18 @@ export function addApplication({
   status = 'prepared',
   notes = '',
   appliedAt,
-} = {}, { throwOnFailure = false, registerRollback } = {}) {
+} = {}, { throwOnFailure = false, registerRollback, companionRequest } = {}) {
+  if (companionRequest) {
+    const existing = getCompanionApplication(companionRequest);
+    if (existing) return existing;
+  }
   const profile = registerRollback ? getProfileMapping() : null;
   const now = new Date().toISOString();
   const safeStatus = APPLICATION_STATUSES.includes(status) ? status : 'prepared';
   const appliedStamp = safeStatus === 'prepared' ? null : (appliedAt || now);
   const app = {
     id: generateId('app'),
+    ...(companionRequest ? { companionRequest: { ...companionRequest } } : {}),
     variantId,
     variantName,
     jobId,

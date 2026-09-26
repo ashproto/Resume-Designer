@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBridgeRouter } from '../src/bridgeRoutes.js';
 import { appStorage, initAppStorage, __resetAppStorageForTests, setProfileMapping } from '../src/appStorage.js';
-import { addApplication, getAllApplications, initApplications, setApplicationStatus, updateApplication } from '../src/applications.js';
+import { addApplication, getCompanionApplication, getAllApplications, initApplications, setApplicationStatus, updateApplication } from '../src/applications.js';
 import { saveLearnedAnswer, getAllLearnedAnswers, initLearnedAnswers } from '../src/learnedAnswers.js';
 
 const AUTH = 'Bearer test-token';
@@ -10,7 +10,7 @@ const ENDPOINTS = [
   {
     path: '/applications',
     key: 'resume-designer-applications',
-    payload: { variantId: 'v-1', title: 'Engineer', company: 'Example' },
+    payload: { requestId: '550e8400-e29b-41d4-a716-446655440000', variantId: 'v-1', title: 'Engineer', company: 'Example' },
     responseKey: 'application',
     read: getAllApplications,
   },
@@ -28,7 +28,7 @@ function router(overrides = {}) {
     getToken: () => 'test-token',
     profileContextId: 'context-1',
     getVariants: () => ({ 'v-1': { id: 'v-1', name: 'Resume' } }),
-    addApplication,
+    addApplication, getCompanionApplication,
     saveLearnedAnswer,
     flush: () => appStorage.flush(),
     ...overrides,
@@ -225,6 +225,7 @@ describe.each(ENDPOINTS)('$path durable acknowledgement', (endpoint) => {
         getToken: () => token,
         profileContextId: 'context-1',
         getVariants: () => ({ 'v-1': { id: 'v-1', name: 'Resume' } }),
+        getCompanionApplication,
         addApplication: vi.fn(addApplication),
         saveLearnedAnswer: vi.fn(saveLearnedAnswer),
         flush: () => appStorage.flush(),
@@ -309,7 +310,7 @@ it('preserves an overlapping accepted application when another application is re
   const endpoint = ENDPOINTS[0];
   const accepted = handle(request(endpoint));
   await started;
-  const rejected = handle(request({ ...endpoint, payload: { ...endpoint.payload, title: 'Rejected' } }));
+  const rejected = handle(request({ ...endpoint, payload: { ...endpoint.payload, requestId: '550e8400-e29b-41d4-a716-446655440001', title: 'Rejected' } }));
   release();
   expect((await rejected).status).toBe(507);
   const saved = await accepted;

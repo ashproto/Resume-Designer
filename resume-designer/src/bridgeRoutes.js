@@ -25,6 +25,7 @@ export const COMPANION_CAPABILITIES = Object.freeze([
   'ai.tailored-resume',
   'profile.answers',
   'applications.log',
+  'applications.idempotent',
 ]);
 
 const profileChanged = () => json(409, {
@@ -83,6 +84,7 @@ export function createBridgeRouter(deps) {
       if (await deps.flush() !== true) throw new Error('Storage write did not reach disk');
       return result;
     } catch (cause) {
+      if (cause?.status === 409 && cause?.code === 'idempotency_conflict') throw cause;
       try {
         // Replace the queued collection as well as its owner cache. If the
         // corrective write also fails, appStorage retains it for recovery.
@@ -296,21 +298,32 @@ export function createBridgeRouter(deps) {
         if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) {
           return profileChanged();
         }
+        if (typeof parsed.requestId !== 'string'
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.requestId)) {
+          return json(400, { error: 'A UUID v4 application requestId is required', code: 'invalid_request_id' });
+        }
         const variantId = typeof parsed.variantId === 'string' ? parsed.variantId.trim() : '';
         if (!variantId) return json(400, { error: 'variantId is required' });
-        const variant = findVariant(deps.getVariants(), variantId);
-        if (!variant) return json(404, { error: `no resume with id ${variantId}` });
+        const title = typeof parsed.title === 'string' ? parsed.title : '';
+        const company = typeof parsed.company === 'string' ? parsed.company : '';
+        const notes = typeof parsed.notes === 'string' ? parsed.notes : '';
+        const companionRequest = {
+          requestId: parsed.requestId.toLowerCase(),
+          // The profile context is a restart nonce. The profile-owned record
+          // scopes this identity; only the original normalized details bind it.
+          fingerprint: JSON.stringify([variantId, title, company, notes]),
+        };
         assertAuthorized();
-        const application = await persistMutation((registerRollback) => deps.addApplication({
+        const existing = deps.getCompanionApplication(companionRequest);
+        const variant = findVariant(deps.getVariants(), variantId);
+        if (!existing && !variant) return json(404, { error: `no resume with id ${variantId}` });
+        const application = await persistMutation((registerRollback) => existing || deps.addApplication({
           variantId,
           variantName: variant.name,
-          jobSnapshot: {
-            title: typeof parsed.title === 'string' ? parsed.title : '',
-            company: typeof parsed.company === 'string' ? parsed.company : '',
-          },
+          jobSnapshot: { title, company },
           status: 'applied',
-          notes: typeof parsed.notes === 'string' ? parsed.notes : '',
-        }, { throwOnFailure: true, registerRollback }), 'Could not save the application');
+          notes,
+        }, { throwOnFailure: true, registerRollback, companionRequest }), 'Could not save the application');
         assertAuthorized();
         if (deps.writesSuspended?.()) return importInProgress();
         return json(201, { application });
