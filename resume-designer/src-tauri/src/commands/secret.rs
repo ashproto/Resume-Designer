@@ -20,6 +20,9 @@
 //! it destroys the only durable copy. `src/secretStore.js` preserves the
 //! distinction; do not "simplify" it away on either side.
 
+#[cfg(all(feature = "companion-demo", not(all(target_os = "macos", debug_assertions))))]
+compile_error!("companion-demo is only supported for macOS debug builds");
+
 use keyring::{Entry, Error as KeyringError};
 #[cfg(target_vendor = "apple")]
 use security_framework::{
@@ -32,7 +35,14 @@ use security_framework::{
 /// belongs to the same install identity as the data beside it. It is a data
 /// address, not branding, and must not be renamed with the app (see the
 /// naming rules in CLAUDE.md).
+#[cfg(not(feature = "companion-demo"))]
 const SERVICE: &str = "com.resumedesigner.app";
+
+// The adhoc demo has no provisioned identity for the data-protection Keychain.
+// Use the encrypted login Keychain with its own service, never the production
+// credential or a plaintext fallback. This is an explicit debug-only build.
+#[cfg(feature = "companion-demo")]
+const SERVICE: &str = "com.onpaper.companiondemo";
 
 /// Secret names come from a fixed app-side inventory, but validate anyway:
 /// these strings cross the renderer boundary, and a compromised renderer
@@ -186,6 +196,13 @@ fn forget_legacy_local(_name: &str) {}
 /// upgrades it in place — once, because the next read matches the first branch.
 #[tauri::command(async)]
 pub fn secret_get(name: String) -> Result<Option<String>, String> {
+    if cfg!(feature = "companion-demo") {
+        return match local_entry(&name)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(KeyringError::NoEntry) => Ok(None),
+            Err(error) => Err(format!("keychain read {name}: {error}")),
+        };
+    }
     match synchronizable_entry(&name)?.get_password() {
         Ok(v) => return Ok(Some(v)),
         Err(KeyringError::NoEntry) => {}
@@ -229,6 +246,11 @@ pub fn secret_get(name: String) -> Result<Option<String>, String> {
 /// silent failure here would lose the credential.
 #[tauri::command(async)]
 pub fn secret_set(name: String, value: String) -> Result<(), String> {
+    if cfg!(feature = "companion-demo") {
+        return local_entry(&name)?
+            .set_password(&value)
+            .map_err(|error| format!("keychain write {name}: {error}"));
+    }
     match synchronizable_entry(&name)?.set_password(&value) {
         Ok(()) => {}
         // The store is unusable, so write the credential where it CAN go. A key
@@ -317,6 +339,31 @@ mod tests {
         // no other test would notice.
         let decoded = decode_apple_error(SecurityFrameworkError::from_code(-25291));
         assert!(sync_unavailable(&decoded));
+    }
+
+    #[cfg(all(feature = "companion-demo", target_os = "macos", debug_assertions))]
+    #[test]
+    fn companion_demo_roundtrips_only_its_isolated_encrypted_keychain_item() {
+        assert_eq!(SERVICE, "com.onpaper.companiondemo");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let name = format!("synthetic-probe-{}-{nonce}", std::process::id());
+        let value = "synthetic-companion-demo-test-value".to_owned();
+        let written = secret_set(name.clone(), value.clone());
+        let read = written.as_ref().ok().map(|_| secret_get(name.clone()));
+        // Delete only this unique synthetic test item, even when the read fails.
+        let cleanup = local_entry(&name).unwrap().delete_credential();
+        assert!(written.is_ok(), "synthetic local keychain write failed: {written:?}");
+        assert_eq!(read, Some(Ok(Some(value))));
+        assert!(cleanup.is_ok(), "synthetic local keychain cleanup failed: {cleanup:?}");
+    }
+
+    #[cfg(not(feature = "companion-demo"))]
+    #[test]
+    fn normal_build_retains_the_frozen_credential_service() {
+        assert_eq!(SERVICE, "com.resumedesigner.app");
     }
 
     #[test]

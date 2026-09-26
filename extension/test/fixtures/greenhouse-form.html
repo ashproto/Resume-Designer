@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Staff Product Engineer</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "JobPosting",
+        "title": "Staff Product Engineer",
+        "hiringOrganization": {
+          "@type": "Organization",
+          "name": "Example Greenhouse Company"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>Staff Product Engineer</h1>
+      <form>
+        <div>
+          <label for="first_name">First Name</label>
+          <input id="first_name" type="text" aria-required="true">
+        </div>
+
+        <div>
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" required>
+        </div>
+
+        <div>
+          <label for="country">Country</label>
+          <input id="country" role="combobox" aria-required="true" placeholder="Select a country">
+          <input id="country-required-helper" aria-hidden="true" required>
+        </div>
+
+        <div>
+          <label for="office">Favorite office</label>
+          <select id="office" name="office">
+            <option value="">Select an office</option>
+            <option value="nyc">New York</option>
+            <option value="remote">Remote</option>
+          </select>
+        </div>
+
+        <div role="group" aria-labelledby="resume-question">
+          <span id="resume-question">Resume/CV</span>
+          <label for="resume">Attach</label>
+          <input id="resume" type="file" accept=".pdf,.doc,.docx" aria-required="true" hidden>
+        </div>
+
+        <fieldset>
+          <legend>Work authorization</legend>
+          <label for="authorized-yes">Yes</label>
+          <input id="authorized-yes" type="checkbox" name="work_authorization" value="yes">
+          <label for="authorized-no">No</label>
+          <input id="authorized-no" type="checkbox" name="work_authorization" value="no">
+        </fieldset>
+
+        <input id="disabled-helper" type="text" disabled>
+        <fieldset disabled>
+          <legend>Disabled helper group</legend>
+          <input id="fieldset-disabled-helper" type="text">
+        </fieldset>
+        <input id="hidden-helper" type="hidden" name="internal_token">
+        <button type="submit">Submit application</button>
+      </form>
+    </main>
+  </body>
+</html>

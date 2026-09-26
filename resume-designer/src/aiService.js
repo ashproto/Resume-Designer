@@ -1183,12 +1183,12 @@ async function callOpenRouter(modelId, messages, options = {}) {
 /**
  * Minimal completion for the local companion-extension bridge. Unlike chat(),
  * no resume/job context is injected — the bridge request carries its own
- * messages. Uses the settings' default model; tracked as feature 'bridge'.
+ * messages. Uses the request model or app default; tracked as feature 'bridge'.
  */
 export async function completeForBridge(messages, options = {}) {
   if (!getApiKey()) throw new Error('No OpenRouter API key configured. Add your key in Settings.');
   const settings = getSettings();
-  const modelId = validateModelId(settings.defaultModel);
+  const modelId = validateModelId(options.model ?? settings.defaultModel);
   return callOpenRouter(modelId, messages, {
     feature: 'bridge',
     systemPrompt: options.systemPrompt,
@@ -1318,14 +1318,21 @@ export function stripUnaddressableDatePaths(changes) {
  * @param {string} featureName - Optional feature name for tracking (defaults to 'generate')
  * @returns {Object} Object with changes and explanation
  */
-export async function generateResumeChanges(modelId, instruction, targetPath = null, additionalContext = null, featureName = 'generate', options = {}) {
+export async function generateResumeChangesForData(
+  modelId,
+  resumeData,
+  instruction,
+  targetPath = null,
+  additionalContext = null,
+  featureName = 'generate',
+  options = {},
+) {
   // Validate and potentially migrate the model ID
   const validModelId = validateModelId(modelId);
   if (!getApiKey()) {
     throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
-  
-  const resumeData = store.getData();
+
   if (!resumeData) {
     throw new Error('No resume data available');
   }
@@ -1389,6 +1396,25 @@ export async function generateResumeChanges(modelId, instruction, targetPath = n
   }
 }
 
+export async function generateResumeChanges(
+  modelId,
+  instruction,
+  targetPath = null,
+  additionalContext = null,
+  featureName = 'generate',
+  options = {},
+) {
+  return generateResumeChangesForData(
+    modelId,
+    store.getData(),
+    instruction,
+    targetPath,
+    additionalContext,
+    featureName,
+    options,
+  );
+}
+
 /**
  * Analyze resume against job descriptions
  * @param {string} modelId - Model to use
@@ -1397,14 +1423,18 @@ export async function generateResumeChanges(modelId, instruction, targetPath = n
  * @param {string} options.reasoningEffort - Reasoning effort level: 'none', 'low', 'medium', 'high'
  * @returns {Object} Analysis results
  */
-export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {}) {
+export async function analyzeResumeDataAgainstJobs(
+  modelId,
+  resumeData,
+  jobDescriptions,
+  options = {},
+) {
   // Validate and potentially migrate the model ID
   const validModelId = validateModelId(modelId);
   if (!getApiKey()) {
     throw new Error('No OpenRouter API key configured. Please add your key in settings.');
   }
-  
-  const resumeData = store.getData();
+
   if (!resumeData) {
     throw new Error('No resume data available');
   }
@@ -1448,6 +1478,10 @@ export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {})
     console.error('Failed to parse analysis response:', response);
     throw new Error('Failed to parse AI analysis. Please try again.');
   }
+}
+
+export async function analyzeAgainstJobs(modelId, jobDescriptions, options = {}) {
+  return analyzeResumeDataAgainstJobs(modelId, store.getData(), jobDescriptions, options);
 }
 
 /**

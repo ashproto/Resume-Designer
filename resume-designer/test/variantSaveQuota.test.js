@@ -22,6 +22,18 @@ describe('saveVariant persistence contract', () => {
     expect(getVariants()['variant-a'].name).toBe('Variant A');
   });
 
+  it('stores and preserves companion idempotency metadata across later edits', () => {
+    const companionRequest = {
+      requestId: '550e8400-e29b-41d4-a716-446655440000',
+      fingerprint: 'abc123',
+    };
+    saveVariant('variant-a', 'Variant A', { name: 'A' }, { companionRequest });
+    expect(getVariants()['variant-a'].companionRequest).toEqual(companionRequest);
+
+    saveVariant('variant-a', 'Variant A edited', { name: 'A edited' });
+    expect(getVariants()['variant-a'].companionRequest).toEqual(companionRequest);
+  });
+
   it('returns false when storage is full and leaves no phantom variant', () => {
     // Mirror the real-world failure: existing data in storage, then quota.
     saveVariant('variant-a', 'Variant A', { name: 'A' });

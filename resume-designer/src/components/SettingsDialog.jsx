@@ -793,7 +793,7 @@ export default function SettingsDialog() {
                   <div className="mt-6">
                     <SectionHeader
                       title="Companion extension"
-                      description="The browser extension pairs with the app at this address using this token. Treat the token like a password."
+                      description="The browser extension normally connects automatically after you approve it. This address and token are only for advanced manual pairing or troubleshooting; treat the token like a password."
                     />
                     <div className="flex items-center gap-2">
                       <Input readOnly value="http://127.0.0.1:17872" aria-label="Bridge address" className="w-52 shrink-0 font-mono text-xs" />

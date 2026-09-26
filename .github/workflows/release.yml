@@ -411,6 +411,22 @@ jobs:
           echo "----- grouped-changelog.md -----"
           cat grouped-changelog.md
 
+      - name: Select curated release notes
+        id: curated_notes
+        env:
+          CHANNEL: ${{ needs.decide.outputs.channel }}
+          VERSION: ${{ needs.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          available=false
+          curated="docs/releases/${VERSION}.md"
+          if [ "$CHANNEL" = "stable" ] && [ -f "$curated" ]; then
+            # An authored release must not silently fall back to generated copy.
+            node resume-designer/scripts/ci/validate-digest.mjs "$curated" "$VERSION" > curated-release-notes.md
+            available=true
+          fi
+          echo "available=$available" >> "$GITHUB_OUTPUT"
+
       # Rewrite the grouped bullets into friendly, user-facing language via
       # OpenRouter. Best-effort — any failure here (missing secret, API error,
       # timeout) falls back to the grouped output below.
@@ -422,6 +438,7 @@ jobs:
       # and reuses the provider the app itself talks to.
       - name: Rewrite the changelog (OpenRouter)
         id: changelog_ai
+        if: steps.curated_notes.outputs.available != 'true'
         continue-on-error: true
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -490,6 +507,7 @@ jobs:
       - name: Finalize release notes and body
         env:
           AI_OK: ${{ steps.changelog_ai.outcome == 'success' }}
+          CURATED_NOTES: ${{ steps.curated_notes.outputs.available }}
           VERSION: ${{ needs.decide.outputs.version }}
         run: |
           set -euo pipefail
@@ -497,7 +515,10 @@ jobs:
           # -s, not -f: the redirect creates digest-raw.md even when the script
           # exits non-zero, so existence proves nothing and emptiness is the
           # real signal.
-          if [ "$AI_OK" = "true" ] && [ -s digest-raw.md ]; then
+          if [ "$CURATED_NOTES" = "true" ]; then
+            cp curated-release-notes.md release-notes.md
+            digest_ok=true
+          elif [ "$AI_OK" = "true" ] && [ -s digest-raw.md ]; then
             # Validates the digest contract (heading, 1-8 flat bullets,
             # end sentinel) and strips the sentinel. A rejection falls back
             # to the grouped changelog so a release can never break here.

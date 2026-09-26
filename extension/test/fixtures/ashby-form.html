@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Data Engineer</title>
+  </head>
+  <body>
+    <main>
+      <h1>Data Engineer</h1>
+      <form>
+        <div data-field-path="_systemfield_name">
+          <label for="ashby-name">Name</label>
+          <input id="ashby-name" name="_systemfield_name" type="text" required>
+        </div>
+
+        <div data-field-path="_systemfield_location">
+          <div>Location</div>
+          <input role="combobox" aria-required="true">
+        </div>
+
+        <input type="file" tabindex="-1" accept=".pdf,.doc,.docx">
+
+        <div data-field-path="_systemfield_resume">
+          <label for="ashby-resume">Resume</label>
+          <input id="ashby-resume" name="_systemfield_resume" type="file" accept=".pdf,.doc,.docx">
+        </div>
+
+        <div data-field-path="custom_yes_no">
+          <div>Are you willing to travel?</div>
+          <button type="button">Yes</button>
+          <button type="button">No</button>
+          <input type="checkbox" tabindex="-1">
+        </div>
+
+        <input name="ashby-hidden-helper" aria-hidden="true">
+        <input name="ashby-disabled-helper" disabled>
+      </form>
+    </main>
+  </body>
+</html>

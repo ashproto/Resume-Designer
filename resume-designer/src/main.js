@@ -566,6 +566,7 @@ export async function init() {
   //
   // (Print-mode is a separate framework-free entry — print.html /
   // src/printEntry.js — so the main window never short-circuits here.)
+  let bootProfileId = null;
   try {
     await initAppStorage();
     await maybeAutoMigrateLegacyData();
@@ -574,7 +575,8 @@ export async function init() {
     const askAccount = (isTauri && (await getPlatform()) === 'darwin')
       ? () => askDesktopAccountProfiles(parseAccountProfilesAnswer)
       : askAccountProfiles;
-    await ensureProfilesInitialized({ askAccount });
+    // Capture the profile mapped for this boot before the React gate opens.
+    bootProfileId = await ensureProfilesInitialized({ askAccount });
     reportProfilesResolved();            // profiles resolve BEFORE the React gate opens
     // The workspace that was ACTIVE when its tombstone arrived. The purge in
     // the sync reconciliation skips it on purpose — it was still mapped and
@@ -742,7 +744,7 @@ export async function init() {
 
   // Companion-extension bridge (desktop only; no-op in browser dev).
   const { initBridge } = await import('./bridge.js');
-  initBridge().catch((e) => console.error('[Bridge] init failed:', e));
+  initBridge({ profileId: bootProfileId }).catch((e) => console.error('[Bridge] init failed:', e));
 
   // Initialize inline editor
   initInlineEditor();

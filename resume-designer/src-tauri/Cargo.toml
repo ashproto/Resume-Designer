@@ -15,6 +15,10 @@ rust-version = "1.77"
 name = "on_paper_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Isolated local demo only; secret.rs rejects release and non-macOS builds.
+companion-demo = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -68,6 +72,8 @@ tempfile = "3"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # Compare the beta and stable manifest versions for the beta channel's
 # superset update check (commands/updater.rs).
 semver = "1"

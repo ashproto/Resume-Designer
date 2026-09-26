@@ -346,7 +346,7 @@ export default function DetailPane({ variant, applications, onAfterDelete, onClo
         <h4 className="text-[13px] font-medium">Applications</h4>
         {applications.length === 0 && (
           <p className="text-[12.5px] text-muted-foreground">
-            Not linked to any job yet. Tailoring against a job creates a link automatically.
+            No job application is linked to this resume yet. Use Add application to track one.
           </p>
         )}
         {applications.map((app) => (

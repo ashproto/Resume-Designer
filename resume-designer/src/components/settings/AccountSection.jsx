@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { appStorage } from '../../appStorage.js';
 import { isSyncEnabled } from '../../sync/syncModel.js';
 import { SYNC_SUSPENSION_EVENT } from '../../desktopSync.js';
+import { notifyBackupDownloadStarted } from '../../backupFeedback.js';
 import {
   listProfiles, getActiveProfileId, activateProfileDurably, createProfile,
   renameProfileDurably, deleteProfile, deleteProfileDurably, exportProfileBackup,
@@ -203,7 +204,8 @@ export function AccountSection() {
       return;
     }
     try {
-      await exportProfileBackup(p.id);
+      const { filename } = await exportProfileBackup(p.id);
+      notifyBackupDownloadStarted({ filename, profileName: p.name });
     } catch (e) {
       toast.error(String(e.message || e));
     }

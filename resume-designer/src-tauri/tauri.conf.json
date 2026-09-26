@@ -73,6 +73,11 @@
     "createUpdaterArtifacts": true
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["resume-designer"]
+      }
+    },
     "updater": {
       "active": true,
       "endpoints": [

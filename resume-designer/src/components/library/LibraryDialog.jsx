@@ -90,6 +90,9 @@ export default function LibraryDialog() {
   const selected = list.find((v) => v.id === selectedId) || null;
   const selectedApps = applications.filter((a) => a.variantId === selectedId);
 
+  // Closing must release the modal even if the browser never finishes its exit animation.
+  if (!open) return null;
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent

@@ -16,9 +16,34 @@ mod desktop_sync;
 #[cfg(desktop)]
 use tauri::Manager;
 
+/// Bring the existing main window forward without inspecting or logging the
+/// deep-link URL (which may contain a one-time pairing challenge).
+#[cfg(desktop)]
+fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Deep links on Windows/Linux start a second process. This MUST be the
+    // first registered plugin so it can hand the URL to the existing app
+    // before any later plugin observes the duplicate instance.
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                focus_main_window(app);
+            }))
+            .plugin(tauri_plugin_deep_link::init());
+    }
+
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -38,6 +63,17 @@ pub fn run() {
 
             #[cfg(desktop)]
             {
+                use tauri_plugin_deep_link::DeepLinkExt;
+
+                // macOS delivers custom-scheme opens to the running process as
+                // RunEvent::Opened. The deep-link plugin translates that into
+                // on_open_url, so foreground the app for both warm and cold
+                // opens without ever reading or logging the URL payload here.
+                let foreground_app = app.handle().clone();
+                app.deep_link().on_open_url(move |_event| {
+                    focus_main_window(&foreground_app);
+                });
+
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.manage(commands::updater::PendingUpdate::default());
@@ -163,10 +199,7 @@ pub fn run() {
             } = event
             {
                 if !has_visible_windows {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    focus_main_window(app_handle);
                 }
             }
 

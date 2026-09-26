@@ -1,0 +1,145 @@
+[
+  {
+    "name": "normal JSON",
+    "input": {
+      "descriptors": [
+        {
+          "field_id": "eval-name",
+          "label": "Full name",
+          "type": "text",
+          "options": [],
+          "required": true
+        }
+      ],
+      "resume": {
+        "data": {
+          "basics": {
+            "name": "Candidate Example"
+          }
+        },
+        "profile": {
+          "location": "Example City"
+        },
+        "learnedAnswers": []
+      },
+      "responseText": "{\"fields\":[{\"field_id\":\"eval-name\",\"value\":\"Candidate Example\",\"confidence\":1.2,\"source\":\"resume\"}],\"needs_human\":[]}"
+    },
+    "expected": {
+      "fields": [
+        {
+          "field_id": "eval-name",
+          "value": "Candidate Example",
+          "confidence": 1,
+          "source": "resume"
+        }
+      ],
+      "needs_human": []
+    }
+  },
+  {
+    "name": "fenced JSON",
+    "input": {
+      "descriptors": [
+        {
+          "field_id": "eval-location",
+          "label": "Preferred location",
+          "type": "select",
+          "options": [
+            {
+              "value": "remote_us",
+              "label": "Remote - United States"
+            },
+            {
+              "value": "office_ny",
+              "label": "New York office"
+            }
+          ],
+          "required": true
+        },
+        {
+          "field_id": "eval-consent",
+          "label": "I agree to the privacy notice",
+          "type": "checkbox",
+          "options": [],
+          "required": true
+        }
+      ],
+      "resume": {
+        "data": {
+          "basics": {
+            "location": "Example City"
+          }
+        },
+        "profile": {
+          "workPreference": "remote"
+        },
+        "learnedAnswers": [
+          {
+            "question": "Privacy notice accepted?",
+            "answer": "Yes"
+          }
+        ]
+      },
+      "responseText": "```json\n{\"fields\":[{\"field_id\":\"eval-location\",\"value\":\"remote_us\",\"confidence\":0.82,\"source\":\"profile\"},{\"field_id\":\"eval-consent\",\"value\":\"true\",\"confidence\":0.94,\"source\":\"learned\"}],\"needs_human\":[]}\n```"
+    },
+    "expected": {
+      "fields": [
+        {
+          "field_id": "eval-location",
+          "value": "remote_us",
+          "confidence": 0.82,
+          "source": "profile"
+        },
+        {
+          "field_id": "eval-consent",
+          "value": "true",
+          "confidence": 0.94,
+          "source": "learned"
+        }
+      ],
+      "needs_human": []
+    }
+  },
+  {
+    "name": "needs human",
+    "input": {
+      "descriptors": [
+        {
+          "field_id": "eval-sponsorship",
+          "label": "Will you now or later require sponsorship?",
+          "type": "radio",
+          "options": [
+            {
+              "value": "yes_required",
+              "label": "Yes"
+            },
+            {
+              "value": "no_required",
+              "label": "No"
+            }
+          ],
+          "required": true
+        }
+      ],
+      "resume": {
+        "data": {
+          "basics": {
+            "name": "Candidate Example"
+          }
+        },
+        "profile": {},
+        "learnedAnswers": []
+      },
+      "responseText": "Mapping result follows: {\"fields\":[],\"needs_human\":[{\"field_id\":\"eval-sponsorship\",\"question\":\"Will you require employment sponsorship now or in the future?\"}]} End of result."
+    },
+    "expected": {
+      "fields": [],
+      "needs_human": [
+        {
+          "field_id": "eval-sponsorship",
+          "question": "Will you require employment sponsorship now or in the future?"
+        }
+      ]
+    }
+  }
+]

@@ -99,7 +99,10 @@ async fn capture_one(target_window: &WebviewWindow, rect: &CaptureRect) -> Resul
         unsafe {
             let configuration = WKPDFConfiguration::new(mtm);
             configuration.setRect(NSRect {
-                origin: NSPoint { x: rect.x, y: rect.y },
+                origin: NSPoint {
+                    x: rect.x,
+                    y: rect.y,
+                },
                 size: NSSize {
                     width: rect.width,
                     height: rect.height,
@@ -160,10 +163,7 @@ async fn capture_one(target_window: &WebviewWindow, rect: &CaptureRect) -> Resul
 }
 
 // Deliver a capture result through the oneshot slot exactly once.
-fn send_result(
-    slot: &PdfResultSlot,
-    result: Result<Vec<u8>, String>,
-) {
+fn send_result(slot: &PdfResultSlot, result: Result<Vec<u8>, String>) {
     if let Ok(mut guard) = slot.lock() {
         if let Some(sender) = guard.take() {
             let _ = sender.send(result);

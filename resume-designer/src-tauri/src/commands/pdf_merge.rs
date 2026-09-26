@@ -24,8 +24,14 @@ use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 // `/BleedBox`/`/TrimBox`/`/ArtBox` on the page tree even though the spec doesn't
 // list them as inheritable). `/MediaBox` is excluded — each fn re-asserts it
 // explicitly from the known dimensions.
-const INHERITABLE_ATTRS: [&[u8]; 6] =
-    [b"Resources", b"Rotate", b"CropBox", b"BleedBox", b"TrimBox", b"ArtBox"];
+const INHERITABLE_ATTRS: [&[u8]; 6] = [
+    b"Resources",
+    b"Rotate",
+    b"CropBox",
+    b"BleedBox",
+    b"TrimBox",
+    b"ArtBox",
+];
 
 /// Resolve inheritable page attributes that live on an ancestor `/Pages` node
 /// (not on the page itself) by walking the page's `/Parent` chain in `src`.
@@ -80,7 +86,11 @@ fn scale_number(o: &Object, scale: f64) -> Object {
 fn scale_annotation_coords(dict: &mut Dictionary, scale: f64) {
     for key in [b"Rect".as_slice(), b"QuadPoints".as_slice()] {
         let scaled = match dict.get(key) {
-            Ok(Object::Array(arr)) => Some(arr.iter().map(|o| scale_number(o, scale)).collect::<Vec<_>>()),
+            Ok(Object::Array(arr)) => Some(
+                arr.iter()
+                    .map(|o| scale_number(o, scale))
+                    .collect::<Vec<_>>(),
+            ),
             _ => None,
         };
         if let Some(scaled) = scaled {
@@ -103,7 +113,11 @@ const SCALABLE_PAGE_BOXES: [&[u8]; 4] = [b"CropBox", b"BleedBox", b"TrimBox", b"
 fn scale_page_boxes(page: &mut Dictionary, scale: f64) {
     for key in SCALABLE_PAGE_BOXES {
         let scaled = match page.get(key) {
-            Ok(Object::Array(arr)) => Some(arr.iter().map(|o| scale_number(o, scale)).collect::<Vec<_>>()),
+            Ok(Object::Array(arr)) => Some(
+                arr.iter()
+                    .map(|o| scale_number(o, scale))
+                    .collect::<Vec<_>>(),
+            ),
             _ => None,
         };
         if let Some(scaled) = scaled {
@@ -128,7 +142,11 @@ fn scale_page_annotations(output: &mut Document, page_id: ObjectId, scale: f64) 
     };
     // Indirect annotations: scale them in the object store.
     for id in annots.iter().filter_map(|o| o.as_reference().ok()) {
-        if let Some(dict) = output.objects.get_mut(&id).and_then(|o| o.as_dict_mut().ok()) {
+        if let Some(dict) = output
+            .objects
+            .get_mut(&id)
+            .and_then(|o| o.as_dict_mut().ok())
+        {
             scale_annotation_coords(dict, scale);
         }
     }
@@ -144,7 +162,11 @@ fn scale_page_annotations(output: &mut Document, page_id: ObjectId, scale: f64) 
                 other => other,
             })
             .collect();
-        if let Some(dict) = output.objects.get_mut(&page_id).and_then(|o| o.as_dict_mut().ok()) {
+        if let Some(dict) = output
+            .objects
+            .get_mut(&page_id)
+            .and_then(|o| o.as_dict_mut().ok())
+        {
             dict.set("Annots", rebuilt);
         }
     }
@@ -322,7 +344,11 @@ pub fn merge_concat(pages: Vec<(Vec<u8>, f64, f64)>) -> Result<Vec<u8>, String> 
 }
 
 /// Build the shared Pages tree + Catalog + trailer root and serialize.
-fn finish(mut output: Document, pages_id: ObjectId, kid_ids: Vec<ObjectId>) -> Result<Vec<u8>, String> {
+fn finish(
+    mut output: Document,
+    pages_id: ObjectId,
+    kid_ids: Vec<ObjectId>,
+) -> Result<Vec<u8>, String> {
     let mut pages_dict = Dictionary::new();
     pages_dict.set("Type", Object::Name(b"Pages".to_vec()));
     pages_dict.set("Count", kid_ids.len() as i64);
@@ -333,7 +359,9 @@ fn finish(mut output: Document, pages_id: ObjectId, kid_ids: Vec<ObjectId>) -> R
             .map(|id| Object::Reference(*id))
             .collect::<Vec<_>>(),
     );
-    output.objects.insert(pages_id, Object::Dictionary(pages_dict));
+    output
+        .objects
+        .insert(pages_id, Object::Dictionary(pages_dict));
 
     let mut catalog = Dictionary::new();
     catalog.set("Type", Object::Name(b"Catalog".to_vec()));
@@ -342,7 +370,9 @@ fn finish(mut output: Document, pages_id: ObjectId, kid_ids: Vec<ObjectId>) -> R
     output.trailer.set("Root", catalog_id);
 
     let mut buf = Vec::new();
-    output.save_to(&mut buf).map_err(|e| format!("save: {}", e))?;
+    output
+        .save_to(&mut buf)
+        .map_err(|e| format!("save: {}", e))?;
     Ok(buf)
 }
 
@@ -384,15 +414,30 @@ mod tests {
         pages.set("Resources", resources); // <-- inherited by the page
         pages.set(
             "MediaBox",
-            vec![Object::Real(0.0), Object::Real(0.0), Object::Real(200.0), Object::Real(300.0)],
+            vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(200.0),
+                Object::Real(300.0),
+            ],
         );
         pages.set(
             "CropBox",
-            vec![Object::Real(0.0), Object::Real(0.0), Object::Real(200.0), Object::Real(300.0)],
+            vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(200.0),
+                Object::Real(300.0),
+            ],
         );
         pages.set(
             "BleedBox",
-            vec![Object::Real(0.0), Object::Real(0.0), Object::Real(200.0), Object::Real(300.0)],
+            vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(200.0),
+                Object::Real(300.0),
+            ],
         );
         doc.objects.insert(pages_id, Object::Dictionary(pages));
 
@@ -424,7 +469,10 @@ mod tests {
             Object::Dictionary(d) => d,
             other => panic!("/Resources is not a dict: {:?}", other),
         };
-        assert!(res_dict.get(b"Font").is_ok(), "materialized /Resources lost /Font");
+        assert!(
+            res_dict.get(b"Font").is_ok(),
+            "materialized /Resources lost /Font"
+        );
     }
 
     #[test]
@@ -437,7 +485,8 @@ mod tests {
 
     #[test]
     fn merge_scaled_materializes_inherited_resources() {
-        let merged = merge_scaled(vec![(pdf_with_inherited_resources(), 200.0, 300.0)], 0.75).unwrap();
+        let merged =
+            merge_scaled(vec![(pdf_with_inherited_resources(), 200.0, 300.0)], 0.75).unwrap();
         let (doc, page_id) = merged_page(&merged);
         let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
         assert_resources_reach_font(&doc, page);
@@ -452,7 +501,12 @@ mod tests {
         annot.set("Subtype", Object::Name(b"Link".to_vec()));
         annot.set(
             "Rect",
-            vec![Object::Real(10.0), Object::Real(20.0), Object::Real(110.0), Object::Real(40.0)],
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(110.0),
+                Object::Real(40.0),
+            ],
         );
         let annot_id = doc.add_object(Object::Dictionary(annot));
 
@@ -484,7 +538,11 @@ mod tests {
         let (doc, page_id) = merged_page(bytes);
         let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
         let annots = page.get(b"Annots").unwrap().as_array().unwrap();
-        let annot = doc.get_object(annots[0].as_reference().unwrap()).unwrap().as_dict().unwrap();
+        let annot = doc
+            .get_object(annots[0].as_reference().unwrap())
+            .unwrap()
+            .as_dict()
+            .unwrap();
         annot
             .get(b"Rect")
             .unwrap()
@@ -518,7 +576,8 @@ mod tests {
     #[test]
     fn merge_scaled_scales_inherited_cropbox() {
         // Inherited /CropBox [0,0,200,300] must shrink with the page (× 0.5).
-        let merged = merge_scaled(vec![(pdf_with_inherited_resources(), 200.0, 300.0)], 0.5).unwrap();
+        let merged =
+            merge_scaled(vec![(pdf_with_inherited_resources(), 200.0, 300.0)], 0.5).unwrap();
         assert_eq!(page_box(&merged, b"CropBox"), vec![0.0, 0.0, 100.0, 150.0]);
     }
 
@@ -533,7 +592,8 @@ mod tests {
     fn inherited_bleedbox_is_materialized_and_scaled() {
         // Every geometry box scale_page_boxes handles must also be materialized
         // from inheritance — otherwise the reparent drops it before scaling.
-        let scaled = merge_scaled(vec![(pdf_with_inherited_resources(), 200.0, 300.0)], 0.5).unwrap();
+        let scaled =
+            merge_scaled(vec![(pdf_with_inherited_resources(), 200.0, 300.0)], 0.5).unwrap();
         assert_eq!(page_box(&scaled, b"BleedBox"), vec![0.0, 0.0, 100.0, 150.0]);
         let concat = merge_concat(vec![(pdf_with_inherited_resources(), 200.0, 300.0)]).unwrap();
         assert_eq!(page_box(&concat, b"BleedBox"), vec![0.0, 0.0, 200.0, 300.0]);
@@ -585,6 +645,9 @@ mod tests {
         let (doc, page_id) = merged_page(&merged);
         let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
         let res = page.get(b"Resources").unwrap().as_dict().unwrap();
-        assert!(res.get(b"ProcSet").is_ok(), "direct /Resources must be preserved");
+        assert!(
+            res.get(b"ProcSet").is_ok(),
+            "direct /Resources must be preserved"
+        );
     }
 }

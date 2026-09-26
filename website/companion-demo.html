@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Senior Product Designer · Fieldwork Studio · On Paper Demo</title>
+  <meta name="description" content="A fictional application form for reviewing On Paper Companion. No application is submitted.">
+  <meta name="robots" content="noindex,nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <style>
+    :root { color-scheme: light; --paper:#f4efe6; --card:#fcfaf6; --ink:#252622; --muted:#68685e; --line:#ded9ce; --sage:#58634d; --soft:#e8ecdf; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    header { max-width:1200px; margin:auto; padding:24px 36px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); gap:20px; }
+    .wordmark { font:26px Georgia,serif; letter-spacing:-.8px; }
+    .wordmark span { font:11px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; text-transform:uppercase; letter-spacing:2px; display:block; padding-top:4px; color:var(--muted); }
+    .badge { color:var(--sage); background:var(--soft); padding:7px 11px; border-radius:5px; font-size:11px; font-weight:650; letter-spacing:.5px; text-transform:uppercase; }
+    main { max-width:1200px; margin:auto; padding:40px 36px 60px; display:grid; grid-template-columns:.82fr 1.18fr; gap:48px; align-items:start; }
+    .eyebrow { margin:0 0 12px; text-transform:uppercase; letter-spacing:1.8px; font-size:11px; color:var(--sage); font-weight:650; }
+    h1 { font:46px/1.06 Georgia,serif; margin:0 0 16px; letter-spacing:-1.3px; max-width:440px; }
+    .meta { color:var(--muted); font-size:13px; margin:0 0 25px; }
+    .intro { font-size:17px; line-height:1.65; }
+    h2 { font:27px/1.2 Georgia,serif; letter-spacing:-.45px; margin:0 0 6px; }
+    h3 { font:20px Georgia,serif; margin:28px 0 10px; }
+    .job-description ul { padding-left:20px; color:#51534b; }
+    .job-description li { margin:9px 0; }
+    .note { border-top:1px solid var(--line); padding-top:18px; color:var(--muted); font-size:12px; margin-top:28px; }
+    form { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:28px; box-shadow:0 8px 28px #39332806; }
+    .form-intro { color:var(--muted); font-size:13px; margin:0 0 24px; }
+    .fields { display:grid; grid-template-columns:1fr 1fr; gap:17px; }
+    .field { min-width:0; }
+    .wide { grid-column:1 / -1; }
+    label { display:block; font-size:12px; font-weight:600; margin-bottom:7px; }
+    input,select,textarea { width:100%; font:inherit; font-size:14px; line-height:1.4; color:var(--ink); background:#fffefa; border:1px solid #cecbbc; border-radius:5px; padding:10px 11px; min-height:42px; transition:border-color .15s,box-shadow .15s; }
+    input:focus,select:focus,textarea:focus { outline:none; border-color:var(--sage); box-shadow:0 0 0 3px #58634d16; }
+    input::placeholder,textarea::placeholder { color:#97968c; }
+    textarea { resize:vertical; min-height:88px; }
+    input[type=file] { padding:8px; font-size:12px; }
+    input[type=file]::file-selector-button { border:0; border-radius:3px; padding:6px 10px; margin-right:10px; background:#e8e5dc; color:var(--ink); cursor:pointer; }
+    .manual-section { margin:24px 0; padding-top:20px; border-top:1px solid var(--line); }
+    .manual-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:7px; }
+    .manual-heading h3 { margin:0; font:17px Georgia,serif; }
+    .manual-tag { font-size:10px; font-weight:650; color:#82683d; background:#f3ebd8; border-radius:4px; padding:4px 7px; white-space:nowrap; }
+    .help { margin:0 0 15px; color:var(--muted); font-size:12px; }
+    .actions { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-top:20px; border-top:1px solid var(--line); }
+    button { background:var(--ink); color:var(--card); border:0; border-radius:5px; padding:11px 16px; font:inherit; font-size:12px; font-weight:600; line-height:1.4; cursor:pointer; }
+    button:hover { background:var(--sage); }
+    .actions span { color:var(--muted); font-size:11px; }
+    #preview-status { padding:0; margin:13px 0 0; font-size:12px; color:var(--sage); }
+    #preview-status:empty { display:none; }
+    .reviewer-setup { max-width:1128px; margin:24px auto 0; padding:16px 20px; border:1px solid var(--line); border-radius:8px; background:var(--card); font-size:13px; }
+    .reviewer-setup summary { cursor:pointer; font-weight:650; }
+    .reviewer-setup a { color:var(--sage); text-decoration-thickness:1px; text-underline-offset:3px; }
+    .reviewer-setup a:focus-visible,.reviewer-setup summary:focus-visible { outline:2px solid var(--sage); outline-offset:4px; }
+    .reviewer-setup ol { padding-left:22px; }
+    .reviewer-setup li { margin:9px 0; }
+    .reviewer-setup details { margin-top:16px; }
+    .reviewer-setup pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--paper); padding:14px; border-radius:5px; font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    @media(max-width:1200px) { .reviewer-setup { margin-left:22px; margin-right:22px; } }
+    @media(max-width:950px) { main { gap:28px; grid-template-columns:.8fr 1.2fr; padding:30px 22px; } header { padding:20px 22px; } h1 { font-size:38px; } form { padding:22px; } .fields { grid-template-columns:1fr; } .wide { grid-column:auto; } }
+    @media(max-width:680px) { main { display:block; padding:25px 18px; } header { padding:18px; } .job-description { margin-bottom:28px; } .job-description .details { display:none; } .intro { font-size:15px; } h1 { font-size:37px; } .note { margin-top:18px; } }
+  </style>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "JobPosting",
+    "title": "Senior Product Designer",
+    "hiringOrganization": { "@type": "Organization", "name": "Fieldwork Studio (fictional demo)" },
+    "employmentType": "FULL_TIME",
+    "jobLocationType": "TELECOMMUTE",
+    "description": "Fieldwork Studio is a fictional collaboration software company. We are hiring a Senior Product Designer to help small teams turn complex projects into clear, usable workflows. You will own product design from discovery through delivery, conduct customer interviews and usability research, create user journeys and prototypes in Figma, and partner with product managers and engineers. You will evolve a shared design system, advocate for accessibility, and use qualitative feedback and product metrics to measure outcomes. We are looking for five or more years of product or UX design experience, a portfolio demonstrating thoughtful interaction design and clear visual craft, strong communication, and experience shipping responsive web or mobile products. Experience designing collaboration tools or B2B software is helpful. This is a fictional reviewer demo role with no live recruiting or submission."
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <div class="wordmark">On Paper<span>Companion demonstration</span></div>
+    <div class="badge">Fictional · Reviewer demo</div>
+  </header>
+  <details class="reviewer-setup" id="reviewer-setup">
+    <summary>Set up the fictional reviewer resume</summary>
+    <p>The first Companion release supports macOS 14.4 or later. A compatible signed macOS installer is not yet available; public stable v2.2.0 does not support this Companion version. Read the <a href="companion-review.html">Companion reviewer setup guide</a> for prerequisites and the complete test flow. This download contains only the fictional Alex Morgan resume. It is one resume document, not a profile or a full-workspace backup.</p>
+    <p><a href="assets/companion-reviewer-resume.json" download="companion-reviewer-resume.json">Download the fictional resume (JSON)</a></p>
+    <ol>
+      <li>In On Paper, open <strong>Settings → Account → New profile</strong>. Name it <strong>Companion Review (Fictional)</strong> and choose <strong>Create &amp; switch</strong>. If onboarding appears after switching, use its <strong>Cancel</strong> control.</li>
+      <li>In the main window, open <strong>Resume actions → Import…</strong> (the three dots beside the resume selector) and select <strong>companion-reviewer-resume.json</strong>. In a narrow window, use <strong>Menu → Import</strong>. Use this resume import, not <strong>Import profile</strong>.</li>
+      <li>Check that the imported resume shows <strong>Alex Morgan</strong> and <strong>alex.morgan@example.com</strong>. You may rename it <strong>Product Design</strong> through Resume actions. Keep all review data fictional.</li>
+      <li>For Chrome Web Store review, use the review-only OpenRouter key supplied privately in the Dashboard <strong>Password</strong> field. Enter it directly in the desktop app’s <strong>Settings → AI</strong>, select <strong>Claude Sonnet 4.6</strong>, and accept the app’s AI-sharing disclosure when prompted. Other users need their own OpenRouter access. Do not enter a key into this page or the extension.</li>
+      <li>Return to this page, invoke Companion from Chrome’s toolbar, accept its disclosure, pair with the app, and choose the imported resume. Review before filling; leave work-authorization and EEO questions blank.</li>
+    </ol>
+    <details>
+      <summary>First launch: if the welcome wizard blocks the main window</summary>
+      <p>Configure the privately supplied review-only OpenRouter key in the wizard (or your own key outside Store review), choose <strong>Import existing resume</strong>, and paste this fictional text into <strong>Import your resume</strong>. Review the parsed facts, continue to <strong>Create resume</strong>, and finish onboarding. This parse uses real AI. Then follow the JSON import steps above for the exact fixture. The wizard accepts TXT/PDF/DOCX, not the JSON download.</p>
+      <pre>Alex Morgan — Senior Product Designer
+Washington, DC | alex.morgan@example.com | +1 202-555-0147
+Portfolio: https://alex-morgan.example
+Product designer experienced in accessible collaboration software, customer interviews,
+Figma prototypes, design systems, and responsive web products.
+Available to start within two weeks.
+Senior Product Designer, Northline Tools (fictional), January 2021–Present:
+Led collaboration workflow design from customer research through delivery;
+created and tested prototypes; maintained accessible components with engineers.
+Product Designer, Cedar Works (fictional), June 2017–December 2020:
+Designed responsive web interfaces, ran usability research, and shipped workflow improvements.
+BA Interaction Design, Example Design College (fictional), 2017.
+Skills: interaction design, user research, accessible design systems, Figma, HTML, CSS.</pre>
+    </details>
+    <p>The download is a static file from this site. This demonstration does not send your form values or attached PDF anywhere; requesting Companion AI assistance still uses the extension’s disclosed app/provider connection.</p>
+  </details>
+  <main>
+    <article class="job-description">
+      <p class="eyebrow">Fieldwork Studio · Careers</p>
+      <h1>Senior Product Designer</h1>
+      <p class="meta">Remote, United States &nbsp;·&nbsp; Full time &nbsp;·&nbsp; Design</p>
+      <p class="intro">Help small teams turn complex projects into clear, usable workflows.</p>
+      <div class="details">
+        <p>At Fieldwork, we make thoughtful collaboration software for people doing meaningful work. We’re looking for a designer who brings curiosity, strong craft, and care for the details that make a product feel effortless.</p>
+        <h3>What you’ll do</h3>
+        <ul>
+          <li>Own product design from customer discovery to shipped experiences.</li>
+          <li>Turn research into clear user journeys, prototypes, and polished interfaces.</li>
+          <li>Partner with product and engineering to evolve our accessible design system.</li>
+          <li>Use customer feedback and product metrics to improve what we build.</li>
+        </ul>
+        <h3>What you’ll bring</h3>
+        <ul>
+          <li>5+ years in product or UX design, with a portfolio of shipped work.</li>
+          <li>Strong interaction design, visual craft, and Figma prototyping skills.</li>
+          <li>Clear communication and experience designing responsive web or mobile products.</li>
+        </ul>
+      </div>
+      <p class="note">This company, role, and candidate examples are fictional. This page previews form completion in your browser and never submits an application or uploads the attached file. Use fictional data only. If you request Companion AI assistance, the extension sends the disclosed context through On Paper to your configured AI provider.</p>
+    </article>
+    <form id="demo-application" autocomplete="off">
+      <h2>Your next chapter starts here.</h2>
+      <p class="form-intro">Review your details before continuing. Fields marked * are required.</p>
+      <div class="fields">
+        <div class="field wide"><label for="full-name">Full name *</label><input id="full-name" name="name" type="text" required placeholder="Alex Morgan"></div>
+        <div class="field"><label for="email">Email address *</label><input id="email" name="email" type="email" required placeholder="alex.morgan@example.com"></div>
+        <div class="field"><label for="phone">Phone number</label><input id="phone" name="phone" type="tel" placeholder="+1 202-555-0147"></div>
+        <div class="field wide"><label for="portfolio">Portfolio or personal website</label><input id="portfolio" name="portfolio" type="url" placeholder="https://alex-morgan.example"></div>
+        <div class="field wide"><label for="availability">When are you available to start?</label><select id="availability" name="availability"><option value="">Choose your availability</option><option value="immediate">Immediately</option><option value="two-weeks">Within two weeks</option><option value="one-month">Within one month</option><option value="flexible">Flexible / let’s discuss</option></select></div>
+        <div class="field wide"><label for="motivation">What interests you about this role?</label><textarea id="motivation" name="motivation" placeholder="Tell us about the work you’re excited to do."></textarea></div>
+        <div class="field wide"><label for="resume">Upload resume PDF *</label><input id="resume" name="resume" type="file" accept="application/pdf,.pdf" required></div>
+      </div>
+      <section class="manual-section" aria-labelledby="manual-title">
+        <div class="manual-heading"><h3 id="manual-title">A couple of personal questions</h3><span class="manual-tag">Answer manually</span></div>
+        <p class="help">Companion leaves these questions to you. They are not autofilled or saved as reusable answers.</p>
+        <div class="fields">
+          <div class="field wide"><label for="work-authorization">Work authorization in the United States *</label><select id="work-authorization" name="work_authorization" required><option value="">Choose your answer</option><option value="authorized">I am authorized to work in the United States</option><option value="sponsorship">I would require sponsorship</option><option value="discuss">I would prefer to discuss this</option></select></div>
+          <div class="field wide"><label for="eeo-gender">Voluntary EEO survey: Gender identity</label><select id="eeo-gender" name="eeo_gender"><option value="">Choose your answer (optional)</option><option value="woman">Woman</option><option value="man">Man</option><option value="nonbinary">Non-binary</option><option value="self-describe">I prefer to self-describe</option><option value="decline">I prefer not to answer</option></select></div>
+        </div>
+      </section>
+      <div class="actions"><button id="preview-button" type="button">Preview demo application</button><span>Preview only. No form submission or file upload.</span></div>
+      <p id="preview-status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+  <script>
+    const form = document.getElementById('demo-application');
+    const status = document.getElementById('preview-status');
+    form.addEventListener('submit', (event) => { event.preventDefault(); status.textContent = 'This is a fictional demonstration. No application was submitted.'; });
+    document.getElementById('preview-button').addEventListener('click', () => {
+      const controls = [...form.querySelectorAll('input,select,textarea')];
+      const completed = controls.filter((control) => control.type === 'file' ? control.files.length > 0 : control.value.trim()).length;
+      status.textContent = `${completed} of ${controls.length} fields completed. Preview ready — no application was submitted.`;
+    });
+  </script>
+</body>
+</html>
