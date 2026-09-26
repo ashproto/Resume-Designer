@@ -1,6 +1,6 @@
 # Fictional Companion reviewer fixture
 
-Prepared source materials; **not deployed**. These are synthetic examples authored for review, with no copied user storage, provider keys, or pairing credentials.
+Deployment verified September 26, 2026: the public demo, reviewer guide, and resume JSON returned HTTP 200 and matched `main` commit `de52d78`. These are synthetic examples authored for review, with no copied user storage, provider keys, or pairing credentials.
 
 | Material | Repository source |
 | --- | --- |
@@ -31,7 +31,7 @@ Skills: interaction design, user research, accessible design systems, Figma, HTM
 
 ## Desktop setup
 
-1. For the first macOS-only Unlisted release, use macOS 14.4 or later and install the signed production On Paper for macOS build that contains this companion bridge; the existing public `v2.2.0` is incompatible. Keep one app instance running. Use a fresh reviewer workspace; do not overwrite an existing profile or import a full backup.
+1. For the first macOS-only Unlisted release, use macOS 14.4 or later and install signed stable **On Paper 2.3.0** using the verified versioned installer for [Apple Silicon](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_aarch64.dmg) or [Intel](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_x64.dmg). Keep one app instance running. Use a fresh reviewer workspace; do not overwrite an existing profile or import a full backup.
 2. Open **Settings → Account → New profile**, name it **Companion Review (Fictional)**, and choose **Create & switch**. This workspace starts empty. If onboarding appears after switching profiles, use its **Cancel** control so you can import the prepared resume.
 3. Download `companion-reviewer-resume.json` using **Download the fictional resume (JSON)** in the page’s **Set up the fictional reviewer resume** section. In the main window’s **Resume actions** menu (the three dots beside the resume selector), choose **Import…** and select the downloaded file. In a narrow window, use **Menu → Import**. Do not use **Import profile** for this resume document. This imports one resume; it is not a full-workspace backup. Rename the imported resume to **Product Design** using the same menu if desired.
 4. Verify the resume shows **Alex Morgan**, `alex.morgan@example.com`, `+1 202-555-0147`, and `https://alex-morgan.example`. The companies, college, contact details, and career history are fictional. Keep the underlying career profile empty or enter only these same fictional facts through **Profile**; personal data is unnecessary.
@@ -49,12 +49,12 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory website
 
 Open `http://127.0.0.1:8765/companion-demo.html` in Chrome. Its relative download link serves `http://127.0.0.1:8765/assets/companion-reviewer-resume.json`. Invoke Companion from the toolbar on that tab, accept its disclosure, pair, and select **Product Design** (or the original import filename). Follow the full reviewer instructions for automatic/manual pairing.
 
-For Store review, deploy the page and its JSON asset together through the website’s normal authorized deployment, then verify both URLs. The existing Pages workflow uploads the whole `website/` directory. These planned URLs are **not deployed or verified** by this preparation:
+For Store review, use the deployed page and JSON below. Both URLs were verified against `de52d78` on September 26. The existing Pages workflow uploads the whole `website/` directory; recheck the demo and reviewer guide after this follow-up adds the verified stable installer links:
 
 - Page and on-page setup: `https://onpaper.pro/companion-demo.html`
 - Fictional resume download: `https://onpaper.pro/assets/companion-reviewer-resume.json`
 
-The page uses a relative download link so the same source works locally and after deployment. Keep the website JSON byte-identical to `docs/fixtures/companion-reviewer-resume.json` when updating the fixture. No localhost server or private developer filesystem should be required of Store reviewers. The owner reports supplying the dedicated, spending-capped review key through the private Dashboard **Password** field, with **Username** blank. Continued credit, expiry, and model access remain owner-managed; no On Paper login or reviewer-funded OpenRouter account is required. The compatible signed macOS installer remains unavailable.
+The page uses a relative download link so the same source works locally and after deployment. Keep the website JSON byte-identical to `docs/fixtures/companion-reviewer-resume.json` when updating the fixture. No localhost server or private developer filesystem should be required of Store reviewers. The owner reports supplying the dedicated, spending-capped review key through the private Dashboard **Password** field, with **Username** blank. Continued credit, expiry, and model access remain owner-managed; no On Paper login or reviewer-funded OpenRouter account is required. Signed stable **On Paper 2.3.0** is available at the versioned links above. Both Mac artifacts passed signature, Gatekeeper, and app-notarization checks; installed Apple Silicon 2.3.0 passed startup, fictional-resume PDF export, restart persistence, and bridge health. Production Chrome pairing and flow checks remain separate submission gates.
 
 ## Expected results
 
@@ -70,4 +70,4 @@ The page has no form endpoint, external scripts, analytics, automatic network ca
 
 Those page boundaries do not disable the extension’s disclosed app/AI requests. When the reviewer asks for assistance, Companion still communicates with On Paper and the chosen provider. Workspace information can sync through the reviewer’s iCloud account on supported devices; use only these fictional materials.
 
-The JSON was checked against the app’s actual `assertResumeData(..., { requireIdentity: true })` import validator. Its top-level fields are resume document data, not a profile/full-backup envelope. Live import and final production-install checks remain part of release verification.
+The JSON was checked against the app’s actual `assertResumeData(..., { requireIdentity: true })` import validator. Its top-level fields are resume document data, not a profile/full-backup envelope. Earlier signed-beta testing passed live JSON import. Stable 2.3.0 retained that fictional resume through startup, PDF export, and restart; a fresh reviewer onboarding/import and the remaining browser checks are not established by that smoke test.

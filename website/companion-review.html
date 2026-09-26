@@ -43,10 +43,12 @@
       <p>Review On Paper Companion with a fictional resume and application page. The first release supports Chrome 116 or later on macOS 14.4 or later.</p>
 
       <section class="prerequisite" aria-labelledby="installer-heading" id="desktop-installer">
-        <h2 id="installer-heading">Compatible macOS installer is not yet available</h2>
-        <p>End-to-end review requires a signed On Paper for macOS release with Companion support. Its versioned installer link will appear here when that release is available.</p>
-        <p><strong>The current public stable v2.2.0 does not support this Companion version.</strong> The general desktop download is not a substitute. You can inspect the fictional materials now; the complete test flow must wait for the compatible installer and working AI access.</p>
-        <!-- When a compatible signed build is released, replace this notice with its exact version and persistent versioned macOS installer URL. Never use a generic latest-release link. -->
+        <h2 id="installer-heading">Download On Paper 2.3.0 for macOS</h2>
+        <p>This signed stable release supports On Paper Companion and requires macOS 14.4 or later.</p>
+        <ul>
+          <li><a href="https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_aarch64.dmg">Download for Apple Silicon</a></li>
+          <li><a href="https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_x64.dmg">Download for Intel</a></li>
+        </ul>
       </section>
 
       <section aria-labelledby="materials-heading">
@@ -61,7 +63,7 @@
       <section aria-labelledby="setup-heading">
         <h2 id="setup-heading">Set up the app and extension</h2>
         <ol>
-          <li>Once the compatible versioned installer above is available, install it and keep one On Paper instance running. Use the extension revision supplied for this review.</li>
+          <li>Install On Paper 2.3.0 using the matching download above, and keep one On Paper instance running. Use the extension revision supplied for this review.</li>
           <li>Open <strong>Settings → Account → New profile</strong>, name it <strong>Companion Review (Fictional)</strong>, and choose <strong>Create &amp; switch</strong>. If onboarding appears after switching, use its <strong>Cancel</strong> control.</li>
           <li>Choose <strong>Resume actions → Import…</strong> beside the resume selector, or <strong>Menu → Import</strong> in a narrow window. Select the downloaded JSON. This imports one resume, not a profile or full backup. Check for <strong>Alex Morgan</strong> and <strong>alex.morgan@example.com</strong>; optionally rename the resume <strong>Product Design</strong>.</li>
           <li>Copy the review-only OpenRouter key from the Chrome Web Store Dashboard <strong>Password</strong> field into the desktop app’s <strong>Settings → AI</strong>. Select <strong>Claude Sonnet 4.6</strong> and accept the native AI-sharing disclosure when prompted. Never put a key into this page, the extension, a screenshot, or a public support message.</li>
