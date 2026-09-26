@@ -77,11 +77,11 @@ function createChrome({
         }),
       },
       session: {
-        remove: vi.fn(async (key) => { if (key === 'pendingApplicationRequest') storedApplicationRequest = null; }),
-        get: vi.fn(async () => ({ bridgeToken: storedToken, pendingApplicationRequest: storedApplicationRequest })),
+        remove: vi.fn(async (key) => { if (key === 'pendingApplicationRequest:4') storedApplicationRequest = null; }),
+        get: vi.fn(async () => ({ bridgeToken: storedToken, 'pendingApplicationRequest:4': storedApplicationRequest })),
         set: vi.fn(async (value) => {
           if ('bridgeToken' in value) storedToken = value.bridgeToken;
-          if ('pendingApplicationRequest' in value) storedApplicationRequest = value.pendingApplicationRequest;
+          if ('pendingApplicationRequest:4' in value) storedApplicationRequest = value['pendingApplicationRequest:4'];
         }),
         setAccessLevel: vi.fn(async () => undefined),
       },
@@ -1490,15 +1490,41 @@ describe('disconnecting pending profile mutations', () => {
 });
 
 
-it('purges pending application identity on disconnect', async () => {
-  const { chromeApi } = createChrome({ token: 'paired', pendingApplicationRequest: { profileId: 'profile-old', fingerprint: 'opaque-hash', requestId: '550e8400-e29b-41d4-a716-446655440000' } });
-  const fetchImpl = vi.fn(async (url) => {
+it('retains an application request committed before disconnect so re-pairing can retry the same identity', async () => {
+  const pending = { profileId: 'profile-1', fingerprint: 'opaque-hash', requestId: '550e8400-e29b-41d4-a716-446655440000' };
+  const { chromeApi, getStoredToken } = createChrome({ token: 'paired', pendingApplicationRequest: pending });
+  const firstResponse = deferred();
+  const saved = new Map();
+  let requestSignal;
+  const fetchImpl = vi.fn(async (url, options) => {
     if (url.endsWith('/health')) return jsonResponse(HEALTH);
-    if (url.endsWith('/resumes')) return jsonResponse({ profileId: 'profile-new', profileContextId: 'context-new', resumes: [] });
+    if (url.endsWith('/resumes')) return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
     if (url.endsWith('/pairing/revoke')) return jsonResponse({ ok: true });
+    if (url.endsWith('/applications')) {
+      const payload = JSON.parse(options.body);
+      if (saved.has(payload.requestId)) return jsonResponse(saved.get(payload.requestId));
+      const result = { profileId: 'profile-1', profileContextId: 'context-1', application: { id: 'app-1' } };
+      saved.set(payload.requestId, result);
+      requestSignal = options.signal;
+      return firstResponse.promise;
+    }
     throw new Error(`Unexpected URL ${url}`);
   });
   const service = createBackgroundService({ chromeApi, fetchImpl });
+  const payload = { type: 'application.log', profileContextId: 'context-1', variantId: 'resume-1', company: 'Example' };
+  const outcome = service.handleMessage({ ...payload, requestId: pending.requestId }).catch((error) => error);
+  await vi.waitFor(() => expect(saved.size).toBe(1));
   await service.handleMessage({ type: 'pairing.disconnect' });
-  expect((await chromeApi.storage.session.get('pendingApplicationRequest')).pendingApplicationRequest).toBeNull();
+  firstResponse.resolve(jsonResponse(saved.get(pending.requestId)));
+  expect(requestSignal.aborted).toBe(true);
+  expect(await outcome).toMatchObject({ code: 'not_paired' });
+  expect(getStoredToken()).toBe('');
+  expect(await service.handleMessage({ type: 'privacy.status' })).toEqual({ accepted: false });
+  const retained = (await chromeApi.storage.session.get('pendingApplicationRequest:4'))['pendingApplicationRequest:4'];
+  expect(retained).toEqual(pending);
+  await service.handleMessage({ type: 'privacy.accept', accepted: true });
+  await service.handleMessage({ type: 'pairing.save', token: 'new-session' });
+  expect(await service.handleMessage({ ...payload, requestId: retained.requestId })).toMatchObject({ application: { id: 'app-1' } });
+  expect(saved.size).toBe(1);
+  expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/applications')).map(([, options]) => JSON.parse(options.body).requestId)).toEqual([pending.requestId, pending.requestId]);
 });

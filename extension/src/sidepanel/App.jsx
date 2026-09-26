@@ -22,7 +22,7 @@ const INCOMPATIBLE_ERROR_CODES = new Set([
 const LAUNCH_ERROR_CODES = new Set(['launch_failed', 'port_conflict']);
 const RECONNECT_DELAY_MS = 500;
 const DEFAULT_HEARTBEAT_MS = 5_000;
-const APPLICATION_REQUEST_KEY = 'pendingApplicationRequest';
+const APPLICATION_REQUEST_KEY_PREFIX = 'pendingApplicationRequest:';
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function visibleError(error) {
@@ -187,6 +187,7 @@ function Workspace({
   heartbeatMs = DEFAULT_HEARTBEAT_MS,
   createRequestId = defaultRequestId,
   applicationRequestStorage = globalThis.chrome?.storage?.session,
+  windowApi = globalThis.chrome?.windows,
   onDisconnected,
 }) {
   const [connection, setConnection] = useState({
@@ -217,6 +218,8 @@ function Workspace({
   const [title, setTitle] = useState('');
   const [hasFilled, setHasFilled] = useState(false);
   const [logState, setLogState] = useState('idle');
+  const [applicationRequestKey, setApplicationRequestKey] = useState(null);
+  const [applicationStorageError, setApplicationStorageError] = useState('');
   const [reviewNeedsRefresh, setReviewNeedsRefresh] = useState(false);
   const [fillAnnouncement, setFillAnnouncement] = useState('');
   const [jobDraft, setJobDraft] = useState(null);
@@ -236,36 +239,54 @@ function Workspace({
   const pairingGeneration = useRef(0);
   const pairingAttempt = useRef(null);
 
+  useEffect(() => {
+    let active = true;
+    // Resolve in the panel: a service worker's current window can instead be
+    // whichever window was last active. Never fall back to a shared key.
+    Promise.resolve().then(() => windowApi?.getCurrent()).then((window) => {
+      if (!Number.isInteger(window?.id) || window.id < 0) throw new Error('Missing containing window');
+      if (active) setApplicationRequestKey(`${APPLICATION_REQUEST_KEY_PREFIX}${window.id}`);
+    }).catch(() => {
+      if (active) setApplicationStorageError('Application logging is unavailable. Close and reopen this panel to retry.');
+    });
+    return () => { active = false; };
+  }, [windowApi]);
+
   const withApplicationStorage = useCallback((operation) => {
+    if (!applicationRequestKey) return Promise.reject(new Error('Application logging is unavailable. Close and reopen this panel to retry.'));
     const result = applicationStorageQueue.current.then(() => operation(applicationRequestStorage));
     applicationStorageQueue.current = result.catch(() => {});
     return result;
-  }, [applicationRequestStorage]);
+  }, [applicationRequestStorage, applicationRequestKey]);
 
   const clearApplicationRequest = useCallback(async () => {
     await withApplicationStorage(async (storage) => {
-      await storage?.remove(APPLICATION_REQUEST_KEY);
+      await storage?.remove(applicationRequestKey);
       applicationRequest.current = null;
       applicationDraft.current = null;
       freshApplicationIntent.current = true;
     });
-  }, [withApplicationStorage]);
+  }, [withApplicationStorage, applicationRequestKey]);
 
   useEffect(() => {
-    if (connection.kind !== 'connected') return undefined;
+    if (connection.kind !== 'connected') {
+      if (connection.kind === 'needs_pairing') applicationDraft.current = null;
+      return undefined;
+    }
+    if (!applicationRequestKey) return undefined;
     let active = true;
     void withApplicationStorage(async (storage) => {
       const pending = applicationRequest.current
-        ?? (await storage?.get(APPLICATION_REQUEST_KEY))?.[APPLICATION_REQUEST_KEY];
+        ?? (await storage?.get(applicationRequestKey))?.[applicationRequestKey];
       if (!active || !pending || pending.profileId === connection.profileId) return;
-      await storage?.remove(APPLICATION_REQUEST_KEY);
+      await storage?.remove(applicationRequestKey);
       if (!active || applicationRequest.current?.profileId === connection.profileId) return;
       applicationRequest.current = null;
       applicationDraft.current = null;
       freshApplicationIntent.current = true;
     }).catch((error) => { if (active) setRuntimeError(error); });
     return () => { active = false; };
-  }, [connection.kind, connection.profileId, withApplicationStorage]);
+  }, [connection.kind, connection.profileId, withApplicationStorage, applicationRequestKey]);
 
   const resetPostScanState = useCallback(() => {
     // A lost response or nonce-only desktop restart invalidates the review,
@@ -446,7 +467,9 @@ function Workspace({
       return;
     }
     if (PAIRING_ERROR_CODES.has(error?.code)) {
-      await clearApplicationRequest().catch(() => {});
+      // Revocation can race a durable save. Forget the draft, but retain its
+      // opaque identity so re-pairing cannot silently log the same action twice.
+      applicationDraft.current = null;
       resetProfileScopedState();
       setConnection({
         kind: 'needs_pairing', profileId: '', profileContextId: '', resumes: [],
@@ -635,7 +658,8 @@ function Workspace({
     if (!beginOperation('resume-change')) return;
     const nextResumeId = event.target.value;
     try {
-      await clearApplicationRequest();
+      // Re-pairing or reopening can select the first resume. Let the user
+      // restore the pending action's resume without discarding its identity.
       setSelectedResumeId(nextResumeId);
       setFitAnalysis(null);
       setJobActionStatus('');
@@ -907,7 +931,7 @@ function Workspace({
   }
 
   async function handleLogApplication() {
-    if (hasPendingInteraction() || logState === 'logged') return;
+    if (!applicationRequestKey || hasPendingInteraction() || logState === 'logged') return;
     logPending.current = true;
     setLogState('pending');
     setRuntimeError(null);
@@ -934,12 +958,13 @@ function Workspace({
       const fingerprint = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
       let pending = applicationRequest.current;
       if (!pending && !freshApplicationIntent.current && applicationRequestStorage) {
-        pending = (await withApplicationStorage((storage) => storage.get(APPLICATION_REQUEST_KEY)))[APPLICATION_REQUEST_KEY];
-        // A reopened panel has only a hash, not the user's edited job fields.
-        // A mismatch cannot safely imply they intended a second application.
-        if (pending?.profileId === ready.connection.profileId && pending.fingerprint !== fingerprint) {
-          throw new Error('An earlier application log may have completed. Check On Paper, then choose Start over before logging another application.');
-        }
+        pending = (await withApplicationStorage((storage) => storage.get(applicationRequestKey)))[applicationRequestKey];
+      }
+      // Reopening or re-pairing retains only a hash. Resume selection may also
+      // be recovery of the original review, rather than a new application.
+      const mustMatchPending = !applicationDraft.current || applicationDraft.current.variantId !== payload.variantId;
+      if (pending?.profileId === ready.connection.profileId && pending.fingerprint !== fingerprint && mustMatchPending) {
+        throw new Error('An earlier application log may have completed. Check On Paper, then choose Start over before logging another application.');
       }
       if (pending?.fingerprint !== fingerprint || pending?.profileId !== ready.connection.profileId
         || !REQUEST_ID_PATTERN.test(pending?.requestId ?? '')) {
@@ -953,7 +978,7 @@ function Workspace({
         pageTitle: String(reviewContext?.page?.title ?? ''),
       };
       // Fail before dispatch if identity cannot survive a panel close/reopen.
-      await withApplicationStorage((storage) => storage?.set({ [APPLICATION_REQUEST_KEY]: pending }));
+      await withApplicationStorage((storage) => storage?.set({ [applicationRequestKey]: pending }));
       freshApplicationIntent.current = false;
       await client.logApplication({ ...payload, requestId: pending.requestId });
       setLogState('logged');
@@ -961,7 +986,7 @@ function Workspace({
       applicationDraft.current = null;
       // A cleanup failure cannot turn an acknowledged write into a failed log.
       // Retaining the old ID is safe: a reopened panel receives the same record.
-      await withApplicationStorage((storage) => storage?.remove(APPLICATION_REQUEST_KEY)).catch(() => {});
+      await withApplicationStorage((storage) => storage?.remove(applicationRequestKey)).catch(() => {});
     } catch (error) {
       await handleWorkflowError(error);
       setLogState('idle');
@@ -1470,7 +1495,7 @@ function Workspace({
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={workflowBusy || logState !== 'idle'}
+                    disabled={!applicationRequestKey || workflowBusy || logState !== 'idle'}
                     onClick={handleLogApplication}
                   >
                     {logState === 'pending'
@@ -1479,6 +1504,7 @@ function Workspace({
                         ? 'Application logged'
                         : 'Log application'}
                   </button>
+                  {applicationStorageError ? <p className="error-message" role="alert">{applicationStorageError}</p> : null}
                   {logState === 'logged' ? <p className="success-message" role="status">Application logged.</p> : null}
                 </section>
               ) : null}

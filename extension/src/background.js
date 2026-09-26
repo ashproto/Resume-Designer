@@ -4,7 +4,6 @@ import { isSensitiveQuestion } from './sensitivity.js';
 
 const STORAGE_KEY = 'bridgeToken';
 const CONSENT_KEY = 'privacyConsentVersion';
-const APPLICATION_REQUEST_KEY = 'pendingApplicationRequest';
 const CONSENT_VERSION = 1;
 
 const SUPPORTED_MESSAGES = new Set([
@@ -592,7 +591,8 @@ export function createBackgroundService({
         }
       }
       await chromeApi.storage.session.set({ [STORAGE_KEY]: '' });
-      await chromeApi.storage.session.remove(APPLICATION_REQUEST_KEY);
+      // A save already flushing in On Paper may survive an aborted request.
+      // Keep its opaque, profile-bound retry identity through re-pairing.
       await chromeApi.storage.local.remove(CONSENT_KEY);
       return { disconnected: true, revoked };
     } finally {

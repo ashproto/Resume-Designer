@@ -107,9 +107,19 @@ this workspace’s unpacked ID, `jejabnlfgdapamjoechlgmgpmldekffo`; other unpack
 IDs use explicit manual pairing. A native debug build with a production-built
 frontend does not enable the frontend development allowlist.
 
-Disconnect aborts active extension mutation requests and invalidates pending
-app writes before they commit. A completed save is preserved; a tailoring
-result still waiting on AI cannot create a resume after revocation.
+Disconnect aborts active extension mutation requests and prevents queued writes
+from starting after revocation. A save already flushing may still complete in
+On Paper; a tailoring result still waiting on AI cannot create a resume after
+revocation. The browser retains only an opaque, profile-bound application
+request identity for each Chrome window through disconnect and re-pairing, so
+retrying the same log in that window uses its original ID. Closing and reopening
+the panel in the same window preserves the identity; another window’s Start
+over or completed log cannot clear it. Logging waits for Chrome to identify
+the panel’s containing window and stays unavailable if that lookup fails. No job details or resume content are stored with it.
+Restore the same resume and application details to retry; if the details cannot
+be matched, check On Paper and choose **Start over** before logging a new action.
+Confirmed saves, **Start over**, a verified switch to a different profile, or
+Chrome clearing its session storage remove the pending identity.
 
 ## Review and fill an application
 

@@ -139,7 +139,7 @@ function button(name) {
 function labelled(label) {
   const labels = [...container.querySelectorAll('label')];
   const matching = labels.find((candidate) => candidate.textContent.includes(label));
-  const control = matching?.htmlFor ? document.getElementById(matching.htmlFor) : null;
+  const control = matching?.htmlFor ? container.querySelector(`[id="${matching.htmlFor}"]`) : null;
   if (control) return control;
 
   const ariaControl = [...container.querySelectorAll('input, select, textarea')]
@@ -180,6 +180,7 @@ async function scanAndCreate(client) {
 
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
+  vi.stubGlobal('chrome', { windows: { getCurrent: vi.fn(async () => ({ id: 4 })) } });
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -1954,63 +1955,212 @@ describe('idempotent application logging', () => {
     expect(client.logApplication.mock.calls[1][0].requestId).toBe(requestIds[0]);
   });
 
-  it.each(['resume', 'profile'])('uses a new identity after changing the %s', async (kind) => {
+  it.each(['not_paired', 'unauthorized'])('retains only opaque retry identity after %s and restores a non-first resume after re-pairing', async (code) => {
     const client = loggingClient();
     const applicationRequestStorage = sessionStorage();
-    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }] });
+    const createRequestId = requestIdFactory();
+    const resumes = [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }];
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes });
+    client.logApplication.mockReset().mockRejectedValueOnce(new RuntimeMessageError({ message: 'Pairing was revoked after the save started', code })).mockResolvedValue({ application: { id: 'app-1' } });
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    await change(labelled('Resume'), 'resume-2');
+    await readyToLog();
+    await change(labelled('Role title'), 'User-edited role');
+    await click(button('Log application'));
+    await waitFor(() => expect(labelled('Pairing token')).toBeTruthy());
+    const stored = structuredClone(applicationRequestStorage.data);
+    expect(stored['pendingApplicationRequest:4']).toMatchObject({ profileId: 'profile-1', requestId: requestIds[0] });
+    expect(JSON.stringify(stored)).not.toMatch(/User-edited role|Acme|resume-2/);
+    client.savePairing.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-2', resumes });
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-2', resumes });
+    await change(labelled('Pairing token'), 'new-token');
+    await click(button('Pair with token'));
+    await readyToLog();
+    await click(button('Log application'));
+    await waitFor(() => expect(container.textContent).toContain('An earlier application log may have completed.'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    await change(labelled('Resume'), 'resume-2');
+    await readyToLog();
+    // Disconnect drops editable draft text; only the matching details can retry.
+    expect(labelled('Role title').value).toBe('Engineer');
+    await click(button('Log application'));
+    await waitFor(() => expect(container.textContent).toContain('An earlier application log may have completed.'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    expect(applicationRequestStorage.data).toEqual(stored);
+    await change(labelled('Role title'), 'User-edited role');
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual([requestIds[0], requestIds[0]]);
+    expect(createRequestId).toHaveBeenCalledOnce();
+  });
+
+  it.each(['panel reopen', 'desktop restart', 'resume selection'])('preserves unresolved identity while restoring a non-first resume after %s', async (transition) => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    const createRequestId = requestIdFactory();
+    const resumes = [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }];
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes });
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    await change(labelled('Resume'), 'resume-2');
+    await readyToLog();
+    await firstTimeout(client);
+    const stored = structuredClone(applicationRequestStorage.data);
+    if (transition === 'panel reopen') {
+      await act(async () => root.unmount());
+      root = createRoot(container);
+      client.checkConnection.mockClear();
+      await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
+    } else if (transition === 'desktop restart') {
+      client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-2', resumes });
+      await click(button('Log application'));
+    } else {
+      await change(labelled('Resume'), 'resume-1');
+    }
+    expect(labelled('Resume').value).toBe('resume-1');
+    await readyToLog();
+    await click(button('Log application'));
+    await waitFor(() => expect(container.textContent).toContain('An earlier application log may have completed.'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    expect(applicationRequestStorage.data).toEqual(stored);
+    await change(labelled('Resume'), 'resume-2');
+    await readyToLog();
+    await successfulRetry(client);
+    expect(requestIdsSent(client)).toEqual([requestIds[0], requestIds[0]]);
+    expect(createRequestId).toHaveBeenCalledOnce();
+  });
+
+  it('uses a new identity after changing the actual profile', async () => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
     await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory(), applicationRequestStorage });
     await readyToLog();
     await firstTimeout(client);
-    if (kind === 'resume') {
-      await change(labelled('Resume'), 'resume-2');
-    } else {
-      client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-2', profileContextId: 'context-2', resumes: [{ id: 'resume-1', name: 'Other profile résumé' }] });
-      await click(button('Log application'));
-    }
+    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-2', profileContextId: 'context-2', resumes: [{ id: 'resume-1', name: 'Other profile résumé' }] });
+    await click(button('Log application'));
     await waitFor(() => expect(applicationRequestStorage.data).toEqual({}));
     await readyToLog();
     await successfulRetry(client);
     expect(requestIdsSent(client)).toEqual(requestIds);
   });
 
-  it('waits for delayed resume cleanup before permitting another log', async () => {
+  it('waits for delayed Start over cleanup before permitting another log', async () => {
     const client = loggingClient();
     const applicationRequestStorage = sessionStorage();
-    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }] });
     await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory(), applicationRequestStorage });
     await readyToLog();
     await firstTimeout(client);
     const cleanup = deferred();
     applicationRequestStorage.remove.mockImplementationOnce(async (key) => { await cleanup.promise; delete applicationRequestStorage.data[key]; });
-    await change(labelled('Resume'), 'resume-2');
+    await click(button('Start over'));
     await click(button('Log application'));
     expect(client.logApplication).toHaveBeenCalledOnce();
     cleanup.resolve();
-    await waitFor(() => expect(labelled('Resume').value).toBe('resume-2'));
+    await waitFor(() => expect(button('Prepare autofill review').disabled).toBe(false));
     await readyToLog();
     await successfulRetry(client);
     expect(requestIdsSent(client)).toEqual(requestIds);
   });
 
-  it.each(['Start over', 'resume change'])('preserves retry identity when %s cleanup fails', async (action) => {
+  it('preserves retry identity when Start over cleanup fails', async () => {
     const client = loggingClient();
     const applicationRequestStorage = sessionStorage();
     const createRequestId = requestIdFactory();
-    client.checkConnection.mockResolvedValue({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [{ id: 'resume-1', name: 'Backend résumé' }, { id: 'resume-2', name: 'Frontend résumé' }] });
     await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
     await readyToLog();
     await firstTimeout(client);
     const stored = structuredClone(applicationRequestStorage.data);
     applicationRequestStorage.remove.mockRejectedValueOnce(new Error('Could not clear pending identity'));
-    if (action === 'Start over') await click(button('Start over'));
-    else await change(labelled('Resume'), 'resume-2');
+    await click(button('Start over'));
     await waitFor(() => expect(container.textContent).toContain('Could not clear pending identity'));
-    expect(labelled('Resume').value).toBe('resume-1');
     expect(button('Log application').disabled).toBe(false);
     expect(applicationRequestStorage.data).toEqual(stored);
     await successfulRetry(client);
     expect(requestIdsSent(client)).toEqual([requestIds[0], requestIds[0]]);
     expect(createRequestId).toHaveBeenCalledOnce();
+  });
+
+  it.each(['Start over', 'successful log'])('keeps window A retry identity when window B performs %s', async (action) => {
+    const applicationRequestStorage = sessionStorage();
+    const clientA = loggingClient();
+    const createRequestIdA = requestIdFactory();
+    await renderApp(clientA, { heartbeatMs: 0, createRequestId: createRequestIdA, applicationRequestStorage });
+    await readyToLog();
+    await firstTimeout(clientA);
+    const storedA = structuredClone(applicationRequestStorage.data);
+    const panelA = { root, container };
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    try {
+      const clientB = loggingClient();
+      clientB.logApplication.mockReset().mockResolvedValue({ application: { id: 'app-2' } });
+      await renderApp(clientB, { heartbeatMs: 0, createRequestId: () => requestIds[1], applicationRequestStorage, windowApi: { getCurrent: vi.fn(async () => ({ id: 8 })) } });
+      await readyToLog();
+      if (action === 'Start over') await click(button('Start over'));
+      else {
+        await click(button('Log application'));
+        await waitFor(() => expect(button('Application logged').disabled).toBe(true));
+        expect(requestIdsSent(clientB)).toEqual([requestIds[1]]);
+      }
+      expect(applicationRequestStorage.data).toEqual(storedA);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      ({ root, container } = panelA);
+    }
+    // Closing and reopening A still restores its own original request.
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    clientA.checkConnection.mockClear();
+    await renderApp(clientA, { heartbeatMs: 0, createRequestId: createRequestIdA, applicationRequestStorage });
+    await readyToLog();
+    await successfulRetry(clientA);
+    expect(requestIdsSent(clientA)).toEqual([requestIds[0], requestIds[0]]);
+    expect(createRequestIdA).toHaveBeenCalledOnce();
+  });
+
+  it('waits for the containing window before enabling application logging', async () => {
+    const client = loggingClient();
+    const containingWindow = deferred();
+    const windowApi = { getCurrent: vi.fn(() => containingWindow.promise) };
+    const applicationRequestStorage = sessionStorage();
+    await renderApp(client, { heartbeatMs: 0, windowApi, applicationRequestStorage });
+    await click(button('Prepare autofill review'));
+    await click(button('Fill reviewed fields'));
+    expect(button('Log application').disabled).toBe(true);
+    await click(button('Log application'));
+    expect(client.logApplication).not.toHaveBeenCalled();
+    expect(applicationRequestStorage.set).not.toHaveBeenCalled();
+    containingWindow.resolve({ id: 4 });
+    await waitFor(() => expect(button('Log application').disabled).toBe(false));
+    await firstTimeout(client);
+    expect(Object.keys(applicationRequestStorage.data)).toEqual(['pendingApplicationRequest:4']);
+  });
+
+  it.each([undefined, -1, -2, '4'])('does not use a shared fallback when the window ID is %s', async (id) => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    await renderApp(client, { heartbeatMs: 0, applicationRequestStorage, windowApi: { getCurrent: vi.fn(async () => ({ id })) } });
+    await click(button('Prepare autofill review'));
+    await click(button('Fill reviewed fields'));
+    expect(button('Log application').disabled).toBe(true);
+    await click(button('Log application'));
+    expect(client.logApplication).not.toHaveBeenCalled();
+    expect(applicationRequestStorage.set).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Application logging is unavailable. Close and reopen this panel to retry.');
+  });
+
+  it.each(['missing API', 'rejected lookup'])('keeps logging unavailable after a %s', async (failure) => {
+    const client = loggingClient();
+    const applicationRequestStorage = sessionStorage();
+    const windowApi = failure === 'missing API' ? null : { getCurrent: vi.fn().mockRejectedValue(new Error('Window unavailable')) };
+    await renderApp(client, { heartbeatMs: 0, applicationRequestStorage, windowApi });
+    await click(button('Prepare autofill review'));
+    await click(button('Fill reviewed fields'));
+    expect(button('Log application').disabled).toBe(true);
+    await click(button('Log application'));
+    expect(client.logApplication).not.toHaveBeenCalled();
+    expect(applicationRequestStorage.set).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Application logging is unavailable. Close and reopen this panel to retry.');
   });
 
   it('does not dispatch a mutation when pending identity cannot be retained', async () => {
