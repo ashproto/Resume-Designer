@@ -1849,7 +1849,7 @@ describe('idempotent application logging', () => {
     expect(client.logApplication.mock.calls.map(([payload]) => [payload.profileContextId, payload.requestId])).toEqual([['context-1', requestIds[0]], ['context-2', requestIds[0]]]);
   });
 
-  it('uses a new identity when a refreshed page reports a different job', async () => {
+  it('requires Start over when a refreshed page reports a different job while a log is unresolved', async () => {
     const client = loggingClient();
     await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory() });
     await readyToLog();
@@ -1860,18 +1860,35 @@ describe('idempotent application logging', () => {
     await readyToLog();
     expect(labelled('Company').value).toBe('Another company');
     expect(labelled('Role title').value).toBe('Designer');
+    await click(button('Log application'));
+    await waitFor(() => expect(container.textContent).toContain('An earlier application log may have completed.'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    await click(button('Start over'));
+    await readyToLog();
     await successfulRetry(client);
     expect(requestIdsSent(client)).toEqual(requestIds);
   });
 
-  it('uses a new identity when the application payload changes', async () => {
+  it.each([['Company', 'Another company'], ['Role title', 'Senior Engineer']])('requires Start over before logging a changed %s after a timeout', async (label, value) => {
     const client = loggingClient();
-    await renderApp(client, { heartbeatMs: 0, createRequestId: requestIdFactory() });
+    const createRequestId = requestIdFactory();
+    const applicationRequestStorage = sessionStorage();
+    await renderApp(client, { heartbeatMs: 0, createRequestId, applicationRequestStorage });
     await readyToLog();
     await firstTimeout(client);
-    await change(labelled('Role title'), 'Senior Engineer');
+    const stored = structuredClone(applicationRequestStorage.data);
+    await change(labelled(label), value);
+    await click(button('Log application'));
+    await waitFor(() => expect(container.textContent).toContain('An earlier application log may have completed.'));
+    expect(client.logApplication).toHaveBeenCalledOnce();
+    expect(createRequestId).toHaveBeenCalledOnce();
+    expect(applicationRequestStorage.data).toEqual(stored);
+    await click(button('Start over'));
+    await readyToLog();
+    await change(labelled(label), value);
     await successfulRetry(client);
     expect(requestIdsSent(client)).toEqual(requestIds);
+    expect(client.logApplication.mock.calls[1][0][label === 'Company' ? 'company' : 'title']).toBe(value);
   });
 
   it('uses a new identity after explicitly starting a new review', async () => {

@@ -960,10 +960,9 @@ function Workspace({
       if (!pending && !freshApplicationIntent.current && applicationRequestStorage) {
         pending = (await withApplicationStorage((storage) => storage.get(applicationRequestKey)))[applicationRequestKey];
       }
-      // Reopening or re-pairing retains only a hash. Resume selection may also
-      // be recovery of the original review, rather than a new application.
-      const mustMatchPending = !applicationDraft.current || applicationDraft.current.variantId !== payload.variantId;
-      if (pending?.profileId === ready.connection.profileId && pending.fingerprint !== fingerprint && mustMatchPending) {
+      // An interrupted log may already be durable. Any changed details need
+      // an explicit Start over before replacing that unresolved identity.
+      if (pending?.profileId === ready.connection.profileId && pending.fingerprint !== fingerprint) {
         throw new Error('An earlier application log may have completed. Check On Paper, then choose Start over before logging another application.');
       }
       if (pending?.fingerprint !== fingerprint || pending?.profileId !== ready.connection.profileId
