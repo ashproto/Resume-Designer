@@ -60,3 +60,12 @@ it('carries reviewed page identity and field descriptors with a fill', async () 
   await client.fillPage('context', 'resume', [{ field_id: 'name', value: 'Jordan' }], reviewContext);
   expect(send).toHaveBeenCalledWith({ type: 'page.fill', profileContextId: 'context', resumeId: 'resume', fields: [{ field_id: 'name', value: 'Jordan' }], reviewContext });
 });
+
+
+it('forwards the application request identity without extra fields', async () => {
+  const send = vi.fn(async () => ({ ok: true, data: {} }));
+  const client = createRuntimeClient(send);
+  const payload = { profileContextId: 'context', requestId: '550e8400-e29b-41d4-a716-446655440000', variantId: 'resume', company: 'Acme', title: 'Engineer', notes: 'Referred' };
+  await client.logApplication({ ...payload, ignored: 'private extra' });
+  expect(send).toHaveBeenCalledWith({ type: 'application.log', ...payload });
+});

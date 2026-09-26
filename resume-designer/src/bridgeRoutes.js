@@ -25,6 +25,7 @@ export const COMPANION_CAPABILITIES = Object.freeze([
   'ai.tailored-resume',
   'profile.answers',
   'applications.log',
+  'applications.idempotent',
 ]);
 
 const profileChanged = () => json(409, {
@@ -71,8 +72,31 @@ function pdfFilename(name) {
 export function createBridgeRouter(deps) {
   let authorizationGeneration = 0;
   let pendingRevocations = 0;
+  let saveTail;
 
-  return async function handleBridgeRequest({ method, path, authorization, body }) {
+  async function persistMutation(write, message) {
+    let rollback;
+    try {
+      if (typeof deps.flush !== 'function') throw new Error('Storage is unavailable');
+      // Keep this response bound to the write being flushed, even if a later
+      // edit changes a mutable application before storage settles.
+      const result = structuredClone(write((undo) => { rollback = undo; }));
+      if (await deps.flush() !== true) throw new Error('Storage write did not reach disk');
+      return result;
+    } catch (cause) {
+      if (cause?.status === 409 && cause?.code === 'idempotency_conflict') throw cause;
+      try {
+        // Replace the queued collection as well as its owner cache. If the
+        // corrective write also fails, appStorage retains it for recovery.
+        if (rollback?.()) await deps.flush();
+      } catch { /* Preserve the original storage failure; never acknowledge it. */ }
+      throw Object.assign(new Error(message, { cause }), { status: 507, code: 'storage_full' });
+    }
+  }
+
+  async function executeBridgeRequest({ method, path, authorization, body }, authorizationState = {
+    generation: authorizationGeneration, revoking: pendingRevocations > 0,
+  }) {
     if (method === 'GET' && path === '/health') {
       return json(200, {
         ok: true,
@@ -109,9 +133,9 @@ export function createBridgeRouter(deps) {
       return json(401, { error: 'invalid or missing bearer token' });
     }
 
-    const requestGeneration = authorizationGeneration;
     const assertAuthorized = () => {
-      if (requestGeneration !== authorizationGeneration || pendingRevocations > 0
+      if (authorizationState.generation !== authorizationGeneration
+        || authorizationState.revoking || pendingRevocations > 0
         || deps.getToken() !== token) {
         throw Object.assign(new Error('pairing was revoked; connect again to continue'), {
           status: 401, code: 'unauthorized',
@@ -274,21 +298,34 @@ export function createBridgeRouter(deps) {
         if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) {
           return profileChanged();
         }
+        if (typeof parsed.requestId !== 'string'
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.requestId)) {
+          return json(400, { error: 'A UUID v4 application requestId is required', code: 'invalid_request_id' });
+        }
         const variantId = typeof parsed.variantId === 'string' ? parsed.variantId.trim() : '';
         if (!variantId) return json(400, { error: 'variantId is required' });
-        const variant = findVariant(deps.getVariants(), variantId);
-        if (!variant) return json(404, { error: `no resume with id ${variantId}` });
+        const title = typeof parsed.title === 'string' ? parsed.title : '';
+        const company = typeof parsed.company === 'string' ? parsed.company : '';
+        const notes = typeof parsed.notes === 'string' ? parsed.notes : '';
+        const companionRequest = {
+          requestId: parsed.requestId.toLowerCase(),
+          // The profile context is a restart nonce. The profile-owned record
+          // scopes this identity; only the original normalized details bind it.
+          fingerprint: JSON.stringify([variantId, title, company, notes]),
+        };
         assertAuthorized();
-        const application = deps.addApplication({
+        const existing = deps.getCompanionApplication(companionRequest);
+        const variant = findVariant(deps.getVariants(), variantId);
+        if (!existing && !variant) return json(404, { error: `no resume with id ${variantId}` });
+        const application = await persistMutation((registerRollback) => existing || deps.addApplication({
           variantId,
           variantName: variant.name,
-          jobSnapshot: {
-            title: typeof parsed.title === 'string' ? parsed.title : '',
-            company: typeof parsed.company === 'string' ? parsed.company : '',
-          },
+          jobSnapshot: { title, company },
           status: 'applied',
-          notes: typeof parsed.notes === 'string' ? parsed.notes : '',
-        });
+          notes,
+        }, { throwOnFailure: true, registerRollback, companionRequest }), 'Could not save the application');
+        assertAuthorized();
+        if (deps.writesSuspended?.()) return importInProgress();
         return json(201, { application });
       }
 
@@ -300,7 +337,12 @@ export function createBridgeRouter(deps) {
         const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
         if (!question || !answer) return json(400, { error: 'question and answer are required' });
         assertAuthorized();
-        const saved = deps.saveLearnedAnswer(question, answer);
+        const saved = await persistMutation(
+          (registerRollback) => deps.saveLearnedAnswer(question, answer, { throwOnFailure: true, registerRollback }),
+          'Could not save the reusable answer',
+        );
+        assertAuthorized();
+        if (deps.writesSuspended?.()) return importInProgress();
         return json(201, { answer: saved });
       }
 
@@ -311,5 +353,26 @@ export function createBridgeRouter(deps) {
       if (typeof err?.code === 'string' && err.code) response.code = err.code;
       return json(status, response);
     }
+  }
+
+  return function handleBridgeRequest(request) {
+    if (request.method !== 'POST' || !['/applications', '/profile/answers'].includes(request.path)) {
+      return executeBridgeRequest(request);
+    }
+    // appStorage reads the current cached value when a queued write runs. Keep
+    // each bridge save and its durability check together so another save cannot
+    // replace that value before it reaches disk. All request checks run again
+    // when its turn starts; reads and revocation never wait behind this queue.
+    const authorizationState = {
+      generation: authorizationGeneration, revoking: pendingRevocations > 0,
+    };
+    const execute = () => executeBridgeRequest(request, authorizationState);
+    const response = saveTail ? saveTail.then(execute) : execute();
+    const settled = response.then(() => undefined, () => undefined);
+    saveTail = settled;
+    void settled.then(() => {
+      if (saveTail === settled) saveTail = undefined;
+    });
+    return response;
   };
 }

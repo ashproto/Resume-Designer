@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { BridgeError } from '../src/bridgeClient.js';
+import { BridgeError, REQUIRED_CAPABILITIES } from '../src/bridgeClient.js';
 import { createBackgroundService } from '../src/background.js';
 
 const HEALTH = {
@@ -8,17 +8,7 @@ const HEALTH = {
   app: 'resume-designer',
   version: '1.0.0',
   protocolVersion: 2,
-  capabilities: [
-    'app.launch',
-    'pairing.challenge',
-    'profile.context',
-    'resume.pdf',
-    'ai.complete',
-    'ai.job-fit',
-    'ai.tailored-resume',
-    'profile.answers',
-    'applications.log',
-  ],
+  capabilities: [...REQUIRED_CAPABILITIES],
 };
 
 function jsonResponse(body, { status = 200 } = {}) {
@@ -42,12 +32,14 @@ function createChrome({
   token = '',
   consent = true,
   legacyLocalToken = '',
+  pendingApplicationRequest = null,
   tab = { id: 17, windowId: 4, url: 'https://jobs.example.test/apply' },
   contentResponse,
 } = {}) {
   let storedConsent = consent ? 1 : null;
   let storedToken = token;
   let storedLegacyToken = legacyLocalToken;
+  let storedApplicationRequest = pendingApplicationRequest;
   const listeners = {};
   const chromeApi = {
     action: {
@@ -85,9 +77,11 @@ function createChrome({
         }),
       },
       session: {
-        get: vi.fn(async () => ({ bridgeToken: storedToken })),
+        remove: vi.fn(async (key) => { if (key === 'pendingApplicationRequest:4') storedApplicationRequest = null; }),
+        get: vi.fn(async () => ({ bridgeToken: storedToken, 'pendingApplicationRequest:4': storedApplicationRequest })),
         set: vi.fn(async (value) => {
-          storedToken = value.bridgeToken;
+          if ('bridgeToken' in value) storedToken = value.bridgeToken;
+          if ('pendingApplicationRequest:4' in value) storedApplicationRequest = value['pendingApplicationRequest:4'];
         }),
         setAccessLevel: vi.fn(async () => undefined),
       },
@@ -1008,6 +1002,7 @@ describe('createBackgroundService', () => {
       variantId: 'resume-1',
       company: 'Acme',
       title: 'Engineer',
+      requestId: '550e8400-e29b-41d4-a716-446655440000',
       notes: 'Referred',
       ignored: 'do not send',
     });
@@ -1018,7 +1013,7 @@ describe('createBackgroundService', () => {
       { profileContextId: 'context-1', question: 'Notice period?', answer: 'Two weeks' },
       {
         profileContextId: 'context-1', variantId: 'resume-1', company: 'Acme',
-        title: 'Engineer', notes: 'Referred',
+        title: 'Engineer', requestId: '550e8400-e29b-41d4-a716-446655440000', notes: 'Referred',
       },
     ]);
   });
@@ -1492,4 +1487,44 @@ describe('disconnecting pending profile mutations', () => {
     expect(requestSignal.aborted).toBe(true);
     expect(await outcome).toMatchObject({ code: 'not_paired', retryable: false });
   });
+});
+
+
+it('retains an application request committed before disconnect so re-pairing can retry the same identity', async () => {
+  const pending = { profileId: 'profile-1', fingerprint: 'opaque-hash', requestId: '550e8400-e29b-41d4-a716-446655440000' };
+  const { chromeApi, getStoredToken } = createChrome({ token: 'paired', pendingApplicationRequest: pending });
+  const firstResponse = deferred();
+  const saved = new Map();
+  let requestSignal;
+  const fetchImpl = vi.fn(async (url, options) => {
+    if (url.endsWith('/health')) return jsonResponse(HEALTH);
+    if (url.endsWith('/resumes')) return jsonResponse({ profileId: 'profile-1', profileContextId: 'context-1', resumes: [] });
+    if (url.endsWith('/pairing/revoke')) return jsonResponse({ ok: true });
+    if (url.endsWith('/applications')) {
+      const payload = JSON.parse(options.body);
+      if (saved.has(payload.requestId)) return jsonResponse(saved.get(payload.requestId));
+      const result = { profileId: 'profile-1', profileContextId: 'context-1', application: { id: 'app-1' } };
+      saved.set(payload.requestId, result);
+      requestSignal = options.signal;
+      return firstResponse.promise;
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+  const service = createBackgroundService({ chromeApi, fetchImpl });
+  const payload = { type: 'application.log', profileContextId: 'context-1', variantId: 'resume-1', company: 'Example' };
+  const outcome = service.handleMessage({ ...payload, requestId: pending.requestId }).catch((error) => error);
+  await vi.waitFor(() => expect(saved.size).toBe(1));
+  await service.handleMessage({ type: 'pairing.disconnect' });
+  firstResponse.resolve(jsonResponse(saved.get(pending.requestId)));
+  expect(requestSignal.aborted).toBe(true);
+  expect(await outcome).toMatchObject({ code: 'not_paired' });
+  expect(getStoredToken()).toBe('');
+  expect(await service.handleMessage({ type: 'privacy.status' })).toEqual({ accepted: false });
+  const retained = (await chromeApi.storage.session.get('pendingApplicationRequest:4'))['pendingApplicationRequest:4'];
+  expect(retained).toEqual(pending);
+  await service.handleMessage({ type: 'privacy.accept', accepted: true });
+  await service.handleMessage({ type: 'pairing.save', token: 'new-session' });
+  expect(await service.handleMessage({ ...payload, requestId: retained.requestId })).toMatchObject({ application: { id: 'app-1' } });
+  expect(saved.size).toBe(1);
+  expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/applications')).map(([, options]) => JSON.parse(options.body).requestId)).toEqual([pending.requestId, pending.requestId]);
 });

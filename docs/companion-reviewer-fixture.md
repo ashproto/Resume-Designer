@@ -11,7 +11,7 @@ Prepared source materials; **not deployed**. These are synthetic examples author
 
 ## First launch, if the welcome wizard blocks the main window
 
-The owner committed to supplying a dedicated OpenRouter key privately in the Dashboard **Password** field; actual supply remains unconfirmed. Once supplied, configure that key in the native wizard, choose **Import existing resume**, and paste the fictional text below into **Import your resume**. Review the parsed facts, continue to **Create resume**, and finish onboarding. This initial parse uses real AI. Once the main window is available, follow the JSON import steps below for an exact source document; the first-run wizard’s file picker accepts TXT/PDF/DOCX, not this JSON document.
+The owner reports supplying a dedicated OpenRouter key privately in the Dashboard **Password** field, with a $5 budget and 30-day expiry. Configure that key in the native wizard, choose **Import existing resume**, and paste the fictional text below into **Import your resume**. Review the parsed facts, continue to **Create resume**, and finish onboarding. This initial parse uses real AI. Once the main window is available, follow the JSON import steps below for an exact source document; the first-run wizard’s file picker accepts TXT/PDF/DOCX, not this JSON document.
 
 ```text
 Alex Morgan — Senior Product Designer
@@ -54,7 +54,7 @@ For Store review, deploy the page and its JSON asset together through the websit
 - Page and on-page setup: `https://onpaper.pro/companion-demo.html`
 - Fictional resume download: `https://onpaper.pro/assets/companion-reviewer-resume.json`
 
-The page uses a relative download link so the same source works locally and after deployment. Keep the website JSON byte-identical to `docs/fixtures/companion-reviewer-resume.json` when updating the fixture. No localhost server or private developer filesystem should be required of Store reviewers. The owner committed to providing the dedicated, spending-capped review key through the private Dashboard **Password** field, with **Username** blank. Actual supply and continued model access must be confirmed before review; no On Paper login or reviewer-funded OpenRouter account is required. The compatible signed macOS installer remains unavailable.
+The page uses a relative download link so the same source works locally and after deployment. Keep the website JSON byte-identical to `docs/fixtures/companion-reviewer-resume.json` when updating the fixture. No localhost server or private developer filesystem should be required of Store reviewers. The owner reports supplying the dedicated, spending-capped review key through the private Dashboard **Password** field, with **Username** blank. Continued credit, expiry, and model access remain owner-managed; no On Paper login or reviewer-funded OpenRouter account is required. The compatible signed macOS installer remains unavailable.
 
 ## Expected results
 

@@ -107,9 +107,19 @@ this workspace’s unpacked ID, `jejabnlfgdapamjoechlgmgpmldekffo`; other unpack
 IDs use explicit manual pairing. A native debug build with a production-built
 frontend does not enable the frontend development allowlist.
 
-Disconnect aborts active extension mutation requests and invalidates pending
-app writes before they commit. A completed save is preserved; a tailoring
-result still waiting on AI cannot create a resume after revocation.
+Disconnect aborts active extension mutation requests and prevents queued writes
+from starting after revocation. A save already flushing may still complete in
+On Paper; a tailoring result still waiting on AI cannot create a resume after
+revocation. The browser retains only an opaque, profile-bound application
+request identity for each Chrome window through disconnect and re-pairing, so
+retrying the same log in that window uses its original ID. Closing and reopening
+the panel in the same window preserves the identity; another window’s Start
+over or completed log cannot clear it. Logging waits for Chrome to identify
+the panel’s containing window and stays unavailable if that lookup fails. No job details or resume content are stored with it.
+Restore the same resume and application details to retry; if the details cannot
+be matched, check On Paper and choose **Start over** before logging a new action.
+Confirmed saves, **Start over**, a verified switch to a different profile, or
+Chrome clearing its session storage remove the pending identity.
 
 ## Review and fill an application
 
@@ -161,7 +171,7 @@ field.
 - **Disconnected startup:** the panel does not launch anything by itself. It shows an explicit open/connect action plus a download path for users who have not installed the app.
 - **Wrong process on the fixed port:** a health response with the wrong identity is shown as a port conflict and no bearer token is sent.
 - **Incompatible app:** an old protocol or missing required capability is shown as **Update On Paper** rather than as connected.
-- **Ambiguous write failure:** answer saving and application logging are not blindly replayed. Check the app before trying the write again.
+- **Ambiguous write failure:** retries of the same application log reuse its request identity so a late save cannot create a duplicate. Pending identity survives panel reopening within the browser session. If reopened details differ from an uncertain earlier log, check On Paper and restore those details to retry, or choose **Start over** to begin another application. Answer saving remains an explicit action.
 - **Restricted browser page:** move to an HTTPS application page; Chrome does
   not allow injection into pages such as `chrome://extensions`, and the
   extension refuses non-loopback plain HTTP pages.

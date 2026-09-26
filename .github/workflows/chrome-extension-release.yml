@@ -17,6 +17,9 @@ on:
           - staged
           - automatic
 
+# Release jobs must not consume or populate cross-workflow caches.
+cache-mode: none
+
 permissions:
   contents: read
 
@@ -38,11 +41,48 @@ jobs:
       release_required: ${{ steps.change.outputs.release_required }}
       sha256: ${{ steps.package.outputs.sha256 }}
       version: ${{ steps.package.outputs.version }}
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
+      # Resolve through GitHub's API before any repository code executes. A
+      # newer main commit must not discard a completed older desktop release.
+      - name: Resolve the trusted release commit
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT_SHA: ${{ github.sha }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          source_sha="${EVENT_SHA}"
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            [[ "${UPSTREAM_RUN_ID}" =~ ^[0-9]+$ ]] || exit 1
+            release_workflow_id="$(gh api "repos/${REPOSITORY}/actions/workflows/release.yml" --jq '.id')"
+            release_run="$(gh api "repos/${REPOSITORY}/actions/runs/${UPSTREAM_RUN_ID}")"
+            jq -e --arg repository "${REPOSITORY}" --argjson workflow_id "${release_workflow_id}" '
+              .workflow_id == $workflow_id and
+              .head_repository.full_name == $repository and
+              .head_branch == "main" and
+              (.event == "push" or .event == "workflow_dispatch") and
+              .conclusion == "success"
+            ' <<< "${release_run}" >/dev/null
+            source_sha="$(jq -er '.head_sha' <<< "${release_run}")"
+            [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            ancestry="$(gh api "repos/${REPOSITORY}/compare/${source_sha}...main" --jq '.status')"
+            case "${ancestry}" in
+              identical|ahead) ;;
+              *) echo "::error::Completed release commit is not on main."; exit 1 ;;
+            esac
+          fi
+          [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          echo "sha=${source_sha}" >> "${GITHUB_OUTPUT}"
+
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Decide whether the Store package changed
@@ -69,7 +109,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          HEAD_SHA: ${{ steps.source.outputs.sha }}
           REPOSITORY: ${{ github.repository }}
           UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
@@ -97,8 +137,7 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
+          package-manager-cache: false
 
       - name: Install dependencies
         if: steps.change.outputs.release_required == 'true'
@@ -173,7 +212,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ needs.build.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Download the validated package
         if: github.event_name == 'workflow_run' || inputs.mode != 'status-only'
@@ -186,6 +226,7 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+          package-manager-cache: false
 
       - name: Verify the downloaded package identity
         if: github.event_name == 'workflow_run' || inputs.mode != 'status-only'

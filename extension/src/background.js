@@ -591,6 +591,8 @@ export function createBackgroundService({
         }
       }
       await chromeApi.storage.session.set({ [STORAGE_KEY]: '' });
+      // A save already flushing in On Paper may survive an aborted request.
+      // Keep its opaque, profile-bound retry identity through re-pairing.
       await chromeApi.storage.local.remove(CONSENT_KEY);
       return { disconnected: true, revoked };
     } finally {
@@ -661,6 +663,7 @@ export function createBackgroundService({
       case 'application.log': {
         const payload = {
           profileContextId: message.profileContextId,
+          requestId: message.requestId,
           variantId: message.variantId,
           company: message.company,
           title: message.title,

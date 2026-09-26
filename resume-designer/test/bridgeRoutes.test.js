@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createBridgeRouter } from '../src/bridgeRoutes.js';
 
+const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
+
 const VARIANTS = {
   'v-1': { id: 'v-1', name: 'Backend Resume', data: { name: 'Ash' }, updatedAt: '2026-07-01T00:00:00.000Z' },
   'v-2': { id: 'v-2', name: 'Frontend Resume', data: { name: 'Ash' }, updatedAt: '2026-07-10T00:00:00.000Z' },
@@ -15,8 +17,10 @@ function makeDeps(overrides = {}) {
     getVariants: () => VARIANTS,
     getUserProfile: () => ({ markdown: '# Ash' }),
     getLearnedAnswers: () => [{ id: 'ans-1', question: 'Notice period?', answer: '4 weeks' }],
+    getCompanionApplication: vi.fn(() => null),
     addApplication: vi.fn((fields) => ({ id: 'app-1', ...fields })),
     saveLearnedAnswer: vi.fn((q, a) => ({ id: 'ans-2', question: q, answer: a })),
+    flush: async () => true,
     complete: vi.fn(async () => 'ai says hi'),
     getAiModels: vi.fn(() => ({ models: [{ id: 'vendor/chosen', name: 'Chosen model' }], defaults: { mapping: 'vendor/chosen', analysis: 'vendor/chosen', tailoring: 'vendor/chosen' }, autoFallback: false })),
     claimPairing: vi.fn(async () => ({ status: 200, body: { token: 'tok-123' } })),
@@ -69,6 +73,7 @@ describe('auth', () => {
         'pairing.challenge',
         'ai.job-fit',
         'ai.tailored-resume',
+        'applications.idempotent',
       ]),
     });
   });
@@ -381,7 +386,7 @@ describe('POST /applications', () => {
     const deps = makeDeps();
     const res = await route(deps, {
       method: 'POST', path: '/applications', authorization: AUTH,
-      body: JSON.stringify({ profileContextId: 'context-1', variantId: 'v-1', company: 'Acme', title: 'Staff Engineer', notes: 'via extension' }),
+      body: JSON.stringify({ requestId: REQUEST_ID, profileContextId: 'context-1', variantId: 'v-1', company: 'Acme', title: 'Staff Engineer', notes: 'via extension' }),
     });
     expect(res.status).toBe(201);
     expect(deps.addApplication).toHaveBeenCalledWith({
@@ -390,13 +395,14 @@ describe('POST /applications', () => {
       jobSnapshot: { title: 'Staff Engineer', company: 'Acme' },
       status: 'applied',
       notes: 'via extension',
-    });
+    }, { throwOnFailure: true, registerRollback: expect.any(Function),
+      companionRequest: { requestId: REQUEST_ID, fingerprint: JSON.stringify(['v-1', 'Staff Engineer', 'Acme', 'via extension']) } });
     expect(res.body.application.id).toBe('app-1');
   });
   it('400s a missing variantId and 404s an unknown one', async () => {
-    let res = await route(makeDeps(), { method: 'POST', path: '/applications', authorization: AUTH, body: JSON.stringify({ profileContextId: 'context-1', company: 'Acme' }) });
+    let res = await route(makeDeps(), { method: 'POST', path: '/applications', authorization: AUTH, body: JSON.stringify({ requestId: REQUEST_ID, profileContextId: 'context-1', company: 'Acme' }) });
     expect(res.status).toBe(400);
-    res = await route(makeDeps(), { method: 'POST', path: '/applications', authorization: AUTH, body: JSON.stringify({ profileContextId: 'context-1', variantId: 'nope' }) });
+    res = await route(makeDeps(), { method: 'POST', path: '/applications', authorization: AUTH, body: JSON.stringify({ requestId: REQUEST_ID, profileContextId: 'context-1', variantId: 'nope' }) });
     expect(res.status).toBe(404);
   });
 });
@@ -420,7 +426,7 @@ describe('prototype-key ids', () => {
   it('404s POST /applications for inherited object keys', async () => {
     for (const id of PROTO_IDS) {
       const deps = makeDeps();
-      const res = await route(deps, { method: 'POST', path: '/applications', authorization: AUTH, body: JSON.stringify({ profileContextId: 'context-1', variantId: id }) });
+      const res = await route(deps, { method: 'POST', path: '/applications', authorization: AUTH, body: JSON.stringify({ requestId: REQUEST_ID, profileContextId: 'context-1', variantId: id }) });
       expect(res.status).toBe(404);
       expect(deps.addApplication).not.toHaveBeenCalled();
     }
@@ -435,7 +441,9 @@ describe('POST /profile/answers', () => {
       body: JSON.stringify({ profileContextId: 'context-1', question: 'Notice period?', answer: '4 weeks' }),
     });
     expect(res.status).toBe(201);
-    expect(deps.saveLearnedAnswer).toHaveBeenCalledWith('Notice period?', '4 weeks');
+    expect(deps.saveLearnedAnswer).toHaveBeenCalledWith('Notice period?', '4 weeks', {
+      throwOnFailure: true, registerRollback: expect.any(Function),
+    });
   });
   it('400s empty question or answer', async () => {
     for (const body of [
@@ -453,7 +461,7 @@ describe('active profile write guard', () => {
     const deps = makeDeps();
     const res = await route(deps, {
       method: 'POST', path: '/applications', authorization: AUTH,
-      body: JSON.stringify({ profileContextId, variantId: 'v-1', company: 'Acme' }),
+      body: JSON.stringify({ requestId: REQUEST_ID, profileContextId, variantId: 'v-1', company: 'Acme' }),
     });
     expect(res).toEqual({
       status: 409,
@@ -480,7 +488,7 @@ describe('active profile write guard', () => {
     const deps = makeDeps({ profileContextId: null });
     const res = await route(deps, {
       method: 'POST', path: '/applications', authorization: AUTH,
-      body: JSON.stringify({ profileContextId: null, variantId: 'v-1' }),
+      body: JSON.stringify({ requestId: REQUEST_ID, profileContextId: null, variantId: 'v-1' }),
     });
     expect(res.status).toBe(409);
     expect(deps.addApplication).not.toHaveBeenCalled();
@@ -492,7 +500,7 @@ describe('write suspension during a destructive import', () => {
     const deps = makeDeps({ writesSuspended: () => true });
     const res = await route(deps, {
       method: 'POST', path: '/applications', authorization: AUTH,
-      body: JSON.stringify({ profileContextId: 'context-1', variantId: 'v-1', company: 'Acme' }),
+      body: JSON.stringify({ requestId: REQUEST_ID, profileContextId: 'context-1', variantId: 'v-1', company: 'Acme' }),
     });
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('profile_changed');
@@ -557,7 +565,7 @@ describe('write suspension during a destructive import', () => {
     const deps = makeDeps({ writesSuspended: () => false });
     const res = await route(deps, {
       method: 'POST', path: '/applications', authorization: AUTH,
-      body: JSON.stringify({ profileContextId: 'context-1', variantId: 'v-1', company: 'Acme' }),
+      body: JSON.stringify({ requestId: REQUEST_ID, profileContextId: 'context-1', variantId: 'v-1', company: 'Acme' }),
     });
     expect(res.status).toBe(201);
     expect(deps.addApplication).toHaveBeenCalled();
@@ -712,7 +720,7 @@ describe('POST /pairing/request', () => {
 
 describe('mutation authorization during durable revocation', () => {
   it.each([
-    ['/applications', { variantId: 'v-1', company: 'Example' }, 'addApplication'],
+    ['/applications', { requestId: REQUEST_ID, variantId: 'v-1', company: 'Example' }, 'addApplication'],
     ['/profile/answers', { question: 'Notice period?', answer: 'Two weeks' }, 'saveLearnedAnswer'],
   ])('blocks %s until token rotation has finished', async (path, payload, writer) => {
     let token = 'tok-123';

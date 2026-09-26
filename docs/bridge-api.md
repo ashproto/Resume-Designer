@@ -128,7 +128,7 @@ HTTP 401
 | `401`  | Missing/invalid bearer token |
 | `403`  | A one-time pairing request was rejected |
 | `404`  | Unknown resume id, pairing request, or route |
-| `409`  | Stale/missing `profileContextId`, or reuse of a tailoring idempotency key with a different request |
+| `409`  | Stale/missing `profileContextId`, or reuse of a tailoring/application idempotency key with a different request |
 | `413`  | Request body exceeds 1 MiB |
 | `425`  | Pairing approval is still pending |
 | `429`  | Another native pairing approval is open or requests are too frequent |
@@ -136,7 +136,7 @@ HTTP 401
 | `502`  | AI upstream failed (`/ai/complete`), or app window unavailable |
 | `503`  | Bridge concurrency limit reached (`code: "bridge_busy"`), or a destructive import suspended profile-sensitive routes (`code: "profile_changed"`) |
 | `504`  | The app did not answer within the timeout |
-| `507`  | A tailored résumé could not be saved or loaded from local storage |
+| `507`  | A résumé, application, or reusable answer could not be saved durably |
 
 ---
 
@@ -170,7 +170,8 @@ available while a destructive backup import suspends profile-sensitive routes.
     "ai.job-fit",
     "ai.tailored-resume",
     "profile.answers",
-    "applications.log"
+    "applications.log",
+    "applications.idempotent"
   ]
 }
 ```
@@ -566,12 +567,13 @@ resume_not_found`; `409 profile_changed` or `idempotency_conflict` (the same
 ### `POST /applications`
 
 Record a job application against a variant. Appears in the app's application
-tracker (Library) immediately.
+tracker (Library). A success response waits for disk persistence.
 
 **Request**
 
 ```json
 {
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
   "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
   "variantId": "custom-1770251688327",
   "company": "Curl Test Co",
@@ -583,7 +585,8 @@ tracker (Library) immediately.
 - `profileContextId` (required) — must match
   the `profileContextId` returned by `GET /resumes` for the app boot currently
   serving the request.
-- `variantId` (required) — must be a known resume id.
+- `requestId` (required) — UUIDv4, reused unchanged when retrying the same application intent.
+- `variantId` (required) — must be known for a new application; an accepted retry also works after that resume is deleted.
 - `company`, `title`, `notes` (optional) — strings; default to `""`.
 
 **Response** `201`
@@ -606,17 +609,27 @@ tracker (Library) immediately.
 }
 ```
 
-The record is always created with `status: "applied"`. `variantName` is filled
-in from the resolved variant.
+New records use `status: "applied"`; `variantName` comes from the resolved variant.
+The app stores `companionRequest` metadata with the record. Within the same
+profile, the same request ID and original variant/title/company/notes return
+the existing record after a fresh durability check, including after a restart
+or later native edits. Reusing the ID with different details returns
+`409 idempotency_conflict`. A genuinely new application uses a new UUID.
+Refresh `profileContextId` after an app restart while retaining the request ID.
+A timeout does not prove the first write failed; do not generate a new ID just
+because the HTTP response was lost. Companion 0.1.5 requires the
+`applications.idempotent` health capability before connecting.
 
 ```bash
 curl -s http://127.0.0.1:17872/applications \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","variantId":"custom-1770251688327","company":"Curl Test Co","title":"Engineer"}'
+  -d '{"requestId":"550e8400-e29b-41d4-a716-446655440000","profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","variantId":"custom-1770251688327","company":"Curl Test Co","title":"Engineer"}'
 ```
 
-**Errors:** `401`; `400 {"error":"invalid JSON body"}` or
+**Errors:** `400 invalid_request_id` for a missing/invalid UUID;
+`409 idempotency_conflict` for changed details under an accepted ID;
+`507 storage_full` if the write cannot be persisted; `401`; `400 {"error":"invalid JSON body"}` or
 `400 {"error":"variantId is required"}`; `404 {"error":"no resume with id <id>"}`
 if `variantId` is unknown; `409 {"error":"profile context changed; refresh the
 companion extension","code":"profile_changed"}` if `profileContextId` is
@@ -631,7 +644,9 @@ while a destructive backup import is waiting for the app reload.
 Save a learned question/answer pair (for example, notice period) to
 the active profile. Upserts by a normalized form of the question, so re-saving
 the same question updates the existing answer in that profile. Returned by every
-`GET /resumes/:id` in `learnedAnswers`.
+`GET /resumes/:id` in `learnedAnswers`. Saves are serialized with application
+logs and acknowledged only after disk persistence; rejected writes return
+`507 storage_full` and are rolled back without discarding newer native edits.
 
 **Request**
 

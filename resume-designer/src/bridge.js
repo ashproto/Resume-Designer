@@ -19,7 +19,7 @@ import {
   getUserProfile,
   saveVariant,
 } from './persistence.js';
-import { addApplication } from './applications.js';
+import { addApplication, getCompanionApplication } from './applications.js';
 import { getAllLearnedAnswers, saveLearnedAnswer } from './learnedAnswers.js';
 import {
   analyzeResumeDataAgainstJobs,
@@ -179,7 +179,9 @@ export async function initBridge({ profileId = null } = {}) {
     getUserProfile,
     getLearnedAnswers: getAllLearnedAnswers,
     addApplication,
+    getCompanionApplication,
     saveLearnedAnswer,
+    flush: () => appStorage.flush(),
     complete: completeForBridge,
     getAiModels: getCompanionModels,
     exportVariantPdf,

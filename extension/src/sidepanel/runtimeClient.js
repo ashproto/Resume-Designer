@@ -95,9 +95,9 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
     saveAnswer: (profileContextId, question, answer) => request({
       type: 'answer.save', profileContextId, question, answer,
     }),
-    logApplication: ({ profileContextId, variantId, company, title, ...optional }) => {
+    logApplication: ({ profileContextId, requestId, variantId, company, title, ...optional }) => {
       const message = {
-        type: 'application.log', profileContextId, variantId, company, title,
+        type: 'application.log', profileContextId, requestId, variantId, company, title,
       };
       if (Object.prototype.hasOwnProperty.call(optional, 'notes')) {
         message.notes = optional.notes;

@@ -11,6 +11,7 @@ export const REQUIRED_CAPABILITIES = Object.freeze([
   'ai.tailored-resume',
   'profile.answers',
   'applications.log',
+  'applications.idempotent',
 ]);
 
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
