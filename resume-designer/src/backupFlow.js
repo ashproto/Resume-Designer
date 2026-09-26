@@ -15,6 +15,7 @@ import {
 import { getSecret, hasNoCredentialConfigured, recoverSecretStore } from './secretStore.js';
 import { store } from './store.js';
 import { appStorage } from './appStorage.js';
+import { notifyBackupDownloadStarted } from './backupFeedback.js';
 import { flushPendingProfileSave } from './userProfilePanel.js';
 import {
   probeLegacyElectronData, importLegacyElectronData, notify, isIOSPlatform,
@@ -196,12 +197,14 @@ function showImportSuccessAndReload(message) {
 }
 
 /**
- * Export every owned storage key into a single JSON file. No success
- * alert — the browser download bar / native save dialog is feedback enough.
+ * Export every owned storage key into a single JSON file. The download helper
+ * cannot observe the native save destination, so feedback says only that the
+ * download was started rather than claiming the file reached disk.
  */
 export function exportFullBackupWithFeedback() {
   try {
     const { keysExported, filename } = exportFullBackup();
+    notifyBackupDownloadStarted({ filename });
     console.log(`[backup] Exported ${keysExported} keys to ${filename}`);
   } catch (err) {
     console.error('[backup] Export failed:', err);

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Platform Engineer</title>
+  </head>
+  <body>
+    <main>
+      <h1>Platform Engineer</h1>
+      <form>
+        <label>
+          Full name
+          <input type="text" name="name" required>
+        </label>
+
+        <div class="application-question">
+          <div>Interest area</div>
+          <select name="interest" aria-required="true">
+            <option value="engineering">Engineering</option>
+            <option value="design">Design</option>
+          </select>
+        </div>
+
+        <fieldset>
+          <legend>Preferred schedule</legend>
+          <label><input type="radio" name="schedule" required> Remote</label>
+          <label><input type="radio" name="schedule" value="hybrid"> Hybrid</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Skills</legend>
+          <ul data-qa="checkboxes">
+            <li><label><input type="checkbox" name="skills" value="javascript"> JavaScript</label></li>
+            <li><label><input type="checkbox" name="skills" value="accessibility"> Accessibility</label></li>
+          </ul>
+        </fieldset>
+
+        <div class="application-question">
+          <div>Resume/CV</div>
+          <a href="#attach-resume">
+            <span>Attach</span>
+            <input type="file" name="resume" accept="application/pdf,.doc,.docx">
+          </a>
+        </div>
+
+        <input type="reset" value="Reset">
+        <input type="image" alt="Submit">
+      </form>
+    </main>
+  </body>
+</html>

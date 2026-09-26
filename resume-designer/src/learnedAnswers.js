@@ -10,7 +10,8 @@
  */
 
 import { generateId } from './store.js';
-import { appStorage } from './appStorage.js';
+import { appStorage, getProfileMapping } from './appStorage.js';
+import { mapKey } from './profileKeys.js';
 import { storageErrorToast } from './storageToast.js';
 
 const STORAGE_KEY = 'resume-designer-learned-answers';
@@ -26,7 +27,7 @@ export function normalizeQuestion(q) {
     .trim();
 }
 
-function save() {
+function save(throwOnFailure = false) {
   // Writes during a destructive backup import are blocked centrally by
   // appStorage's restore guard, so there is no per-writer suspension check here.
   try {
@@ -38,6 +39,7 @@ function save() {
       + 'space (delete resumes you no longer need) and try again.',
       { once: true },
     );
+    if (throwOnFailure) throw e;
   }
 }
 
@@ -117,25 +119,54 @@ export function getAllLearnedAnswers() {
   return answers.slice();
 }
 
-/** Upsert by normalized question. Throws on empty question/answer. */
-export function saveLearnedAnswer(question, answer) {
+/**
+ * Upsert by normalized question. Throws on empty question/answer.
+ * Strict callers opt into synchronous write errors, then await appStorage.flush().
+ * registerRollback receives an undo callback for that durability check.
+ * The bridge serializes strict saves through their durability checks.
+ */
+export function saveLearnedAnswer(question, answer, { throwOnFailure = false, registerRollback } = {}) {
   const q = String(question ?? '').trim();
   const a = String(answer ?? '').trim();
   if (!q) throw new Error('learned answer needs a question');
   if (!a) throw new Error('learned answer needs an answer');
   const normalized = normalizeQuestion(q);
   const now = new Date().toISOString();
+  const profile = registerRollback ? getProfileMapping() : null;
   const existing = answers.find((e) => e.normalized === normalized);
-  if (existing) {
-    existing.question = q;
-    existing.answer = a;
-    existing.updatedAt = now;
-    save();
-    return existing;
+  // Replacement identity distinguishes this upsert from a newer one, even
+  // when both have identical text and timestamps within the same millisecond.
+  const entry = existing
+    ? { ...existing, question: q, answer: a, updatedAt: now }
+    : { id: generateId('ans'), question: q, normalized, answer: a, createdAt: now, updatedAt: now };
+  if (existing) answers = answers.map((value) => value === existing ? entry : value);
+  else answers.push(entry);
+  try {
+    save(throwOnFailure);
+  } catch (error) {
+    answers = existing
+      ? answers.map((value) => value === entry ? existing : value)
+      : answers.filter((value) => value !== entry);
+    throw error;
   }
-  const entry = { id: generateId('ans'), question: q, normalized, answer: a, createdAt: now, updatedAt: now };
-  answers.push(entry);
-  save();
+  const written = JSON.stringify(entry);
+  registerRollback?.(() => {
+    const active = getProfileMapping() === profile;
+    if (active && answers.find((value) => value.id === entry.id) !== entry) return false;
+    const key = active ? STORAGE_KEY : mapKey(profile, STORAGE_KEY);
+    const stored = answersIn(appStorage.getItem(key));
+    const index = stored?.findIndex((value) => value.id === entry.id) ?? -1;
+    if (index < 0 || JSON.stringify(stored[index]) !== written) return false;
+    if (existing) stored[index] = existing;
+    else stored.splice(index, 1);
+    appStorage.setItem(key, JSON.stringify(stored));
+    if (active) {
+      answers = existing
+        ? answers.map((value) => value === entry ? existing : value)
+        : answers.filter((value) => value !== entry);
+    }
+    return true;
+  });
   return entry;
 }
 

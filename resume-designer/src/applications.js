@@ -12,7 +12,8 @@
  */
 
 import { generateId } from './store.js';
-import { appStorage } from './appStorage.js';
+import { appStorage, getProfileMapping } from './appStorage.js';
+import { mapKey } from './profileKeys.js';
 import { storageErrorToast } from './storageToast.js';
 
 const STORAGE_KEY = 'resume-designer-applications';
@@ -171,7 +172,7 @@ export function adoptStoredApplications() {
   notify();
 }
 
-function save() {
+function save(throwOnFailure = false) {
   // Writes during a destructive backup import are blocked centrally by
   // appStorage's restore guard (which replays this write if the restore fails),
   // so there is no per-writer suspension check here.
@@ -184,6 +185,7 @@ function save() {
       + 'space (delete resumes you no longer need) and try again.',
       { once: true },
     );
+    if (throwOnFailure) throw e;
   }
 }
 
@@ -199,6 +201,17 @@ export function getApplication(id) {
   return applications.find((a) => a.id === id) || null;
 }
 
+/** Match the original Companion request, even after native edits or an app restart. */
+export function getCompanionApplication({ requestId, fingerprint }) {
+  const existing = applications.find((app) => app.companionRequest?.requestId === requestId);
+  if (existing && existing.companionRequest.fingerprint !== fingerprint) {
+    throw Object.assign(new Error('This application request was already used with different details'), {
+      status: 409, code: 'idempotency_conflict',
+    });
+  }
+  return existing || null;
+}
+
 /**
  * Add an application. Defaults to a 'prepared' draft; creating directly at a
  * later status (the manual "Add application" flow) stamps appliedAt too. An
@@ -206,6 +219,8 @@ export function getApplication(id) {
  * entry's `at`, so history stays honest — but is ignored for 'prepared'
  * drafts, which have no appliedAt at all. createdAt/updatedAt always reflect
  * when the record itself was created, never the backdated date.
+ * Strict callers can opt into synchronous write errors, then await appStorage.flush().
+ * registerRollback receives an undo callback for a failed durability check.
  */
 export function addApplication({
   variantId,
@@ -215,12 +230,18 @@ export function addApplication({
   status = 'prepared',
   notes = '',
   appliedAt,
-} = {}) {
+} = {}, { throwOnFailure = false, registerRollback, companionRequest } = {}) {
+  if (companionRequest) {
+    const existing = getCompanionApplication(companionRequest);
+    if (existing) return existing;
+  }
+  const profile = registerRollback ? getProfileMapping() : null;
   const now = new Date().toISOString();
   const safeStatus = APPLICATION_STATUSES.includes(status) ? status : 'prepared';
   const appliedStamp = safeStatus === 'prepared' ? null : (appliedAt || now);
   const app = {
     id: generateId('app'),
+    ...(companionRequest ? { companionRequest: { ...companionRequest } } : {}),
     variantId,
     variantName,
     jobId,
@@ -233,7 +254,36 @@ export function addApplication({
     notes,
   };
   applications.unshift(app);
-  save();
+  try {
+    save(throwOnFailure);
+  } catch (error) {
+    // A strict caller must be able to retry a rejected synchronous write
+    // without the next save also persisting this unsuccessful first attempt.
+    applications = applications.filter((entry) => entry !== app);
+    throw error;
+  }
+  const written = registerRollback ? JSON.stringify(app) : null;
+  registerRollback?.(() => {
+    const active = getProfileMapping() === profile;
+    const current = applications.find((entry) => entry.id === app.id);
+    // Native status/note edits mutate in place, so identity alone cannot
+    // distinguish this rejected creation from a newer user change.
+    if (active && current && (current !== app || JSON.stringify(current) !== written)) return false;
+    const key = active ? STORAGE_KEY : mapKey(profile, STORAGE_KEY);
+    const stored = applicationsIn(appStorage.getItem(key));
+    const storedCurrent = stored?.find((entry) => entry.id === app.id);
+    if (storedCurrent && JSON.stringify(storedCurrent) !== written) return false;
+    const remaining = stored?.filter((entry) => entry.id !== app.id);
+    const changed = stored && remaining.length !== stored.length;
+    // Use the current collection, not a pre-request snapshot: another
+    // application may have been accepted while this write was pending.
+    if (changed) appStorage.setItem(key, JSON.stringify(remaining));
+    if (active && current === app) {
+      applications = applications.filter((entry) => entry !== app);
+      notify();
+    }
+    return Boolean(changed);
+  });
   notify();
   return app;
 }

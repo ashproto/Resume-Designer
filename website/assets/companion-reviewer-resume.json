@@ -1,0 +1,55 @@
+{
+  "name": "Alex Morgan",
+  "tagline": "Senior Product Designer",
+  "contact": {
+    "location": "Washington, DC",
+    "email": "alex.morgan@example.com",
+    "phone": "+1 202-555-0147",
+    "portfolio": "https://alex-morgan.example"
+  },
+  "summary": "Product designer with experience designing accessible collaboration software and responsive web products. Uses customer interviews, prototypes, and usability studies to turn complex workflows into clear interfaces. Available to start within two weeks.",
+  "experience": [
+    {
+      "id": "reviewer-experience-1",
+      "title": "Senior Product Designer",
+      "company": "Northline Tools (fictional)",
+      "location": "Remote",
+      "dates": "January 2021 – Present",
+      "bullets": [
+        "Led design for collaboration workflows from customer interviews through delivery.",
+        "Created prototypes in Figma and tested them with customers.",
+        "Partnered with engineers to document accessible components and maintain a shared design system."
+      ]
+    },
+    {
+      "id": "reviewer-experience-2",
+      "title": "Product Designer",
+      "company": "Cedar Works (fictional)",
+      "location": "Washington, DC",
+      "dates": "June 2017 – December 2020",
+      "bullets": [
+        "Designed responsive web interfaces and conducted usability research.",
+        "Worked with product managers and engineers to ship workflow improvements."
+      ]
+    }
+  ],
+  "education": [
+    "BA, Interaction Design — Example Design College (fictional), 2017"
+  ],
+  "sections": [
+    {
+      "id": "reviewer-skills",
+      "title": "Skills",
+      "type": "list",
+      "area": "sidebar",
+      "content": [
+        "Interaction design",
+        "User research",
+        "Accessible design systems",
+        "Figma prototyping",
+        "Responsive web design"
+      ]
+    }
+  ],
+  "tools": "Figma, FigJam, HTML, CSS"
+}
