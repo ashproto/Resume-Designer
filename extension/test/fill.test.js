@@ -399,6 +399,105 @@ describe('fillForm', () => {
     }],
   ];
 
+  it('fills an available radio option beside an initially disabled unmarked peer', () => {
+    const document = new JSDOM('<form><fieldset><legend>Preferred schedule</legend><label>Remote<input type="radio" name="schedule" value="remote" checked disabled></label><label>Hybrid<input type="radio" name="schedule" value="hybrid"></label></fieldset></form>').window.document;
+    const descriptors = scanForm(document);
+    const [remote, hybrid] = document.querySelectorAll('input');
+    const clicks = [];
+    remote.addEventListener('click', () => clicks.push('remote'));
+    hybrid.addEventListener('click', () => clicks.push('hybrid'));
+
+    expect(descriptors[0].options).toEqual([{ value: 'hybrid', label: 'Hybrid' }]);
+    expect(remote.hasAttribute('data-resume-designer-field-id')).toBe(false);
+    const result = fillForm([{ field_id: descriptors[0].field_id, value: 'hybrid' }], {
+      root: document, expectedDescriptors: descriptors,
+    });
+
+    expect(result).toEqual({ filled: [descriptors[0].field_id], unfilled: [] });
+    expect(hybrid.checked).toBe(true);
+    expect(remote.disabled).toBe(true);
+    expect(clicks).toEqual(['hybrid']);
+  });
+
+  const checkedPeerMutations = [
+    ...choiceIdentityMutations,
+    ['type', (input) => { input.type = 'text'; }],
+    ['checked type', (input) => { input.type = input.type === 'radio' ? 'checkbox' : 'radio'; }],
+    ['disabled state', (input) => { input.disabled = true; }],
+    ['hidden state', (input) => { input.hidden = true; }],
+    ['read-only state', (input) => { input.readOnly = true; }],
+    ['sensitivity', (input) => { input.name = 'work_authorization'; }],
+    ['connection', (input) => { input.remove(); }],
+  ];
+
+  it.each(['radio', 'checkbox'].flatMap((kind) => checkedPeerMutations.map(([identity, mutate]) => [kind, identity, mutate])))(
+    'requires a new review when selecting a %s changes its peer %s', (kind, _identity, mutate) => {
+      const document = new JSDOM(`<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="${kind}" name="relocate" value="Yes" checked></label><label>No<input type="${kind}" name="relocate" value="No"></label></fieldset></form><form id="other-form"></form>`).window.document;
+      const descriptors = scanForm(document);
+      const [yes, no] = document.querySelectorAll('input');
+      const clicks = [];
+      yes.addEventListener('click', () => clicks.push('Yes'));
+      no.addEventListener('click', () => { clicks.push('No'); mutate(yes); });
+
+      const result = fillForm([{ field_id: descriptors[0].field_id, value: 'No' }], {
+        root: document, expectedDescriptors: descriptors,
+      });
+
+      expect(result).toEqual({
+        filled: [],
+        unfilled: [{ field_id: descriptors[0].field_id, reason: expect.stringMatching(/new review|sensitive/i) }],
+      });
+      expect(no.checked).toBe(true);
+      expect(clicks).toEqual(['No']);
+    },
+  );
+
+  it.each(['radio', 'checkbox choice', 'checkbox'].flatMap((kind) =>
+    (kind === 'checkbox' ? ['question', 'required state'] : ['question', 'required state', 'option membership'])
+      .flatMap((mutation) => (kind === 'checkbox choice' ? ['accepted', 'rejected'] : ['accepted'])
+        .map((outcome) => [kind, mutation, outcome]))))(
+    'requires a new review when %s changes its reviewed %s after %s activation', (kind, mutation, outcome) => {
+      const standalone = kind === 'checkbox';
+      const type = kind === 'radio' ? 'radio' : 'checkbox';
+      const controls = standalone
+        ? '<label>Has a portfolio<input type="checkbox" name="relocate"></label>'
+        : `<label>Yes<input type="${type}" name="relocate" value="Yes" checked></label><label>No<input type="${type}" name="relocate" value="No"></label>`;
+      const document = new JSDOM(`<form><fieldset><legend>Available to relocate</legend>${controls}</fieldset></form>`).window.document;
+      const descriptors = scanForm(document);
+      const input = [...document.querySelectorAll('input')].at(-1);
+      const clicks = [];
+      for (const control of document.querySelectorAll('input')) {
+        control.addEventListener('click', () => clicks.push(control));
+      }
+      input.addEventListener('click', (event) => {
+        if (outcome === 'rejected') event.preventDefault();
+        if (mutation === 'question') document.querySelector('legend').textContent = 'Available to travel';
+        else if (mutation === 'required state') input.required = true;
+        else {
+          const label = document.createElement('label');
+          label.textContent = 'Maybe';
+          const option = document.createElement('input');
+          option.type = type;
+          option.name = 'relocate';
+          option.value = 'Maybe';
+          label.append(option);
+          document.querySelector('fieldset').append(label);
+        }
+      });
+
+      const result = fillForm([{ field_id: descriptors[0].field_id, value: standalone ? 'true' : 'No' }], {
+        root: document, expectedDescriptors: descriptors,
+      });
+
+      expect(result).toEqual({
+        filled: [],
+        unfilled: [{ field_id: descriptors[0].field_id, reason: expect.stringMatching(/new review/i) }],
+      });
+      expect(input.checked).toBe(outcome === 'accepted');
+      expect(clicks).toEqual([input]);
+    },
+  );
+
   it.each(['radio', 'checkbox'].flatMap((kind) => choiceIdentityMutations.map(([identity, mutate]) => [kind, identity, mutate])))(
     'requires a new review when the activated %s changes its %s', (kind, _identity, mutate) => {
       const html = kind === 'radio'
