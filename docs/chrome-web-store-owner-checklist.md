@@ -1,13 +1,13 @@
 # On Paper Companion: first unlisted release
 
-Prepared September 24, 2026; release-status update September 26. This execution checklist distinguishes owner-reported Dashboard progress from independently verified checks. It does not establish Store review submission or publication.
+Prepared September 24, 2026; release-status update September 27. This execution checklist distinguishes owner-reported Dashboard progress from independently verified checks. It does not establish Store review submission or publication.
 
 ## Already prepared
 
-- Extension **0.1.3** uploaded per the owner. The final candidate is **0.1.5**, with patched dependencies and safe application retries after timeouts. Screenshots, Additional instructions, and a capped reviewer key are owner-reported saved. Listing icon and promotional tile are prepared.
+- Extension **0.1.3** uploaded per the owner. The current candidate is **0.1.6**, addressing the React-controlled checkbox/radio failure found in live **0.1.5** testing. Its 467 tests, lint, build, and package checks passed; the live retest is pending. Screenshots, Additional instructions, and a capped reviewer key are owner-reported saved. Listing icon and promotional tile are prepared.
 - Listing description, permission explanations, privacy-practices worksheet, and reviewer test flow.
 - Publisher choice: **HyperBuild, Inc**. Contact: **support@hyperbuild.com**. First visibility: **Unlisted**, with **macOS-only** support (macOS 14.4 or later). Windows will be added after testing.
-- Dependency fixes and the Companion save/retry follow-up are merged into `main`; both full audits are clear. See [release operations](chrome-web-store-release.md) for current candidate tests, artifact digest, and open gates. Historical demo checks remain in [the readiness report](chrome-web-store-readiness-2026-09-24.md).
+- Dependency fixes and the Companion save/retry follow-up are merged into `main`; both full audits are clear. See [release operations](chrome-web-store-release.md) for historical 0.1.5 tests and artifact digest, and current candidate gates. The [September 27 live QA record](companion-live-qa-2026-09-27.md) separates passed flows from the controlled-input blocker. Historical demo checks remain in [the readiness report](chrome-web-store-readiness-2026-09-24.md).
 
 The first submission can be manual. Google Cloud, service accounts, and GitHub-to-Store automation are optional later work. Leave `CWS_AUTO_PUBLISH` disabled.
 
@@ -26,16 +26,17 @@ An optional verified-website badge is separate from the required email/trader st
 
 ## 2. Together: release the compatible desktop app and website
 
-Signed stable **On Paper 2.3.0** from [stable run 36266008253](https://github.com/ashproto/Resume-Designer/actions/runs/36266008253) supports Companion **0.1.5**. Use the verified versioned macOS installers: [Apple Silicon](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_aarch64.dmg) and [Intel](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_x64.dmg). Production pairing and the remaining Chrome checks below are still open; the isolated demo bundle is not a distributable release.
+Signed stable **On Paper 2.3.0** from [stable run 36266008253](https://github.com/ashproto/Resume-Designer/actions/runs/36266008253) provides the required desktop capability for Companion **0.1.5** and the **0.1.6** candidate. Use the verified versioned macOS installers: [Apple Silicon](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_aarch64.dmg) and [Intel](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_x64.dmg). The unpacked 0.1.5 production smoke passed manual pairing and core flows, but exposed the controlled-input blocker. The 0.1.6 retest and remaining Chrome checks below are open; the isolated demo bundle is not a distributable release.
 
 - [x] The owner authorized merging PR #137 and completing the remaining release work, with dependency/security cleanup required **before opening the `next` → `main` promotion PR**.
 - [x] PR #137 received the Codex thumbs-up and merged into `next` at `504c3ae986aa3dab254db9a76d8324c651bb7dca`.
 - [x] [Beta release run 36189775315](https://github.com/ashproto/Resume-Designer/actions/runs/36189775315) succeeded. The Apple Silicon and Intel **2.3.0-next.153** artifact hashes, strict signatures, Gatekeeper acceptance, and app notarization staples were verified; the Apple Silicon app also passed startup, fictional resume import/PDF export, restart/persistence, and bridge-health checks. This historical beta predates the final dependency and save/retry fixes.
 - [x] Installed stable **2.3.0** on Apple Silicon passed startup with saved settings, fictional-resume PDF export, quit/restart persistence, and bridge health; no Keychain prompt appeared.
-- [ ] Confirm cold app launch from Companion, Chrome restart/re-pairing, and the core review/fill/tailor flow in the production installation. The owner selected a macOS-only first listing. Keep Windows support out of this initial listing; add it only after separate Windows validation.
+- [x] Unpacked **0.1.5** passed manual pairing, reviewed text/select/PDF fill, application logging, fit analysis, tailoring, profile clearing, valid-token URI cold launch, and disconnect/revoke against installed stable **2.3.0**. See the [live QA record](companion-live-qa-2026-09-27.md) for the React checkbox/radio failure and limits.
+- [ ] Repeat the controlled-input and applicable Chrome checks using the verified **0.1.6** package. Chrome restart/re-pairing and fresh production Store-ID automatic approval/rejection remain open; actual Store install/update is post-approval. Keep Windows support out of this macOS-only listing until separately validated.
 - [x] Dependency fixes in PRs #131 and #138 and Companion hardening in PR #140 are merged into `main` through promotion PR #139; release notes from PR #141 are included.
 - [x] Promotion CI and CodeQL passed, Codex review was clean, and PR #139 merged at `de52d78cf4da2d6e5d80276de42e94e2e62532f3`. Default-branch open Dependabot and CodeQL alerts were both zero on September 26; five workflow warnings were documented and dismissed as false positives.
-- [x] Stable 2.3.0 macOS installer versions, downloads, signatures and notarization are verified. Public privacy, reviewer-guide, demo and JSON URLs returned HTTP 200 and matched the deployed `de52d78` source on September 26. Recheck the guide and demo after adding the stable installer links.
+- [x] Stable 2.3.0 macOS installer versions, downloads, signatures and notarization are verified. Public privacy, reviewer-guide, demo and JSON URLs returned HTTP 200 and matched deployed `main` commit `54fb8bcfa7bcb85819a131ff3418f2c7bb2fd062`, including the stable installer links in the guide and demo ([Pages run 36281866480](https://github.com/ashproto/Resume-Designer/actions/runs/36281866480)).
 
 Do not direct reviewers to an incompatible generic latest-release link. Do not distribute `/private/tmp/on-paper-demo/On Paper Demo.app`. Windows runtime/publisher-signing work is deferred beyond this macOS-only release. A cross-target compile is not a Windows runtime check. Do not regenerate the existing updater signing keys. Do not dispatch the desktop release from the feature branch: its current workflow treats every branch except `next` as the stable channel.
 
@@ -62,14 +63,14 @@ Automated screenshot export was blocked at the September 24 local checkpoint. Th
 
 ## 5. Together: assemble the draft Store item
 
-Once the production URLs and reviewer access are ready:
+The production URLs are verified. Complete the candidate and reviewer-access gates before submission:
 
 - [x] Store item created and **0.1.3** uploaded, per the owner’s report.
-- [ ] Replace the uploaded **0.1.3** draft with the verified **on-paper-companion-0.1.5.zip**. Use stable **On Paper 2.3.0**; earlier stable desktop releases lack the safe-retry capability.
+- [ ] Replace the uploaded **0.1.3** draft with **on-paper-companion-0.1.6.zip** only after its package and remaining checks are verified. Use stable **On Paper 2.3.0**; earlier stable desktop releases lack the safe-retry capability.
 - [x] **Store listing** saved per the owner’s September 25 report. Reconcile it with [the listing source](chrome-web-store-listing.md) and the final package before submission.
 - [x] **Privacy practices** saved per the owner’s September 25 report. Reconcile the saved categories, permission justifications, and Limited Use certifications with the final disclosures before submission.
 - [x] Exact **463-character Additional instructions** pasted and dedicated key entered separately in private **Password**, per the owner’s report. Keep **Username** blank.
-- [ ] Update the public guide and demo with the verified stable **2.3.0** installer links and recheck those deployed pages before submission. The fictional fixture/download are deployed and verified.
+- [x] Public guide and demo contain the verified stable **2.3.0** installer links; the deployed pages and fictional fixture/download match the production source. Keep them accessible throughout review.
 - [ ] In **Distribution**, choose **Unlisted** and the intended regions. Unlisted means anyone who has the Store URL can install it; it is not access-controlled private testing.
 - [ ] Save and review the complete draft for missing fields and warnings. The assistant can help fill ordinary non-sensitive fields where browser access permits; browser control currently refused access to the developer console.
 

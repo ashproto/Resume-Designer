@@ -352,10 +352,10 @@ describe('fillForm', () => {
     });
     expect([yes.checked, no.checked]).toEqual([false, true]);
     expect(events.map(({ type, target }) => [type, target.id])).toEqual([
-      ['input', 'authorized-yes'],
-      ['change', 'authorized-yes'],
       ['input', 'authorized-no'],
       ['change', 'authorized-no'],
+      ['input', 'authorized-yes'],
+      ['change', 'authorized-yes'],
     ]);
 
     events.length = 0;
@@ -367,10 +367,10 @@ describe('fillForm', () => {
     });
     expect([yes.checked, no.checked]).toEqual([true, false]);
     expect(events.map(({ type, target }) => [type, target.id])).toEqual([
-      ['input', 'authorized-no'],
-      ['change', 'authorized-no'],
       ['input', 'authorized-yes'],
       ['change', 'authorized-yes'],
+      ['input', 'authorized-no'],
+      ['change', 'authorized-no'],
     ]);
 
     events.length = 0;
@@ -428,6 +428,50 @@ describe('fillForm', () => {
     }
 
     expect(events).toHaveLength(4);
+  });
+
+  it('does not claim a checkbox fill when the page cancels its activation', () => {
+    const document = new JSDOM('<form><label>Has a portfolio <input type="checkbox"></label></form>').window.document;
+    const [field] = scanForm(document);
+    const input = document.querySelector('input');
+    input.addEventListener('click', (event) => event.preventDefault());
+
+    const result = fillForm([{ field_id: field.field_id, value: 'true' }], { root: document });
+
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toEqual([{ field_id: field.field_id, reason: expect.stringMatching(/manually/i) }]);
+    expect(input.checked).toBe(false);
+  });
+
+  it('does not activate a checkbox peer that the page changed into a submit control', () => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const [yes, no] = document.querySelectorAll('input');
+    const submissions = [];
+    document.querySelector('form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      submissions.push(event.type);
+    });
+    no.addEventListener('change', () => { yes.type = 'submit'; });
+
+    const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+    expect(submissions).toEqual([]);
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toHaveLength(1);
+  });
+
+  it('reports a choice as unfilled when clearing its peer resets the selected checkbox', () => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const [yes, no] = document.querySelectorAll('input');
+    yes.addEventListener('change', () => { no.checked = false; });
+
+    const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+    expect([yes.checked, no.checked]).toEqual([false, false]);
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toEqual([{ field_id: field.field_id, reason: expect.stringMatching(/manually/i) }]);
   });
 
   it('decodes a PDF into a realm-correct File and attaches it through DataTransfer', () => {
