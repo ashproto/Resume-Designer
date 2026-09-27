@@ -114,18 +114,23 @@ function fillSelect(element, value) {
   dispatchFillEvents(element);
 }
 
-function fillChecked(element, checked) {
-  // Native activation notifies controlled forms without toggling the value twice.
-  // Recheck each peer because an earlier handler may replace or change it.
-  if (element.tagName !== 'INPUT' || !['checkbox', 'radio'].includes(inputType(element))
+function assertFillableChecked(element, expectedType) {
+  if (element.tagName !== 'INPUT' || inputType(element) !== expectedType
     || !element.isConnected || isUnavailableControl(element)) {
     throw new Error('This field changed since the review was prepared; prepare a new review');
   }
   if (isSensitiveControl(element)) throw new Error(SENSITIVE_MANUAL_MESSAGE);
+}
+
+function fillChecked(element, checked, expectedType) {
+  // Native activation notifies controlled forms without toggling the value twice.
+  // Handlers can change this control or a peer, so verify both sides of activation.
+  assertFillableChecked(element, expectedType);
   if (element.checked === checked) return;
 
   ownerView(element).HTMLElement.prototype.click.call(element);
-  if (!element.isConnected || element.checked !== checked) {
+  assertFillableChecked(element, expectedType);
+  if (element.checked !== checked) {
     throw new Error('The page did not accept this choice; complete the field manually');
   }
 }
@@ -134,7 +139,7 @@ function fillRadio(elements, value) {
   const radio = matchingOption(elements, value, radioLabel);
   if (!radio) throw new Error(`No radio option matches "${String(value ?? '')}"`);
 
-  fillChecked(radio, true);
+  fillChecked(radio, true, 'radio');
 }
 
 function fillCheckbox(element, value) {
@@ -146,7 +151,7 @@ function fillCheckbox(element, value) {
     throw new Error('Checkbox values must be the string "true" or "false"');
   }
 
-  fillChecked(element, value.toLowerCase() === 'true');
+  fillChecked(element, value.toLowerCase() === 'true', 'checkbox');
 }
 
 function fillCheckboxChoiceGroup(elements, value) {
@@ -155,12 +160,15 @@ function fillCheckboxChoiceGroup(elements, value) {
 
   // Select first: controlled exclusive groups can reject an empty selection
   // and may clear the previous choice themselves during this activation.
-  fillChecked(selected, true);
+  fillChecked(selected, true, 'checkbox');
   for (const element of elements) {
-    if (element !== selected) fillChecked(element, false);
+    if (element !== selected) fillChecked(element, false, 'checkbox');
   }
-  if (elements.some((element) => !element.isConnected || element.checked !== (element === selected))) {
-    throw new Error('The page did not accept this choice; complete the field manually');
+  for (const element of elements) {
+    assertFillableChecked(element, 'checkbox');
+    if (element.checked !== (element === selected)) {
+      throw new Error('The page did not accept this choice; complete the field manually');
+    }
   }
 }
 

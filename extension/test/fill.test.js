@@ -443,6 +443,48 @@ describe('fillForm', () => {
     expect(input.checked).toBe(false);
   });
 
+  const checkedMutations = [
+    ['changes type', (input) => { input.type = 'text'; }],
+    ['changes checked type', (input) => { input.type = input.type === 'checkbox' ? 'radio' : 'checkbox'; }],
+    ['becomes disabled', (input) => { input.disabled = true; }],
+    ['becomes hidden', (input) => { input.hidden = true; }],
+    ['becomes sensitive', (input) => { input.name = 'work_authorization'; }],
+  ];
+
+  it.each(['checkbox', 'radio', 'checkbox choice'].flatMap((kind) => checkedMutations.map(([mutation, mutate]) => [kind, mutation, mutate])))('revalidates the activated %s after its handler %s', (kind, mutation, mutate) => {
+    const grouped = kind === 'checkbox choice';
+    const html = grouped
+      ? '<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>'
+      : `<form><label>Has a portfolio<input type="${kind}" value="Yes"></label></form>`;
+    const document = new JSDOM(html).window.document;
+    const [field] = scanForm(document);
+    const input = [...document.querySelectorAll('input')].at(-1);
+    const clicks = [];
+    document.querySelector('form').addEventListener('click', (event) => clicks.push(event.target));
+    input.addEventListener('click', () => mutate(input));
+
+    const result = fillForm([{ field_id: field.field_id, value: grouped ? 'No' : kind === 'checkbox' ? 'true' : 'Yes' }], { root: document });
+
+    expect(input.checked, mutation).toBe(true);
+    expect(result.filled, mutation).toEqual([]);
+    expect(result.unfilled, mutation).toEqual([{ field_id: field.field_id, reason: expect.stringMatching(/new review|sensitive/i) }]);
+    expect(clicks, mutation).toEqual([input]);
+  });
+
+
+  it.each(checkedMutations)('revalidates the selected checkbox when a later peer %s', (_mutation, mutate) => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const [yes, no] = document.querySelectorAll('input');
+    yes.addEventListener('click', () => mutate(no));
+
+    const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+    expect([yes.checked, no.checked]).toEqual([false, true]);
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toEqual([{ field_id: field.field_id, reason: expect.stringMatching(/new review|sensitive/i) }]);
+  });
+
   it('does not activate a checkbox peer that the page changed into a submit control', () => {
     const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
     const [field] = scanForm(document);
