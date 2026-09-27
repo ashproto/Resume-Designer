@@ -7,22 +7,22 @@ release workflow succeeds.
 
 ## Current submission gates
 
-The owner reports **0.1.3 uploaded**, with screenshots, Additional instructions, and the dedicated reviewer key saved in the Dashboard. The final candidate is **0.1.5**: it includes the dependency fixes and prevents duplicate application records after a save times out. PRs #137, #131, and #138 are merged into `next`; PR #140 contains the save/retry and release-workflow follow-up for promotion PR #139. Upload the final verified ZIP before submission. Historical demo checks are recorded in [`chrome-web-store-readiness-2026-09-24.md`](chrome-web-store-readiness-2026-09-24.md); they do not establish fresh production or Store validation.
+The owner reports **0.1.3 uploaded**, with screenshots, Additional instructions, and the dedicated reviewer key saved in the Dashboard. The final candidate is **0.1.5**: it includes the dependency fixes and prevents duplicate application records after a save times out. PRs #137, #131, #138, #140, and #141 are included in promotion PR #139, merged into `main` at `de52d78cf4da2d6e5d80276de42e94e2e62532f3`. Upload the final verified ZIP before submission. Historical demo checks are recorded in [`chrome-web-store-readiness-2026-09-24.md`](chrome-web-store-readiness-2026-09-24.md); they do not establish fresh production or Store validation.
 
 | Gate | Current disposition |
 | --- | --- |
 | Publisher/item/contact/trader setup | Owner selected HyperBuild, Inc, support@hyperbuild.com, and Unlisted for the first release. Registration/payment, publisher verification, and saved Store listing/privacy fields are complete per the owner’s September 25 report. Private legal details and mailbox/domain ownership were not independently checked. |
-| Production desktop dependency | First release is Unlisted and macOS-only (14.4+). Intermediate **2.3.0-next.155** from [run 36192899418](https://github.com/ashproto/Resume-Designer/actions/runs/36192899418) is verified for both macOS architectures: asset hashes, strict signatures, Gatekeeper, and app staples pass. Earlier **next.153** passed ARM startup, fictional resume import/PDF export, restart/persistence, and bridge-health checks. Neither artifact includes the pending persistence follow-up. Verify its resulting beta and supply the final stable versioned installer; public stable v2.2.0 remains incompatible. |
+| Production desktop dependency | First release is Unlisted and macOS-only (14.4+). Signed stable **On Paper 2.3.0** from [stable run 36266008253](https://github.com/ashproto/Resume-Designer/actions/runs/36266008253) includes the final persistence/retry fixes. Verified versioned installers: [Apple Silicon](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_aarch64.dmg) and [Intel](https://github.com/ashproto/Resume-Designer/releases/download/v2.3.0/On-Paper_2.3.0_x64.dmg); asset hashes, strict signatures, Gatekeeper acceptance, and app notarization staples pass for both architectures. Production pairing and Chrome runtime checks remain separate gates. |
 | Pairing | Warm native consent, rejection, extension cancel/manual recovery, retry/approval, and disconnect/revoke passed locally. Cold launch still requires a correctly registered production installation and its own check. |
 | Core companion flow | Local real-AI review/fill with PDF, two sensitive blanks, model search/override/reset, application logging, fit analysis, one tailored variant, saved-answer reuse, and query/fragment stale-review protection passed. This does not complete the full manual checklist. |
 | Native Library close | The close fix, desktop suite (2,051/129), lint, signed isolated app rebuild, and live Close/reopen/Escape checks passed. The full suite preceded final copy-only policy/neutral Library changes; the final app started after user-approved Keychain access, retained saved resumes, and passed focused Library Close and Chrome reconnect checks. |
-| Public policy/support/homepage | Verify deployed URLs, Companion disclosures, and affirmative Limited Use statement. Local source edits are not deployment. |
+| Public policy/support/homepage | Public privacy, reviewer-guide, demo and JSON URLs returned HTTP 200 and matched deployed `main` commit `de52d78` on September 26. The policy includes Companion disclosures and the Limited Use statement. The homepage privacy link and policy support-email route are also verified. Recheck guide/demo after adding stable installer links; mailbox monitoring remains owner-managed. |
 | Real reviewer AI access | Owner reports the dedicated key supplied privately in Dashboard **Password**, with a **$5 budget** and **30-day expiry**; keep **Username** blank. Use the native welcome wizard if necessary, or desktop **Settings → AI**, and tested **Claude Sonnet 4.6**. Remaining credit/expiry were not independently inspected; keep access usable through review and renew if required. Never bundle credentials. |
-| Reviewer fixture/import | Publish a durable fictional fixture/import through the normal authorized release process. |
+| Reviewer fixture/import | The public fictional [demo](https://onpaper.pro/companion-demo.html) and [resume JSON](https://onpaper.pro/assets/companion-reviewer-resume.json) are deployed and verified against `de52d78`. Keep them accessible through review. |
 | Listing images | The 128×128 listing icon and 440×280 promo tile are complete in `extension/store-assets/`. The owner reports product screenshots saved in the Dashboard on September 25; verify their final UI and absence of private data before submission. The earlier local export block is preserved in the readiness history. |
-| Security candidate | **0.1.5** adds durable, idempotent application retries and requires the matching desktop capability. Local validation passed: **455 extension tests/14 files**, **2,135 desktop tests/131 files**, and **90 release-automation tests**; lint, production builds, strict Store packaging and ZIP integrity passed. Desktop lint retains two prior unrelated warnings. ZIP: **680,614 bytes**, **12 files**, SHA-256 `d343207c0e36c190c1e2420ab63b046d5660f710146a2d690d7b8b5edb88bfdf`. Both full dependency audits are clear. Fresh CI and bot review remain gates. |
+| Security candidate | **0.1.5** adds durable, idempotent application retries and requires the matching desktop capability. Post-main [CI run 36266008334](https://github.com/ashproto/Resume-Designer/actions/runs/36266008334) passed: **455 extension tests/14 files**, **2,126 desktop tests passed and 16 skipped (2,142 total), across 132 files**, and **90 release-automation tests**. Lint, production builds, strict Store packaging and ZIP integrity passed. Desktop lint retains two prior unrelated warnings. ZIP: **680,614 bytes**, **12 files**, SHA-256 `d343207c0e36c190c1e2420ab63b046d5660f710146a2d690d7b8b5edb88bfdf`. Both full dependency audits are clear. Promotion CI, CodeQL and Codex review passed; default-branch open Dependabot and CodeQL alerts were zero on September 26. Five cache warnings were dismissed as documented false positives; no query was disabled. |
 | Uploaded artifact evidence | Version **0.1.3**: **424 tests/14 files**, lint, production build, strict Store validator, and ZIP integrity passed. Two profile-switch/reload regression cases failed before the fix; all 50 sidepanel cases passed afterward. ZIP: **674,051 bytes**, 12 files, SHA-256 `09b56c74fb08c550208a889ca31d6194853a7f34087557094b14b2328bc1dd7c`. Historical live checks are not a fresh 0.1.3 Chrome check. |
-| First-release production/manual checks | Signed macOS installer, Store installation/update, URI cold launch, Chrome browser restart, and the applicable macOS README checklist remain open. |
+| First-release production/manual checks | Stable macOS artifacts are verified. On Apple Silicon, installed stable 2.3.0 passed startup with saved settings, fictional-resume PDF export, quit/restart persistence, and bridge health (protocol 2 with applications.idempotent); no Keychain prompt appeared. Production pairing/review/fill/tailor, URI cold launch, Chrome browser restart, and the remaining applicable macOS README checks remain open. Store installation/update is a post-approval check. |
 | Later Windows release | Windows GNU cross-target compilation passed. Windows signing, installation/runtime, and manual feature tests remain deferred; they do not block the macOS-only first release. |
 | Store status | Owner reports **0.1.3** and screenshots uploaded, exact Additional instructions pasted, and the dedicated key supplied privately. Replace the package with validated **0.1.5** before submission. No review submission or publication is established. |
 
@@ -34,11 +34,10 @@ answer/application saves, serializes each save through its durability check,
 rolls back rejected mutations without losing newer native edits, and rechecks
 pairing before queued saves start and after their writes complete. The workflow
 resolves trusted release provenance before checkout and denies cache access.
-Local verification: **2,135 desktop tests/131 files**, **90 release-automation
-tests**, lint and production build pass. The final Store candidate is **0.1.5**; its retry identity is retained through
+Post-main [CI run 36266008334](https://github.com/ashproto/Resume-Designer/actions/runs/36266008334) passed: **2,126 desktop tests passed and 16 skipped (2,142 total), across 132 files**;
+**455 extension tests/14 files** and **90 release-automation tests** passed, both dependency audits reported zero vulnerabilities, and lint and production builds passed. The final Store candidate is **0.1.5**; its retry identity is retained through
 connection loss, disconnect/re-pairing, and panel reopen in the same Chrome window. Pending records are isolated by window so another panel cannot erase them. Restoring the original resume selection also preserves it; uncertain changed details require explicit Start over. The desktop persists the original request
-identity with the application record. Fresh CI, CodeQL, bot review and the resulting desktop release
-remain gates; earlier beta artifacts do not validate these changes.
+identity with the application record. The fixes are merged into `main`; promotion CI, CodeQL and Codex review passed, and stable **2.3.0** includes them. The five CodeQL cache warnings were independently checked and dismissed as false positives because the query model omits enforced `cache-mode: none`; [the recorded disposition](https://github.com/ashproto/Resume-Designer/pull/139#issuecomment-5841770071) includes the exact rule and workflow evidence. Production Chrome and Store checks remain open.
 
 ## What is automated
 
@@ -93,7 +92,7 @@ asynchronous.
 
 ## What remains manual
 
-Use the [owner setup checklist](chrome-web-store-owner-checklist.md) for the remaining security validation, final versioned installer, public website, reviewer-access continuity, and Unlisted macOS-first submission checks.
+Use the [owner setup checklist](chrome-web-store-owner-checklist.md) for production Chrome checks, deployed installer-link verification, reviewer-access continuity, and Unlisted macOS-first submission.
 
 Chrome requires human-owned publisher and listing setup before the API can
 publish an item. Complete these once in the Chrome Web Store Developer
@@ -101,8 +100,8 @@ Dashboard. Registration includes a one-time developer fee; the owner reports bot
 
 1. Publisher verification for **HyperBuild, Inc** is complete per the owner’s September 25 report. Keep two-step verification enabled and resolve any new Dashboard warnings.
 2. Confirm **support@hyperbuild.com** is monitored. Any required trader declaration and legal identity details stay in Google’s Dashboard; they were not independently inspected here.
-3. The owner reports **0.1.3 uploaded**. Replace it with **0.1.5** after the security candidate is validated.
-4. Store Listing, Privacy practices, exact Additional instructions, and the private reviewer Password are owner-reported saved. Reconcile the saved draft with the final package and `docs/chrome-web-store-listing.md`; complete the linked guide with the final verified versioned installer and deployed fixtures. Confirm the reviewer key’s $5 budget and 30-day expiry still cover the review period.
+3. The owner reports **0.1.3 uploaded**. Replace it with the verified **0.1.5** package.
+4. Store Listing, Privacy practices, exact Additional instructions, and the private reviewer Password are owner-reported saved. Reconcile the saved draft with the final package and `docs/chrome-web-store-listing.md`; update and recheck the linked guide with the verified stable **2.3.0** installer links; the fixtures are deployed. Confirm the reviewer key’s $5 budget and 30-day expiry still cover the review period.
 5. Add the public privacy-policy, support, and homepage URLs.
 6. Screenshots are owner-reported saved. Verify the final screenshots and promotional artwork before submission.
 7. Confirm **Unlisted** for the first release in Distribution, as chosen by the owner.
@@ -266,7 +265,9 @@ the app-first guarantee for bridge changes.
 
 ## Product and listing gates before first submission
 
-- [ ] Deploy and verify a stable privacy policy (including Companion and Limited Use text), homepage link, and support route.
+- [x] Deploy and verify the public privacy policy (including Companion and Limited Use text), reviewer guide, fictional demo, and resume JSON against `de52d78`.
+- [x] Confirm the deployed homepage privacy link and policy support-email route. Mailbox monitoring remains owner-managed.
+- [ ] Update and recheck the reviewer guide/demo with the stable **2.3.0** installer links.
 - [x] Add a prominent first-use disclosure and affirmative consent before page
       or resume data is processed. Enumerate page origin/path and form descriptors; resume, profile,
       and learned answers; generated PDFs; the session pairing credential;
@@ -285,7 +286,8 @@ the app-first guarantee for bridge changes.
 - [ ] Complete human review of the documented trust boundary before broad launch.
 - [x] Create the required listing icon and 440×280 promotional tile in `extension/store-assets/`.
 - [x] Store screenshots saved per the owner’s September 25 report; confirm they match the final UI before submission.
-- [ ] Complete `docs/chrome-web-store-reviewer-instructions.md` with stable reviewer fixture/import, the exact signed compatible macOS installer, and safe real AI access.
+- [x] Record the deployed reviewer fixture/import and verified signed stable **2.3.0** installers in `docs/chrome-web-store-reviewer-instructions.md`.
+- [ ] Confirm owner-managed reviewer AI access remains usable; its remaining credit and expiry have not been independently inspected.
 - [ ] Copy and confirm the first-release platform in the live Dashboard listing: macOS 14.4 or later only, with Unlisted visibility. Windows support is deferred until its separate release checks pass.
 - [ ] Perform the manual Chrome QA checklist in `extension/README.md` against
       the exact release ZIP.
@@ -296,6 +298,6 @@ the app-first guarantee for bridge changes.
 2. Build the final ZIP, record its SHA-256, and capture screenshots from that same UI. Confirm no personal data, tokens, API keys, developer overlays, or unshipped promises appear in the images.
 3. Validate name/version/description against the listing; select only data categories supported by the final inventory. Check the deployed policy in a fresh browser session.
 4. Complete the owner-provided fields and reviewer access. Check the exact installer contains this bridge version; a generic latest-release link can point to an incompatible app.
-5. Complete the remaining release steps under the owner’s existing authorization after the gates close. Dependency/security cleanup must finish before opening the `next` → `main` promotion PR. Keep automated publishing disabled until its configuration and product gates are complete. A successful upload or review submission does not mean users can install the extension yet.
+5. Complete the remaining release steps under the owner’s existing authorization after the gates close. Dependency/security cleanup and the `next` → `main` promotion are complete. Keep automated publishing disabled until its configuration and product gates are complete. A successful upload or review submission does not mean users can install the extension yet.
 
 Official submission behavior: [publishing documentation](https://developer.chrome.com/docs/webstore/publish) describes the upload, listing/privacy/test fields, and review step; [review process](https://developer.chrome.com/docs/webstore/review-process) explains that review timing varies. No review-time guarantee is made here.
