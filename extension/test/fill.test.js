@@ -387,6 +387,112 @@ describe('fillForm', () => {
     expect(events).toEqual([]);
   });
 
+  it('switches an exclusive checkbox choice that rejects overlapping selections', () => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const inputs = [...document.querySelectorAll('input')];
+    const events = [];
+    for (const input of inputs) {
+      input.addEventListener('click', (event) => {
+        events.push(['click', input.value]);
+        if (input.checked && inputs.some((peer) => peer !== input && peer.checked)) event.preventDefault();
+      });
+      for (const type of ['input', 'change']) input.addEventListener(type, () => events.push([type, input.value]));
+    }
+
+    const fill = () => fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+    expect(fill()).toEqual({ filled: [field.field_id], unfilled: [] });
+    expect(inputs.map((input) => input.checked)).toEqual([false, true]);
+    expect(events).toEqual([
+      ['click', 'No'],
+      ['click', 'Yes'], ['input', 'Yes'], ['change', 'Yes'],
+      ['click', 'No'], ['input', 'No'], ['change', 'No'],
+    ]);
+    events.length = 0;
+    expect(fill()).toEqual({ filled: [field.field_id], unfilled: [] });
+    expect(events).toEqual([]);
+  });
+
+  it('stops after one fallback if an exclusive checkbox selection is still rejected', () => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const [yes, no] = document.querySelectorAll('input');
+    const clicks = [];
+    document.querySelector('form').addEventListener('click', (event) => clicks.push(event.target.value));
+    no.addEventListener('click', (event) => event.preventDefault());
+
+    const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toEqual([{ field_id: field.field_id, reason: expect.stringMatching(/manually/i) }]);
+    expect([yes.checked, no.checked]).toEqual([false, false]);
+    expect(clicks).toEqual(['No', 'Yes', 'No']);
+  });
+
+  it.each([
+    ['selected type', (_yes, no) => { no.type = 'text'; }],
+    ['selected disabled', (_yes, no) => { no.disabled = true; }],
+    ['selected hidden', (_yes, no) => { no.hidden = true; }],
+    ['selected sensitivity', (_yes, no) => { no.name = 'work_authorization'; }],
+    ['selected removal', (_yes, no) => no.remove()],
+    ['peer type', (yes) => { yes.type = 'radio'; }],
+    ['peer disabled', (yes) => { yes.disabled = true; }],
+    ['peer sensitivity', (yes) => { yes.name = 'work_authorization'; }],
+    ['peer removal', (yes) => yes.remove()],
+    ['option value', (_yes, no) => { no.value = 'Maybe'; }],
+    ['option label', (_yes, no) => { no.parentElement.firstChild.textContent = 'Maybe'; }],
+    ['group name', (_yes, no) => { no.name = 'another_question'; }],
+    ['checked state', (yes) => { yes.checked = false; }],
+  ])('does not retry a rejected checkbox choice after its handler changes %s', (_mutation, mutate) => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const [yes, no] = document.querySelectorAll('input');
+    const clicks = [];
+    yes.addEventListener('click', () => clicks.push('Yes'));
+    no.addEventListener('click', (event) => {
+      clicks.push('No');
+      event.preventDefault();
+      mutate(yes, no);
+    });
+
+    const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toHaveLength(1);
+    expect(clicks).toEqual(['No']);
+  });
+
+  it('does not click an already selected target again when clearing the peer selects it', () => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const [yes, no] = document.querySelectorAll('input');
+    const clicks = [];
+    no.addEventListener('click', (event) => { clicks.push('No'); if (yes.checked) event.preventDefault(); });
+    yes.addEventListener('click', () => { clicks.push('Yes'); no.checked = true; });
+
+    const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+    expect(result).toEqual({ filled: [field.field_id], unfilled: [] });
+    expect([yes.checked, no.checked]).toEqual([false, true]);
+    expect(clicks).toEqual(['No', 'Yes']);
+  });
+
+  it('does not retry the target when clearing its peer makes it unavailable', () => {
+    const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
+    const [field] = scanForm(document);
+    const [yes, no] = document.querySelectorAll('input');
+    const clicks = [];
+    no.addEventListener('click', (event) => { clicks.push('No'); if (yes.checked) event.preventDefault(); });
+    yes.addEventListener('click', () => { clicks.push('Yes'); no.disabled = true; });
+
+    const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+    expect(result.filled).toEqual([]);
+    expect(result.unfilled).toHaveLength(1);
+    expect([yes.checked, no.checked]).toEqual([false, false]);
+    expect(clicks).toEqual(['No', 'Yes']);
+  });
+
   it('fills checkboxes only from case-insensitive true or false strings', () => {
     const document = loadFixture('lever');
     const checkboxField = scanForm(document).find(({ type }) => type === 'checkbox');
