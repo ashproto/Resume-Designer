@@ -387,6 +387,65 @@ describe('fillForm', () => {
     expect(events).toEqual([]);
   });
 
+  const choiceIdentityMutations = [
+    ['value', (input) => { input.value = 'Maybe'; }],
+    ['label', (input) => { input.labels[0].firstChild.textContent = 'Maybe'; }],
+    ['name', (input) => { input.name = 'another_question'; }],
+    ['form', (input) => { input.setAttribute('form', 'other-form'); }],
+    ['parent', (input) => {
+      const wrapper = input.ownerDocument.createElement('span');
+      input.parentElement.append(wrapper);
+      wrapper.append(input);
+    }],
+  ];
+
+  it.each(['radio', 'checkbox'].flatMap((kind) => choiceIdentityMutations.map(([identity, mutate]) => [kind, identity, mutate])))(
+    'requires a new review when the activated %s changes its %s', (kind, _identity, mutate) => {
+      const html = kind === 'radio'
+        ? '<form><fieldset><legend>Preferred schedule</legend><label>Remote<input type="radio" name="schedule" value="remote" checked></label><label>Hybrid<input type="radio" name="schedule" value="hybrid"></label></fieldset></form>'
+        : '<form><label>Has a portfolio<input type="checkbox" name="portfolio"></label></form>';
+      const document = new JSDOM(`${html}<form id="other-form"></form>`).window.document;
+      const descriptors = scanForm(document);
+      const input = [...document.querySelectorAll('input')].at(-1);
+      const clicks = [];
+      input.addEventListener('click', () => { clicks.push(input); mutate(input); });
+
+      const result = fillForm([{ field_id: descriptors[0].field_id, value: kind === 'radio' ? 'hybrid' : 'true' }], {
+        root: document, expectedDescriptors: descriptors,
+      });
+
+      expect(result).toEqual({
+        filled: [],
+        unfilled: [{ field_id: descriptors[0].field_id, reason: expect.stringMatching(/new review/i) }],
+      });
+      expect(input.checked).toBe(true);
+      expect(clicks).toEqual([input]);
+    },
+  );
+
+  it.each(['selection', 'peer clearing'].flatMap((stage) => ['selected', 'peer'].flatMap((member) =>
+    choiceIdentityMutations.map(([identity, mutate]) => [stage, member, identity, mutate]))))(
+    'requires a new review when %s changes the %s checkbox %s', (stage, member, _identity, mutate) => {
+      const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form><form id="other-form"></form>').window.document;
+      const [field] = scanForm(document);
+      const [yes, no] = document.querySelectorAll('input');
+      const clicks = [];
+      yes.addEventListener('click', () => clicks.push('Yes'));
+      no.addEventListener('click', () => clicks.push('No'));
+      const activated = stage === 'selection' ? no : yes;
+      activated.addEventListener('click', () => mutate(member === 'selected' ? no : yes));
+
+      const result = fillForm([{ field_id: field.field_id, value: 'No' }], { root: document });
+
+      expect(result).toEqual({
+        filled: [],
+        unfilled: [{ field_id: field.field_id, reason: expect.stringMatching(/new review/i) }],
+      });
+      expect(clicks).toEqual(stage === 'selection' ? ['No'] : ['No', 'Yes']);
+      expect([yes.checked, no.checked]).toEqual([stage === 'selection', true]);
+    },
+  );
+
   it('switches an exclusive checkbox choice that rejects overlapping selections', () => {
     const document = new JSDOM('<form><fieldset><legend>Available to relocate</legend><label>Yes<input type="checkbox" name="relocate" value="Yes" checked></label><label>No<input type="checkbox" name="relocate" value="No"></label></fieldset></form>').window.document;
     const [field] = scanForm(document);

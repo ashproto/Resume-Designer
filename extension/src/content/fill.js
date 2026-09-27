@@ -122,6 +122,21 @@ function assertFillableChecked(element, expectedType) {
   if (isSensitiveControl(element)) throw new Error(SENSITIVE_MANUAL_MESSAGE);
 }
 
+function checkedIdentity(element) {
+  return {
+    value: element.value, label: radioLabel(element), name: element.name,
+    form: element.form, parent: element.parentElement,
+  };
+}
+
+function assertUnchangedChecked(element, before, expectedType) {
+  assertFillableChecked(element, expectedType);
+  if (element.value !== before.value || radioLabel(element) !== before.label
+    || element.name !== before.name || element.form !== before.form || element.parentElement !== before.parent) {
+    throw new Error('This field changed since the review was prepared; prepare a new review');
+  }
+}
+
 class CheckedValueRejectedError extends Error {
   constructor() {
     super('The page did not accept this choice; complete the field manually');
@@ -134,8 +149,9 @@ function fillChecked(element, checked, expectedType) {
   assertFillableChecked(element, expectedType);
   if (element.checked === checked) return;
 
+  const before = checkedIdentity(element);
   ownerView(element).HTMLElement.prototype.click.call(element);
-  assertFillableChecked(element, expectedType);
+  assertUnchangedChecked(element, before, expectedType);
   if (element.checked !== checked) throw new CheckedValueRejectedError();
 }
 
@@ -164,19 +180,11 @@ function fillCheckboxChoiceGroup(elements, value) {
 
   const original = elements.map((element) => {
     assertFillableChecked(element, 'checkbox');
-    return {
-      element, checked: element.checked, value: element.value, label: radioLabel(element),
-      name: element.name, form: element.form, parent: element.parentElement,
-    };
+    return { element, checked: element.checked, ...checkedIdentity(element) };
   });
   const assertUnchangedChoices = () => {
     for (const before of original) {
-      const element = before.element;
-      assertFillableChecked(element, 'checkbox');
-      if (element.value !== before.value || radioLabel(element) !== before.label
-        || element.name !== before.name || element.form !== before.form || element.parentElement !== before.parent) {
-        throw new Error('This field changed since the review was prepared; prepare a new review');
-      }
+      assertUnchangedChecked(before.element, before, 'checkbox');
     }
   };
 
@@ -198,11 +206,14 @@ function fillCheckboxChoiceGroup(elements, value) {
     fillChecked(selected, true, 'checkbox');
     assertUnchangedChoices();
   }
+  assertUnchangedChoices();
   for (const element of elements) {
-    if (element !== selected) fillChecked(element, false, 'checkbox');
+    if (element !== selected) {
+      fillChecked(element, false, 'checkbox');
+      assertUnchangedChoices();
+    }
   }
   for (const element of elements) {
-    assertFillableChecked(element, 'checkbox');
     if (element.checked !== (element === selected)) {
       throw new Error('The page did not accept this choice; complete the field manually');
     }
