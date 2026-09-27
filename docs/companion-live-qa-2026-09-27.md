@@ -1,12 +1,12 @@
 # Companion live verification — September 27, 2026
 
-The current candidate is **0.1.6**. Its package and automated checks passed; Chrome reload and the live retest are pending. The historical **0.1.5** smoke below passed core flows but found a React-controlled checkbox/radio failure that blocks release readiness. This is a partial manual verification record, not completion of the [extension manual checklist](../extension/README.md).
+The current candidate is **0.1.6**. Its package, automated checks, and the local-fixture live retest passed after the owner reloaded the extension. The historical **0.1.5** smoke below found a React-controlled checkbox/radio failure; the **0.1.6** retest closed that observed failure. Remaining manual and Store checks are still open. This is a partial manual verification record, not completion of the [extension manual checklist](../extension/README.md).
 
 ## Build and deployment evidence
 
 - Desktop: installed, signed stable **On Paper 2.3.0**, from [release run 36266008253](https://github.com/ashproto/Resume-Designer/actions/runs/36266008253), source `de52d78cf4da2d6e5d80276de42e94e2e62532f3`. Both macOS architectures passed artifact/digest, strict signature, Gatekeeper, and app-staple verification. Native runtime checks used Apple Silicon; Windows runtime is outside this first macOS-only release.
 - Browser: user-loaded unpacked **Companion 0.1.5**, whose 12 distribution files matched the verified ZIP: **680,614 bytes**, SHA-256 `d343207c0e36c190c1e2420ab63b046d5660f710146a2d690d7b8b5edb88bfdf`. These are historical package results, not the 0.1.6 digest.
-- Current **0.1.6**: **467 extension tests/15 files**, including **40 focused fill cases**, passed; the real-React regressions failed before the fix and passed afterward. ESLint, production build, strict Store packaging, ZIP integrity, and all 12 ZIP/dist byte comparisons passed. ZIP: **681,084 bytes**, SHA-256 `8f0c7529136ff0f71b16540e1556d539c8be1f80ba80a20e0e7ed93dd56cf0e8`. No new dependency or native-app change is required. These checks do not establish the pending live result.
+- Current **0.1.6**: **467 extension tests/15 files**, including **40 focused fill cases**, passed; the real-React regressions failed before the fix and passed afterward. ESLint, production build, strict Store packaging, ZIP integrity, and all 12 ZIP/dist byte comparisons passed. ZIP: **681,084 bytes**, SHA-256 `8f0c7529136ff0f71b16540e1556d539c8be1f80ba80a20e0e7ed93dd56cf0e8`. No new dependency or native-app change is required. The separate live observations below used the owner-reloaded unpacked 0.1.6 build; automated results alone do not establish manual coverage.
 - Data: separate fictional reviewer profiles and resume, the public fictional application, and local form fixtures. No real application was submitted.
 - Deployment: [reviewer guide](https://onpaper.pro/companion-review.html), [demo](https://onpaper.pro/companion-demo.html), [resume JSON](https://onpaper.pro/assets/companion-reviewer-resume.json), and [privacy policy](https://onpaper.pro/privacy.html) returned HTTP 200 and matched `main` commit `54fb8bcfa7bcb85819a131ff3418f2c7bb2fd062` from [Pages run 36281866480](https://github.com/ashproto/Resume-Designer/actions/runs/36281866480). The guide and demo include the verified versioned stable 2.3.0 installers. Keep these URLs available through review.
 
@@ -25,19 +25,32 @@ The current candidate is **0.1.6**. Its package and automated checks passed; Chr
 | Disconnect | Disconnect while the app was running confirmed app-access revocation and cleared the browser connection. |
 | Wrong service and old protocol | With On Paper quit and pairing revoked, a temporary wrong-service health response showed the companion-port conflict message; protocol 1 showed Update On Paper. Each fixture received exactly one GET /health, without Authorization and without follow-up requests. No stored credential existed: this is not an authenticated-session leakage test. The fixture server was stopped afterward. |
 
-## Failed and incomplete
+## Historical failure and 0.1.6 retest
 
-**Release blocker: React-controlled native checkbox and radio.** The reviewed Hybrid radio choice and false checkbox value did not reach React state: the page retained an empty schedule and a true checkbox. Companion incorrectly reported Filled 10 fields, and a forced rerender retained the prior state. The **0.1.6** source fix passed automated regression and package checks. Its live retest must still close this failure before submission.
+**Historical 0.1.5 failure: React-controlled native checkbox and radio.** The reviewed Hybrid radio choice and false checkbox value did not reach React state: the page retained an empty schedule and a true checkbox. Companion incorrectly reported Filled 10 fields, and a forced rerender retained the prior state. The **0.1.6** source fix passed automated regression, package checks, and the live retest below.
 
-**Save answer:** an explicit save was invoked for a fictional, non-sensitive answer. Reuse in a later review was not verified in this run. Earlier local saved-answer tests remain historical evidence only.
+All ATS checks below used local sanitized fixtures, not live Greenhouse, Lever, or Ashby employer sites. The browser was manually paired to the correct fictional profile and model in installed signed On Paper 2.3.0.
+
+| 0.1.6 check | Observed result and limit |
+| --- | --- |
+| React checkbox/radio and edited values | Reviewed Hybrid/false changed React state from an empty schedule/true checkbox to Hybrid/false. Edited text, native select, and textarea values persisted. A forced rerender preserved the filled values. A second fill produced no additional checkbox/radio events and no double toggle. Submission counters remained zero; the password stayed empty and the custom control stayed manual. |
+| React PDF | Attachment was 43,192 bytes, application/pdf, with a valid %PDF- header. |
+| Saved-answer reuse | The previously saved fictional answer Paper Plane Workshop was reused in a later review. |
+| Fragment and path changes | A fragment-only URL change replaced the old Fill action with Refresh review; input/change counters stayed 19/19 with no writes. A later full-path navigation also blocked the old fill and required Refresh review without form writes. These checks do not cover every tab, origin, or form-mutation case. |
+| Greenhouse fixture | Six descriptors retained their order, with two manual fields and one needing an answer. Reviewed Remote reached the native select; name, email, select, and hidden resume input filled (four fields). PDF was 43,192 bytes, application/pdf, with %PDF- header. Custom Country and work authorization stayed untouched; submit count stayed zero. |
+| Lever fixture | Six descriptors filled, including native Design value design, Remote radio, JavaScript false as a no-op, and Accessibility true. Input/change counters were 5/5. PDF was 43,192 bytes, application/pdf, with %PDF- header; submit count stayed zero. |
+| Ashby fixture | Four descriptors included two manual controls. Supported name and resume filled (two fields); PDF was 43,192 bytes with %PDF- header. Location combobox and button-backed Travel stayed untouched and manual, without an editable answer or Save answer control. Submit count stayed zero. |
+| Manual description fallback | On the Ashby fixture, a manually supplied job description and the selected tailored fictional resume with Claude Sonnet 4.6 produced fit strengths, gaps, recommendations, and an observed score of 88%. The score is not a fixed expected result. |
+| App exit and disconnected revoke | Quitting On Paper removed Connected status. Disconnect with the app closed explicitly reported that the browser was disconnected but other sessions could not be revoked. Reopening signed 2.3.0 and manually pairing restored Connected. |
+| Chrome restart and final revoke | After quitting/relaunching Chrome, user tabs returned and Companion showed Not connected even though On Paper was running. Manual pairing restored Connected. Disconnect with the app running then confirmed app-access revocation and browser-session clearing. This demonstrates cleared authenticated session behavior, not a forensic disk inspection; production Store-ID automatic pairing remains untested. |
 
 ## Remaining verification
 
 - [x] Record the exact 0.1.6 package, digest, and automated results above.
-- [ ] Reload 0.1.6 in Chrome and verify controlled radio/checkbox state, event delivery, persistence after rerender, and no submission.
-- [ ] Complete Greenhouse/Lever fixture checks and applicable custom-control checks; verify saved-answer reuse and page/tab/URL/form invalidation behavior.
-- [ ] Complete the remaining applicable manual matrix, including description fallback, file-error handling, Chrome restart/re-pairing, unavailable/uninstalled app or URI handler, and revoked/changed-session cases. The wrong-service and old-protocol checks above cover only the stated disconnected setup.
-- [ ] Exercise uncertain application-write retry and other remaining failure paths against the final build; ordinary successful logging does not prove those manual cases.
+- [x] Reload 0.1.6 and verify local controlled radio/checkbox state, events, rerender persistence, repeated fill, and no submission.
+- [x] Verify local Greenhouse/Lever/Ashby fixtures, manual controls, saved-answer reuse, fragment/path invalidation, description fallback, Chrome restart/manual pairing, and the stated disconnect cases.
+- [ ] Complete remaining manual fault cases: rejected file assignment, uncertain application-write retry, missing/uninstalled native app or unavailable URI handler, and job changes during in-flight tailoring. The 467-test automated suite is separate evidence; successful ordinary logging/filling does not establish these manual failure paths.
+- [ ] Complete the remaining applicable tab/origin/form-change and revoked/changed-session cases in the README matrix. Wrong-service/old-protocol coverage above used a disconnected setup; the restart check establishes UI/session behavior only.
 - [ ] Verify fresh production Store-ID automatic approval/rejection with the actual Store-installed identity. The unpacked identity used here cannot establish that result.
 - [ ] After Store approval, verify installation/update and re-pairing from the actual Store URL. Store submission, approval, publication, and installed-update results are not established by this record.
 
