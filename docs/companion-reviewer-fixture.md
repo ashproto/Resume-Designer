@@ -1,6 +1,6 @@
 # Fictional Companion reviewer fixture
 
-Deployment verified September 26, 2026: the public demo, reviewer guide, and resume JSON returned HTTP 200 and matched `main` commit `de52d78`. These are synthetic examples authored for review, with no copied user storage, provider keys, or pairing credentials.
+Deployment reverified September 27, 2026: the public demo, reviewer guide, resume JSON, and privacy policy returned HTTP 200 and matched deployed `main` commit `54fb8bcfa7bcb85819a131ff3418f2c7bb2fd062` from [Pages run 36281866480](https://github.com/ashproto/Resume-Designer/actions/runs/36281866480), including the stable installer links in the guide and demo. These are synthetic examples authored for review, with no copied user storage, provider keys, or pairing credentials.
 
 | Material | Repository source |
 | --- | --- |
@@ -49,7 +49,7 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory website
 
 Open `http://127.0.0.1:8765/companion-demo.html` in Chrome. Its relative download link serves `http://127.0.0.1:8765/assets/companion-reviewer-resume.json`. Invoke Companion from the toolbar on that tab, accept its disclosure, pair, and select **Product Design** (or the original import filename). Follow the full reviewer instructions for automatic/manual pairing.
 
-For Store review, use the deployed page and JSON below. Both URLs were verified against `de52d78` on September 26. The existing Pages workflow uploads the whole `website/` directory; recheck the demo and reviewer guide after this follow-up adds the verified stable installer links:
+For Store review, use the deployed page and JSON below. Both URLs, the reviewer guide, and the privacy policy were reverified on September 27 against deployed `main` commit `54fb8bcfa7bcb85819a131ff3418f2c7bb2fd062` ([Pages run 36281866480](https://github.com/ashproto/Resume-Designer/actions/runs/36281866480)). The guide and demo already contain the verified stable 2.3.0 installer links; the deployment recheck is complete. The existing Pages workflow uploads the whole `website/` directory.
 
 - Page and on-page setup: `https://onpaper.pro/companion-demo.html`
 - Fictional resume download: `https://onpaper.pro/assets/companion-reviewer-resume.json`

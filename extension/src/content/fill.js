@@ -114,15 +114,63 @@ function fillSelect(element, value) {
   dispatchFillEvents(element);
 }
 
-function fillRadio(elements, value) {
+function assertFillableChecked(element, expectedType) {
+  if (element.tagName !== 'INPUT' || inputType(element) !== expectedType
+    || !element.isConnected || isUnavailableControl(element)) {
+    throw new Error('This field changed since the review was prepared; prepare a new review');
+  }
+  if (isSensitiveControl(element)) throw new Error(SENSITIVE_MANUAL_MESSAGE);
+}
+
+function checkedIdentity(element) {
+  return {
+    value: element.value, label: radioLabel(element), name: element.name,
+    form: element.form, parent: element.parentElement,
+  };
+}
+
+function assertUnchangedChecked(element, before, expectedType) {
+  assertFillableChecked(element, expectedType);
+  if (element.value !== before.value || radioLabel(element) !== before.label
+    || element.name !== before.name || element.form !== before.form || element.parentElement !== before.parent) {
+    throw new Error('This field changed since the review was prepared; prepare a new review');
+  }
+}
+
+class CheckedValueRejectedError extends Error {
+  constructor() {
+    super('The page did not accept this choice; complete the field manually');
+  }
+}
+
+function fillChecked(element, checked, expectedType, validateReview) {
+  // Native activation notifies controlled forms without toggling the value twice.
+  // Handlers can change this control or a peer, so verify both sides of activation.
+  assertFillableChecked(element, expectedType);
+  if (element.checked === checked) return;
+
+  const before = checkedIdentity(element);
+  ownerView(element).HTMLElement.prototype.click.call(element);
+  assertUnchangedChecked(element, before, expectedType);
+  validateReview?.();
+  if (element.checked !== checked) throw new CheckedValueRejectedError();
+}
+
+function fillRadio(elements, value, validateReview) {
   const radio = matchingOption(elements, value, radioLabel);
   if (!radio) throw new Error(`No radio option matches "${String(value ?? '')}"`);
 
-  nativeSetter(radio, 'HTMLInputElement', 'checked', true);
-  dispatchFillEvents(radio);
+  const original = elements.map((element) => {
+    assertFillableChecked(element, 'radio');
+    return { element, ...checkedIdentity(element) };
+  });
+  fillChecked(radio, true, 'radio', validateReview);
+  for (const before of original) {
+    assertUnchangedChecked(before.element, before, 'radio');
+  }
 }
 
-function fillCheckbox(element, value) {
+function fillCheckbox(element, value, validateReview) {
   if (isButtonBackedYesNoCheckbox(element)) {
     throw new Error('This custom Yes/No control must be filled manually');
   }
@@ -131,20 +179,52 @@ function fillCheckbox(element, value) {
     throw new Error('Checkbox values must be the string "true" or "false"');
   }
 
-  nativeSetter(element, 'HTMLInputElement', 'checked', value.toLowerCase() === 'true');
-  dispatchFillEvents(element);
+  fillChecked(element, value.toLowerCase() === 'true', 'checkbox', validateReview);
 }
 
-function fillCheckboxChoiceGroup(elements, value) {
+function fillCheckboxChoiceGroup(elements, value, validateReview) {
   const selected = matchingOption(elements, value, radioLabel);
   if (!selected) throw new Error(`No checkbox option matches "${String(value ?? '')}"`);
 
-  const checkedPeers = elements.filter((element) => element !== selected && element.checked);
-  const changes = selected.checked ? checkedPeers : [...checkedPeers, selected];
+  const original = elements.map((element) => {
+    assertFillableChecked(element, 'checkbox');
+    return { element, checked: element.checked, ...checkedIdentity(element) };
+  });
+  const assertUnchangedChoices = () => {
+    for (const before of original) {
+      assertUnchangedChecked(before.element, before, 'checkbox');
+    }
+  };
 
-  for (const element of changes) {
-    nativeSetter(element, 'HTMLInputElement', 'checked', element === selected);
-    dispatchFillEvents(element);
+  // Select first: controlled exclusive groups can reject an empty selection
+  // and may clear the previous choice themselves during this activation.
+  try {
+    fillChecked(selected, true, 'checkbox', validateReview);
+  } catch (error) {
+    const previous = original.filter((choice) => choice.checked);
+    if (!(error instanceof CheckedValueRejectedError) || original.length !== 2
+      || previous.length !== 1 || previous[0].element === selected) throw error;
+    assertUnchangedChoices();
+    if (original.some((choice) => choice.element.checked !== choice.checked)) throw error;
+
+    // Some pairs reject overlap instead. Only an unchanged, safely rejected
+    // choice can clear its previous peer and retry once; guard failures cannot.
+    fillChecked(previous[0].element, false, 'checkbox', validateReview);
+    assertUnchangedChoices();
+    fillChecked(selected, true, 'checkbox', validateReview);
+    assertUnchangedChoices();
+  }
+  assertUnchangedChoices();
+  for (const element of elements) {
+    if (element !== selected) {
+      fillChecked(element, false, 'checkbox', validateReview);
+      assertUnchangedChoices();
+    }
+  }
+  for (const element of elements) {
+    if (element.checked !== (element === selected)) {
+      throw new Error('The page did not accept this choice; complete the field manually');
+    }
   }
 }
 
@@ -189,9 +269,9 @@ function fillReviewedField(elements, value, options) {
 
   const type = inputType(first);
   if (TEXT_INPUT_TYPES.has(type)) return fillText(first, value);
-  if (type === 'radio') return fillRadio(elements, value);
-  if (type === 'checkbox' && elements.length > 1) return fillCheckboxChoiceGroup(elements, value);
-  if (type === 'checkbox') return fillCheckbox(first, value);
+  if (type === 'radio') return fillRadio(elements, value, options.validateCheckedReview);
+  if (type === 'checkbox' && elements.length > 1) return fillCheckboxChoiceGroup(elements, value, options.validateCheckedReview);
+  if (type === 'checkbox') return fillCheckbox(first, value, options.validateCheckedReview);
   if (type === 'file') return fillFile(first, options.pdf, options.dataTransferFactory);
 
   throw new Error(`Input type "${type}" is unsupported and must be filled manually`);
@@ -216,6 +296,15 @@ export function fillForm(
     maxLength: descriptor.maxLength, accept: descriptor.accept, sensitive: Boolean(descriptor.sensitive),
   });
 
+  const assertReviewedDescriptor = (fieldId) => {
+    const previous = expected.get(fieldId);
+    const matches = scanForm(root).filter((descriptor) => descriptor.field_id === fieldId);
+    if (!previous || matches.length !== 1 || descriptorSignature(previous) !== descriptorSignature(matches[0])) {
+      throw new Error('This field changed since the review was prepared; prepare a new review');
+    }
+    return previous;
+  };
+
   for (const reviewedField of reviewedFields ?? []) {
     const fieldId = reviewedField?.field_id;
 
@@ -224,12 +313,8 @@ export function fillForm(
       if (elements.length === 0) throw new Error('The reviewed field was not found on this page');
       if (elements.some(isUnavailableControl)) throw new Error('This field is hidden, disabled, or read-only; prepare a new review');
       if (expected) {
-        const previous = expected.get(fieldId);
         // A previous input/change handler may have changed the next field.
-        const matches = scanForm(root).filter((descriptor) => descriptor.field_id === fieldId);
-        if (!previous || matches.length !== 1 || descriptorSignature(previous) !== descriptorSignature(matches[0])) {
-          throw new Error('This field changed since the review was prepared; prepare a new review');
-        }
+        const previous = assertReviewedDescriptor(fieldId);
         if (elements.length > 1 && previous.type !== 'radio') {
           throw new Error('This field is ambiguous on the page; prepare a new review');
         }
@@ -238,7 +323,14 @@ export function fillForm(
         options: elements.map((element) => ({ label: radioLabel(element), value: element.value })),
       })) throw new Error(SENSITIVE_MANUAL_MESSAGE);
 
-      fillReviewedField(elements, reviewedField?.value, { pdf, dataTransferFactory });
+      const isCheckedField = elements[0].tagName === 'INPUT'
+        && ['radio', 'checkbox'].includes(inputType(elements[0]));
+      // Native activation can also change the question or its set of options.
+      const validateCheckedReview = expected && isCheckedField
+        ? () => assertReviewedDescriptor(fieldId)
+        : undefined;
+      fillReviewedField(elements, reviewedField?.value, { pdf, dataTransferFactory, validateCheckedReview });
+      validateCheckedReview?.();
       filled.push(fieldId);
     } catch (error) {
       unfilled.push({ field_id: fieldId, reason: failureReason(error) });
