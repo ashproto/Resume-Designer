@@ -31,7 +31,9 @@ import {
 import {
   adoptStoredJobDescriptions, landsAsJobDescriptions, jobEditBusy,
 } from '../jobDescriptions.js';
-import { adoptStoredThreads, threadHolderBusy, landsAsThreads } from '../chatThreads.js';
+import {
+  adoptStoredThreads, threadHolderBusy, landsAsThreads, isEmptyThreadList,
+} from '../chatThreads.js';
 import { adoptStoredLearnedAnswers, landsAsLearnedAnswers } from '../learnedAnswers.js';
 // The same ownership, one field further in: `data:userProfile` is a unit too,
 // and ProfileDialog holds a working copy of it. See the leaf for why it is one.
@@ -43,6 +45,9 @@ import { splitData, mergeData, RESUME_UNIT_PREFIX } from './syncUnits.js';
 import {
   mergeTokenUsage, mergeHistory, mergeRegistry, resolveConflict,
 } from './syncMerge.js';
+// What a blob holds before anything is saved into it. A leaf, because
+// persistence.js — its owner — is a module this one must not import.
+import { DEFAULT_STORAGE } from '../storageDefaults.js';
 
 const DATA_KEY = 'resume-designer-data';
 const TOKEN_KEY = 'resume-designer-token-usage';
@@ -252,6 +257,11 @@ function parsesAsJSON(payload) {
  * that is a profile someone cleared, not an absence, exactly as an explicitly
  * empty list lands for a KEY_OWNERS key.
  *
+ * Settings are the exception, because an empty settings object is not something
+ * anyone chose: it is `data:settings` from the old saveSettings, whose one key
+ * was this install's release-notes record — stripped at the boundary, nothing is
+ * left — and landing it reset every preference on the device that took it.
+ *
  * Deliberately NOT extended to non-owner plain keys like
  * `resume-designer-profiles`: `loadRegistry` already reads a corrupt registry as
  * `null` and routes boot through the registry rebuild, which recovers every
@@ -259,7 +269,8 @@ function parsesAsJSON(payload) {
  */
 function landsAsDataField(unit) {
   const landed = mergeData({}, [unit]);
-  return Object.keys(landed).some((field) => field !== 'variants' && isFieldValue(landed[field]));
+  return Object.keys(landed).some((field) => field !== 'variants' && isFieldValue(landed[field])
+    && !(field === 'settings' && Object.keys(landed[field]).length === 0));
 }
 
 /** The shape both `data:` fields hold — see `landsAsDataField`. */
@@ -434,6 +445,8 @@ const KEY_OWNERS = new Map([
   }],
   ['resume-designer-chat-threads', {
     lands: landsAsThreads, isBusy: threadHolderBusy, adopt: adoptStoredThreads,
+    // The one owner that WRITES before anything has happened: see `unitsFor`.
+    isEmpty: isEmptyThreadList,
   }],
   ['resume-designer-learned-answers', {
     lands: landsAsLearnedAnswers, adopt: adoptStoredLearnedAnswers,
@@ -843,6 +856,39 @@ function touchUnitsForProfile(profileId, unitIds) {
   appStorage.setItem(storageKeyFor(profileId, STATE_KEY), JSON.stringify(next));
 }
 
+/**
+ * Record the AUTHOR'S time for snapshot units a landing just wrote: this
+ * device's copy now IS that version. Not a fresh time — that would be this
+ * device claiming an edit it never made (see `applying`).
+ *
+ * Without it a landed unit had no time here at all, and two things followed.
+ * `modifiedAt` travels in the record, so a unit sent with none CLEARS it on the
+ * server, and a fresh device's full upload re-sent everything it had just
+ * received with none; a device holding an OLDER stamp then outranked the newer
+ * copy and reverted it everywhere on its next edit. And an older copy arriving
+ * after a newer one simply landed over it, with nothing to compare against.
+ *
+ * A unit that carries no parseable time CLEARS the time recorded for it, which
+ * `modifiedAtFor` then reads as unknown — the truth about the copy now here. An
+ * unstamped copy only lands over another unstamped one, or over settings with no
+ * preferences in them (`holdsNoPreferences`), whose stamp dates the damage and
+ * would otherwise be handed to the good copy that replaced it.
+ */
+function recordLandedStamps(profileId, units) {
+  const next = stateFor(profileId);
+  let changed = false;
+  for (const unit of units) {
+    if (Number.isFinite(Date.parse(unit.modifiedAt ?? ''))) {
+      next[unit.id] = { modifiedAt: unit.modifiedAt };
+      changed = true;
+    } else if (unit.id in next) {
+      delete next[unit.id];
+      changed = true;
+    }
+  }
+  if (changed) appStorage.setItem(storageKeyFor(profileId, STATE_KEY), JSON.stringify(next));
+}
+
 function touchUnits(unitIds) {
   touchUnitsForProfile('', unitIds);
 }
@@ -1010,15 +1056,37 @@ function dataFieldPayloads(raw) {
  * device, which is a silent loss, not just wasted traffic.
  *
  * A field that vanished is not stamped: absence is not deletion here either.
+ *
+ * And a field that APPEARS holding its default is not stamped: absence is not
+ * authorship. Before a blob has a field, every reader already sees that field's
+ * default (getSettings, getUserProfile), so a write that fills it in changes
+ * nothing anyone can see. It happens on every fresh install: the workspace's
+ * blob is not on disk until the first pull lands it, and the first incidental
+ * write — the changelog's first-run record — persists the whole default blob.
+ * Stamped, that empty profile and those default settings outranked the
+ * account's real copies everywhere: the pull settled them unwritten, the full
+ * upload won their conflicts, and every other device landed the defaults.
  */
 function changedDataUnits(previous, next) {
   const before = dataFieldPayloads(previous);
   const changed = [];
   for (const [id, payload] of dataFieldPayloads(next)) {
-    if (before.get(id) !== payload) changed.push(id);
+    const was = before.has(id) ? before.get(id) : DEFAULT_FIELDS.get(id);
+    if (was !== payload) changed.push(id);
   }
   return changed;
 }
+
+// Each `data:` field's default, as its unit would carry it. A résumé has none,
+// so a new one always counts as written.
+const DEFAULT_FIELDS = dataFieldPayloads(JSON.stringify(DEFAULT_STORAGE));
+
+// `data:settings` as it travels when the settings object holds no preferences:
+// the old saveSettings' one-key product, with that key stripped at the boundary.
+// Nobody chose it, so it is not content — see `landsAsDataField`,
+// `collectDataUnits` and `landFetchedUnits`.
+const SETTINGS_UNIT_ID = `${DATA_UNIT_PREFIX}settings`;
+const NO_PREFERENCES = '{}';
 
 function unitsCarriedBy(logicalKey, value) {
   if (logicalKey === DATA_KEY) return [...dataFieldPayloads(value).keys()];
@@ -1076,6 +1144,14 @@ function unitsFor(logicalKey, value, previous) {
   if (logicalKey === DATA_KEY) return changedDataUnits(previous, value);
   if (logicalKey.startsWith(HISTORY_PREFIX)) return [];
   if (value === previous) return [];
+  // Nothing written over nothing is not an edit either — the key's form of
+  // `changedDataUnits`' "absence is not authorship". The chat panel persists a
+  // conversation list it made up, on mount and again on every résumé load, and
+  // on a fresh device both happen before the first pull can land the account's
+  // conversations. Stamped, that empty list outranked them everywhere. Only
+  // over absent-or-empty: emptying a list that HAD a conversation is an edit.
+  const isEmpty = KEY_OWNERS.get(logicalKey)?.isEmpty;
+  if (isEmpty?.(value) && (previous == null || isEmpty(previous))) return [];
   return [`${KEY_UNIT_PREFIX}${logicalKey}`];
 }
 
@@ -1192,7 +1268,34 @@ function collectDataUnits(recorded, profileId) {
   // Every `resume:` and `data:` unit lives inside its profile's own CloudKit
   // zone — there is no shared variant of either kind.
   return splitData(readJSON(storageKeyFor(profileId, DATA_KEY), null))
-    .map((unit) => withModifiedAt({ ...unit, scope: 'profile' }, recorded));
+    .map((unit) => withModifiedAt({ ...unit, scope: 'profile' }, recorded))
+    .filter(isContent);
+}
+
+/**
+ * Whether a blob unit is something to offer at all.
+ *
+ * A default nobody stamped is not content. Offered, it CREATED the server
+ * record wherever the owner's own upload had not arrived yet — a fresh device's
+ * full upload does exactly that — and a tie between two unstamped copies goes to
+ * the server, so the owner then landed the default over a real profile it had
+ * never stamped. Restores and real edits are stamped, so nothing they write is
+ * held back.
+ *
+ * Nor is a settings object with no preferences in it, STAMPED OR NOT: the old
+ * saveSettings stamped its one key as it appeared. Offered, it reaches builds
+ * from before `landsAsDataField` refused it, and each one that lands it resets
+ * every preference it had.
+ */
+function isContent(unit) {
+  if (unit.id === SETTINGS_UNIT_ID && unit.payload === NO_PREFERENCES) return false;
+  return unit.modifiedAt != null || DEFAULT_FIELDS.get(unit.id) !== unit.payload;
+}
+
+/** Whether `unitId` is `data:settings` and the blob at `dataKey` holds none. */
+function holdsNoPreferences(unitId, dataKey) {
+  return unitId === SETTINGS_UNIT_ID
+    && dataFieldPayloads(appStorage.getItem(dataKey)).get(SETTINGS_UNIT_ID) === NO_PREFERENCES;
 }
 
 /**
@@ -1221,12 +1324,16 @@ function collectKeyUnit(storageKey, logicalKey, recorded) {
   if (payload == null) return null;
 
   const id = `${KEY_UNIT_PREFIX}${logicalKey}`;
-  return withModifiedAt({
+  const unit = withModifiedAt({
     id,
     kind: logicalKey === TOKEN_KEY ? 'tokenUsage' : 'plain',
     payload,
     scope: keyScope(logicalKey),
   }, recorded);
+  // An empty list nobody stamped is not offered, for the reason
+  // `collectDataUnits` holds back an unstamped default.
+  if (unit.modifiedAt == null && KEY_OWNERS.get(logicalKey)?.isEmpty?.(payload)) return null;
+  return unit;
 }
 
 /**
@@ -1604,11 +1711,19 @@ function landFetchedUnits(units) {
     // SETTLED: this device's copy is newer, so there is correctly nothing to
     // write. It is the SERVER that is behind, and this device's own send fixes
     // that. Counting it as a failure is what stalled every second device: its
-    // freshly minted settings and user profile are always newer than the ones
+    // freshly minted settings and user profile read as newer than the ones
     // arriving, so a batch carrying them could never fully land, and the whole
     // batch — résumés included — was thrown away and re-offered identically for
-    // ever.
-    if (!outranksLocalCopy(unit, recordedForUnit)) { settle(unit); continue; }
+    // ever. They read as newer only because filling in a DEFAULT was stamped as
+    // an edit, and settling on that is how an empty profile reached every
+    // device; it no longer is (see `changedDataUnits`).
+    //
+    // Except over settings with no preferences in them, which have nothing to
+    // protect whatever their stamp says: the old saveSettings stamped that one
+    // key as it appeared, at the time of the damage, so it outranked the real
+    // settings it had replaced and kept them out for good.
+    if (!outranksLocalCopy(unit, recordedForUnit)
+        && !holdsNoPreferences(unit.id, dataKey)) { settle(unit); continue; }
 
     landing.push(unit);
   }
@@ -1616,6 +1731,7 @@ function landFetchedUnits(units) {
     const dataKey = storageKeyFor(profileId, DATA_KEY);
     const blob = readJSON(dataKey, {});
     appStorage.setItem(dataKey, JSON.stringify(mergeData(blob, group)));
+    recordLandedStamps(profileId, group);
     applied += group.length;
     for (const unit of group) account(unit);
     // AFTER the storage write, never before: the store is what the screen
@@ -1693,6 +1809,7 @@ function landFetchedUnits(units) {
       // this server version.
       if (!outranksLocalCopy(unit, recordedForUnit)) { settle(unit); continue; }
       appStorage.setItem(storageKey, unit.payload);
+      recordLandedStamps(profileId, [unit]);
     }
     // AFTER the write, never before — the same ordering adoptLoadedDocument
     // takes: a module told to adopt bytes the write then failed to persist

@@ -411,7 +411,12 @@ export function saveSettings(settings) {
     throw new Error('saveSettings cannot write openrouterKey — use saveApiKey()');
   }
   const storage = loadFromStorage();
-  storage.settings = { ...storage.settings, ...rest };
+  // From the defaults when this blob has no settings yet — which is what
+  // getSettings reads there too. A pull that has landed only résumés leaves
+  // exactly that blob, and spreading nothing wrote a settings object holding
+  // ONE key, which travelled as the whole of `data:settings` and reset every
+  // other preference on every device.
+  storage.settings = { ...(storage.settings || structuredClone(DEFAULT_STORAGE.settings)), ...rest };
   // The blob never GAINS a credential here (`rest` excludes openrouterKey) —
   // but an existing blob value is the pre-extraction fallback and must NOT be
   // stripped by this path: in cached mode the shared-key and blob files flush
