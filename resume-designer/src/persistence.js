@@ -12,6 +12,7 @@ import { isTauri, isIOSPlatform, stageTextForShare, notify } from './native.js';
 import { sharePdf, isNativeShellAvailable } from './iosShell.js';
 import { appStorage, onWriteFailure, onWriteSettled } from './appStorage.js';
 import { storageErrorToast } from './storageToast.js';
+import { DEFAULT_STORAGE } from './storageDefaults.js';
 // The API key lives in the OS keychain, not beside the resume data on disk.
 import {
   getSecret, setSecret, isSecretStoreReady, setCredentialChangeNotifier,
@@ -102,57 +103,6 @@ export function commitRestoredUnits(restoredUnits) {
 // the only place that knows the bytes reached disk. The notifier now has ONE
 // installer (syncModel's `setStorageDirtyNotifier`) rather than two, and there
 // is no longer a route that can announce a unit earlier than the drain.
-
-// Storage structure
-const DEFAULT_STORAGE = {
-  variants: {},
-  currentVariantId: null,
-  settings: {
-    colorPalette: 'terracotta',
-    layout: 'sidebar',
-    pageSize: 'continuous',
-    orientation: 'portrait',
-    pageWidthIn: 8.5,
-    customColor: '#c45c3e',
-    autoFallback: false,
-    defaultModel: 'anthropic/claude-sonnet-4.6',
-    customModels: [],
-    chatPanelWidth: 320,
-    chatReasoningEffort: 'medium',
-    chatWebSearch: false,
-    analysisModel: '',
-    analysisReasoning: 'medium',
-    tailorModel: '',
-    tailorReasoning: 'medium',
-    onboardingModel: '',
-    onboardingReasoning: 'medium'
-  },
-  userProfile: {
-    // Contact information
-    contactInfo: {
-      fullName: '',
-      email: '',
-      phone: '',
-      location: '',
-      linkedin: '',
-      portfolio: '',
-      github: '',
-      twitter: '',
-      instagram: ''
-    },
-    personalSummary: '',
-    careerGoals: '',
-    workExperience: [],
-    skills: [],
-    education: [],
-    projects: [],
-    certifications: [],
-    achievements: [],
-    industryKnowledge: '',
-    preferences: '',
-    customSections: []
-  }
-};
 
 // Load all data from storage
 export function loadFromStorage() {
