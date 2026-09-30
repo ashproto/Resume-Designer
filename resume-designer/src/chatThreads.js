@@ -167,6 +167,20 @@ export function landsAsThreads(payload) {
 }
 
 /**
+ * Whether a payload is a thread list with no conversation in it — no thread
+ * holds a single message. Asked by the sync layer (KEY_OWNERS) to tell a list
+ * the chat panel MADE UP from one somebody wrote: `loadThreads` manufactures a
+ * 'New Chat' thread for an absent key, and useChat persists what it loaded on
+ * mount and on every résumé load — on a fresh device, before its first pull can
+ * land the account's conversations. There is nothing in such a list to sync.
+ */
+export function isEmptyThreadList(payload) {
+  const threads = threadsIn(payload);
+  return threads !== null
+    && threads.every((thread) => !(Array.isArray(thread?.messages) && thread.messages.length > 0));
+}
+
+/**
  * Load all threads and decide which is current. Migrates legacy single-thread
  * history on first run, guarantees at least one thread, and selects the
  * most-recently-updated thread as current. Mirrors the old loadChatHistory().

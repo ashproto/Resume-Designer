@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { splitData, mergeData, RESUME_UNIT_PREFIX } from '../src/sync/syncUnits.js';
+import { CHANGELOG_SEEN_FIELD } from '../src/profileKeys.js';
 
 const BLOB = {
   variants: {
@@ -122,5 +123,84 @@ describe('the API key never crosses the sync boundary', () => {
     const live = { ...BLOB, settings: { pageSize: 'letter', openrouterKey: 'sk-live' } };
     splitData(live);
     expect(live.settings.openrouterKey).toBe('sk-live');
+  });
+});
+
+describe('the release-notes record never crosses the sync boundary', () => {
+  // Which release's notes an install last showed is a fact about THAT install —
+  // two devices on two versions each keep their own, as each keeps its own open
+  // résumé. It rides inside `settings` on disk, so without this it went up in
+  // `data:settings`: every app update made each device's settings the newest
+  // copy, and a fresh install's first-run record made its DEFAULT settings look
+  // like something a person had written.
+  const WITH_SEEN = { ...BLOB, settings: { pageSize: 'letter', [CHANGELOG_SEEN_FIELD]: '2.3.1' } };
+  const theirs = (settings) => [{ id: 'data:settings', kind: 'plain', payload: JSON.stringify(settings) }];
+
+  it('is not in the data:settings unit that goes up', () => {
+    const settings = splitData(WITH_SEEN).find((u) => u.id === 'data:settings');
+    expect(JSON.parse(settings.payload)).toEqual({ pageSize: 'letter' });
+  });
+
+  it("does not replace this device's record when a data:settings unit comes down", () => {
+    // An older build still sends its own.
+    const merged = mergeData(
+      { settings: { pageSize: 'a4', [CHANGELOG_SEEN_FIELD]: '2.3.1' } },
+      theirs({ pageSize: 'letter', [CHANGELOG_SEEN_FIELD]: '2.2.0' }),
+    );
+    expect(merged.settings).toEqual({ pageSize: 'letter', [CHANGELOG_SEEN_FIELD]: '2.3.1' });
+  });
+
+  it('keeps this device’s record through a landing that replaces the rest of settings', () => {
+    const merged = mergeData(
+      { settings: { pageSize: 'a4', [CHANGELOG_SEEN_FIELD]: '2.3.1' } },
+      theirs({ pageSize: 'letter' }),
+    );
+    expect(merged.settings).toEqual({ pageSize: 'letter', [CHANGELOG_SEEN_FIELD]: '2.3.1' });
+  });
+
+  it('gives a device that had no record none', () => {
+    const merged = mergeData(
+      { settings: { pageSize: 'a4' } },
+      theirs({ pageSize: 'letter', [CHANGELOG_SEEN_FIELD]: '2.2.0' }),
+    );
+    expect(merged.settings).toEqual({ pageSize: 'letter' });
+  });
+
+  it('is not stripped out of the live blob as a side effect of collecting it', () => {
+    const live = JSON.parse(JSON.stringify(WITH_SEEN));
+    splitData(live);
+    expect(live.settings[CHANGELOG_SEEN_FIELD]).toBe('2.3.1');
+  });
+});
+
+describe('the dead provider keys never cross the sync boundary', () => {
+  // `anthropicKey` / `openaiKey` / `geminiKey` came in with the Electron
+  // migration and nothing reads them — but a blob the boot sweep has not yet
+  // cleaned still holds them, and `settings` is a sync unit, so without this
+  // they went to CloudKit in clear text under `data:settings`, exactly as the
+  // OpenRouter key would.
+  const DEAD = { anthropicKey: 'sk-ant-old', openaiKey: 'sk-old', geminiKey: 'g-old' };
+  const WITH_DEAD = { ...BLOB, settings: { pageSize: 'letter', ...DEAD } };
+
+  it('are not in the data:settings unit that goes up', () => {
+    const settings = splitData(WITH_DEAD).find((u) => u.id === 'data:settings');
+    expect(JSON.parse(settings.payload)).toEqual({ pageSize: 'letter' });
+  });
+
+  it('are not put back by a data:settings unit that comes down', () => {
+    // An older build still sends them.
+    const merged = mergeData(
+      { settings: { pageSize: 'a4' } },
+      [{ id: 'data:settings', kind: 'plain', payload: JSON.stringify({ pageSize: 'letter', ...DEAD }) }],
+    );
+    expect(merged.settings).toEqual({ pageSize: 'letter' });
+  });
+
+  it('are not stripped out of the live blob as a side effect of collecting it', () => {
+    // Removing them from the user's data is the boot sweep's job
+    // (stripDeadProviderCredentials), done with its own write.
+    const live = JSON.parse(JSON.stringify(WITH_DEAD));
+    splitData(live);
+    expect(live.settings).toEqual({ pageSize: 'letter', ...DEAD });
   });
 });
