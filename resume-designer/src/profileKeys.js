@@ -211,6 +211,23 @@ export function withoutDeadProviderCredentials(logicalKey, value) {
 }
 
 /**
+ * The same strip on a `settings` OBJECT, for the sync boundary, which sends
+ * `settings` as its own record (sync/syncUnits.js) — the counterpart of
+ * withoutSettingsCredential for these keys. A blob the boot sweep has not
+ * cleaned yet would otherwise put them into CloudKit in clear text.
+ *
+ * Returns the SAME reference when there is nothing to strip.
+ */
+export function withoutDeadProviderSettings(settings) {
+  if (!settings || typeof settings !== 'object') return settings;
+  const present = DEAD_PROVIDER_CREDENTIALS.filter((k) => k in settings);
+  if (!present.length) return settings;
+  const next = { ...settings };
+  for (const k of present) delete next[k];
+  return next;
+}
+
+/**
  * Strip every stored credential out of a `resume-designer-data` blob crossing a
  * boundary — export, import, restore, or migration. THE function to call at a
  * boundary; the two below are its parts and exist for the paths that genuinely

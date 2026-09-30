@@ -172,3 +172,35 @@ describe('the release-notes record never crosses the sync boundary', () => {
     expect(live.settings[CHANGELOG_SEEN_FIELD]).toBe('2.3.1');
   });
 });
+
+describe('the dead provider keys never cross the sync boundary', () => {
+  // `anthropicKey` / `openaiKey` / `geminiKey` came in with the Electron
+  // migration and nothing reads them — but a blob the boot sweep has not yet
+  // cleaned still holds them, and `settings` is a sync unit, so without this
+  // they went to CloudKit in clear text under `data:settings`, exactly as the
+  // OpenRouter key would.
+  const DEAD = { anthropicKey: 'sk-ant-old', openaiKey: 'sk-old', geminiKey: 'g-old' };
+  const WITH_DEAD = { ...BLOB, settings: { pageSize: 'letter', ...DEAD } };
+
+  it('are not in the data:settings unit that goes up', () => {
+    const settings = splitData(WITH_DEAD).find((u) => u.id === 'data:settings');
+    expect(JSON.parse(settings.payload)).toEqual({ pageSize: 'letter' });
+  });
+
+  it('are not put back by a data:settings unit that comes down', () => {
+    // An older build still sends them.
+    const merged = mergeData(
+      { settings: { pageSize: 'a4' } },
+      [{ id: 'data:settings', kind: 'plain', payload: JSON.stringify({ pageSize: 'letter', ...DEAD }) }],
+    );
+    expect(merged.settings).toEqual({ pageSize: 'letter' });
+  });
+
+  it('are not stripped out of the live blob as a side effect of collecting it', () => {
+    // Removing them from the user's data is the boot sweep's job
+    // (stripDeadProviderCredentials), done with its own write.
+    const live = JSON.parse(JSON.stringify(WITH_DEAD));
+    splitData(live);
+    expect(live.settings).toEqual({ pageSize: 'letter', ...DEAD });
+  });
+});

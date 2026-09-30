@@ -12,7 +12,9 @@
  * Pure — no storage, no DOM.
  */
 
-import { withoutSettingsCredential, CHANGELOG_SEEN_FIELD } from '../profileKeys.js';
+import {
+  withoutSettingsCredential, withoutDeadProviderSettings, CHANGELOG_SEEN_FIELD,
+} from '../profileKeys.js';
 
 export const RESUME_UNIT_PREFIX = 'resume:';
 
@@ -32,6 +34,12 @@ const PLAIN_FIELDS = ['settings', 'userProfile'];
  *
  * Applied inbound as well, so a record uploaded by an older build cannot put
  * the plaintext copy back on a device that has already cleaned itself up.
+ *
+ * The same goes for the pre-OpenRouter provider keys the Electron migration
+ * carried in (profileKeys.js's withoutDeadProviderSettings). Nothing reads them,
+ * but a blob the boot sweep has not cleaned yet still holds them — and because
+ * the payload is also what decides whether the unit CHANGED, the sweep removing
+ * them used to stamp `data:settings` as a fresh edit.
  *
  * Nor do the fields of `settings` that describe THIS INSTALL rather than the
  * person (`DEVICE_SETTINGS_FIELDS`). They stay on the device the way
@@ -54,8 +62,10 @@ const withoutDeviceSettings = (settings) => {
 };
 
 /** A field's value as it crosses the boundary, in either direction. */
-const withoutLocalOnly = (field, value) =>
-  (field === 'settings' ? withoutDeviceSettings(withoutSettingsCredential(value)) : value);
+function withoutLocalOnly(field, value) {
+  if (field !== 'settings') return value;
+  return withoutDeviceSettings(withoutDeadProviderSettings(withoutSettingsCredential(value)));
+}
 
 /**
  * A landed `settings` keeps THIS device's own fields. The unit carried none of
