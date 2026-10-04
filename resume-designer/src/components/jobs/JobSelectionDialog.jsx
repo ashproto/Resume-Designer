@@ -73,7 +73,7 @@ export function JobSelectionDialog({ open, onOpenChange, jobs, models, defaultMo
             type="button"
             aria-label="Close"
             onClick={() => onOpenChange(false)}
-            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2"
           >
             <X className="h-4 w-4" />
             <span className="sr-only">Close</span>
@@ -132,7 +132,7 @@ export function JobSelectionDialog({ open, onOpenChange, jobs, models, defaultMo
                   key={jd.id}
                   className={cn(
                     'flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-3 transition-colors',
-                    selected && 'border-primary/50 bg-primary/[0.025]',
+                    selected && 'border-primary/50 bg-primary/2.5',
                   )}
                 >
                   <Checkbox className="mt-0.5" checked={selected} onCheckedChange={() => toggle(jd.id)} />

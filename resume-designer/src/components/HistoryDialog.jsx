@@ -128,7 +128,7 @@ export default function HistoryDialog() {
             type="button"
             aria-label="Close"
             onClick={() => setOpen(false)}
-            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2"
           >
             <X className="h-4 w-4" />
             <span className="sr-only">Close</span>
@@ -159,7 +159,7 @@ export default function HistoryDialog() {
                         className={cn(
                           'flex size-[30px] shrink-0 items-center justify-center rounded-full border',
                           isCurrent
-                            ? 'border-primary bg-primary/[0.06] text-primary'
+                            ? 'border-primary bg-primary/6 text-primary'
                             : 'bg-background text-muted-foreground',
                         )}
                       >

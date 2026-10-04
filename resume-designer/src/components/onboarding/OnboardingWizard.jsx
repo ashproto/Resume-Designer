@@ -781,7 +781,7 @@ export default function OnboardingWizard() {
       className={cn(
         // `onboarding-overlay` + `show` are functional tokens (see doc comment),
         // not stylesheet hooks — all visuals below are Tailwind.
-        'onboarding-overlay fixed inset-0 z-[3000] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm transition-opacity duration-300',
+        'onboarding-overlay fixed inset-0 z-3000 flex items-center justify-center bg-background/80 p-4 backdrop-blur-xs transition-opacity duration-300',
         entered ? 'show opacity-100' : 'pointer-events-none opacity-0',
       )}
     >
@@ -792,7 +792,7 @@ export default function OnboardingWizard() {
       <div
         ref={dragStripRef}
         aria-hidden="true"
-        className="absolute inset-x-0 top-0 h-[var(--header-height)]"
+        className="absolute inset-x-0 top-0 h-(--header-height)"
       />
       <div
         className={cn(
