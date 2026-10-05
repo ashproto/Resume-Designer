@@ -1,7 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import postcss from 'postcss';
-import tailwindcss from 'tailwindcss';
+import { compile } from 'tailwindcss';
 import { requestAIConsent, revokeAIConsent, hasAIConsent } from '../src/aiConsent.js';
 import { AIConsentHost } from '../src/components/AIConsentHost.jsx';
 import OnboardingWizard from '../src/components/onboarding/OnboardingWizard.jsx';
@@ -53,12 +52,11 @@ describe('AI sharing permission UI', () => {
 
     // Compile the actual rendered utilities so this guards stacking behavior,
     // including the backdrop, without coupling the test to a particular layer.
-    const { css } = await postcss([tailwindcss({
-      content: [{ raw: document.body.innerHTML, extension: 'html' }],
-      corePlugins: ['zIndex'],
-    })]).process('@tailwind utilities;', { from: undefined });
+    const zIndexClasses = [...document.body.querySelectorAll('[class]')]
+      .flatMap((element) => [...element.classList])
+      .filter((name) => /(^|:)-?z-/.test(name));
     const style = document.createElement('style');
-    style.textContent = css;
+    style.textContent = (await compile('@tailwind utilities;')).build(zIndexClasses);
     document.head.append(style);
     try {
       const wizardLayer = Number(getComputedStyle(wizard).zIndex);

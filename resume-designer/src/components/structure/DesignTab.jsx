@@ -242,7 +242,7 @@ function paletteSwatchBackground(p1, p2, p3) {
 function tileClass(selected, extra) {
   return cn(
     'rounded-md border text-left transition-colors hover:bg-accent/50',
-    selected && 'border-primary bg-primary/[0.04] text-primary ring-1 ring-primary',
+    selected && 'border-primary bg-primary/4 text-primary ring-1 ring-primary',
     extra,
   );
 }
@@ -351,7 +351,7 @@ function UnderlinePreview({ styleId, width, className }) {
     case 'dashed':
       return <span className={cn(base, 'border-dashed border-primary')} style={{ borderBottomWidth: width, borderBottomStyle: 'dashed' }} />;
     case 'gradient':
-      return <span className={cn(base, 'bg-gradient-to-r from-primary to-transparent')} style={{ height: width }} />;
+      return <span className={cn(base, 'bg-linear-to-r from-primary to-transparent')} style={{ height: width }} />;
     case 'none':
       return <span className={cn(base, 'bg-muted-foreground/30')} style={{ height: width }} />;
     default:

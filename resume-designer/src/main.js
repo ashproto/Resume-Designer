@@ -1936,7 +1936,7 @@ function getPageSetup() {
 // from memory is banned. Keep in sync with ui/button.jsx if it changes.
 const EMPTY_STATE_BTN =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium transition-colors ' +
-  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring h-8 px-3';
+  'focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring h-8 px-3';
 
 // Empty canvas state: no variant loaded (fresh profile, or every resume
 // deleted). Tailwind's content glob covers src/**/*.js, so these utilities
@@ -1956,8 +1956,8 @@ function renderEmptyState(container) {
       <p class="text-[15px] font-semibold text-foreground">No resume loaded</p>
       <p class="mt-1 max-w-[36ch] text-[13px] leading-relaxed text-muted-foreground">Create a new resume from scratch, or open one from your library.</p>
       <div class="mt-5 flex items-center gap-2">
-        <button type="button" id="empty-state-create" class="${EMPTY_STATE_BTN} bg-primary text-primary-foreground shadow hover:bg-primary/90">Create resume</button>
-        <button type="button" id="empty-state-library" class="${EMPTY_STATE_BTN} border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground">Open library</button>
+        <button type="button" id="empty-state-create" class="${EMPTY_STATE_BTN} bg-primary text-primary-foreground shadow-sm hover:bg-primary/90">Create resume</button>
+        <button type="button" id="empty-state-library" class="${EMPTY_STATE_BTN} border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground">Open library</button>
       </div>
     </div>
   `;

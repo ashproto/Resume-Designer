@@ -83,7 +83,7 @@ function SectionHeader({ title, description }) {
   return (
     <div className={cn(description ? 'mb-3.5' : 'mb-3')}>
       <h3 className="text-[14px] font-semibold">{title}</h3>
-      {description && <p className="mt-0.5 text-[12.5px] leading-[1.5] text-muted-foreground">{description}</p>}
+      {description && <p className="mt-0.5 text-[12.5px] leading-normal text-muted-foreground">{description}</p>}
     </div>
   );
 }
@@ -512,7 +512,7 @@ export default function SettingsDialog() {
             type="button"
             aria-label="Close"
             onClick={() => setOpen(false)}
-            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2"
           >
             <X className="h-4 w-4" />
             <span className="sr-only">Close</span>

@@ -225,7 +225,7 @@ export function ChoosePathStep({ isNewResumeMode, onChoose, onBack }) {
                 // Mockup .ob-opt: rounded-[12px] border p-4, horizontal layout.
                 'relative flex w-full items-start gap-3.5 rounded-[12px] border p-4 text-left transition-colors',
                 featured
-                  ? 'border-primary bg-primary/[0.04] ring-1 ring-primary'
+                  ? 'border-primary bg-primary/4 ring-1 ring-primary'
                   : 'hover:bg-accent/50',
               )}
             >
@@ -240,7 +240,7 @@ export function ChoosePathStep({ isNewResumeMode, onChoose, onBack }) {
               </span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="text-sm font-semibold">{title}</span>
-                <span className="pr-[74px] text-[12.5px] leading-[1.5] text-muted-foreground">{description}</span>
+                <span className="pr-[74px] text-[12.5px] leading-normal text-muted-foreground">{description}</span>
               </span>
               <Badge className="absolute right-3 top-3 gap-1 border-transparent bg-primary/10 text-primary">
                 <Sparkles className="size-3" /> AI-powered
