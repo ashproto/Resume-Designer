@@ -328,6 +328,7 @@ mod ledger_tests {
         fn op_sync_ledger_queues() -> *mut c_char;
         fn op_sync_dirty_groups(units_json: *const c_char) -> *mut c_char;
         fn op_sync_settle_dead(profile_ids_json: *const c_char);
+        fn op_sync_probe_unit(unit_id: *const c_char, profile_id: *const c_char);
     }
     fn queues() -> Vec<String> {
         let p = unsafe { op_sync_ledger_queues() };
@@ -421,6 +422,68 @@ mod ledger_tests {
         assert_eq!(deferred("dead"), Vec::<String>::new());
         assert_eq!(deferred("live"), vec!["resume:y".to_string()]);
         unsafe { op_sync_ledger_clear(c("live").as_ptr()); }
+    }
+
+    /// Whether the `unitProbe` notice (id 0) said a unit came back.
+    fn probe_found() -> bool {
+        let start = Instant::now();
+        loop {
+            if let Some((_, j)) = SEEN.lock().unwrap().iter().find(|(id, j)| *id == 0 && j.contains("\"kind\":\"unitProbe\"")) {
+                return j.contains("\"found\":true");
+            }
+            assert!(start.elapsed() < Duration::from_secs(2), "no unitProbe notice: {:?}", SEEN.lock().unwrap());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_unit_the_page_could_not_give_is_held_for_the_next_start() {
+        // `recordToSend` treats nil as final and takes the change off the queue,
+        // so a page that did not answer — reloading, or its handler threw — was
+        // read as "nothing here" and a real local edit was dropped. The iOS
+        // host holds such an id for the next start; so must this one.
+        let _serial = super::FFI_LOCK.lock().unwrap();
+        unsafe { op_sync_register(record) };
+        unsafe { op_sync_ledger_clear(c("t-unit-busy").as_ptr()) };
+        SEEN.lock().unwrap().clear();
+        unsafe { op_sync_probe_unit(c("resume:u1").as_ptr(), c("t-unit-busy").as_ptr()) };
+        let id = wait_for_request("syncUnit");
+        unsafe { op_sync_resume(id, c(r#"{"ok":false,"error":"the page is reloading"}"#).as_ptr()) };
+        wait_until("held in the ledger", || deferred("t-unit-busy") == vec!["resume:u1"]);
+        // Holding an id also asks which zone it lives in. Answer, so it finishes.
+        let scopes = wait_for_request("syncScopes");
+        unsafe { op_sync_resume(scopes, c(r#"{"ok":true,"value":{"resume:u1":"profile"}}"#).as_ptr()) };
+        assert!(!probe_found(), "no unit to send this time");
+        unsafe { op_sync_ledger_clear(c("t-unit-busy").as_ptr()) };
+    }
+
+    #[test]
+    fn a_unit_the_page_does_not_have_is_dropped_not_held() {
+        // A null ANSWER is this device having nothing under that id: the queued
+        // save goes, and the server keeps whatever it holds.
+        let _serial = super::FFI_LOCK.lock().unwrap();
+        unsafe { op_sync_register(record) };
+        unsafe { op_sync_ledger_clear(c("t-unit-none").as_ptr()) };
+        SEEN.lock().unwrap().clear();
+        unsafe { op_sync_probe_unit(c("data:settings").as_ptr(), c("t-unit-none").as_ptr()) };
+        let id = wait_for_request("syncUnit");
+        unsafe { op_sync_resume(id, c(r#"{"ok":true,"value":null}"#).as_ptr()) };
+        assert!(!probe_found());
+        assert_eq!(deferred("t-unit-none"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_unit_the_page_gives_comes_back() {
+        let _serial = super::FFI_LOCK.lock().unwrap();
+        unsafe { op_sync_register(record) };
+        unsafe { op_sync_ledger_clear(c("t-unit-some").as_ptr()) };
+        SEEN.lock().unwrap().clear();
+        unsafe { op_sync_probe_unit(c("resume:u2").as_ptr(), c("t-unit-some").as_ptr()) };
+        let id = wait_for_request("syncUnit");
+        let unit = r#"{"ok":true,"value":{"id":"resume:u2","kind":"resume","payload":"{}","modifiedAt":null,"profileId":"t-unit-some"}}"#;
+        unsafe { op_sync_resume(id, c(unit).as_ptr()) };
+        assert!(probe_found());
+        assert_eq!(deferred("t-unit-some"), Vec::<String>::new());
     }
 
 }
