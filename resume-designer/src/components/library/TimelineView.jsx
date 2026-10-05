@@ -73,7 +73,7 @@ export default function TimelineView({ applications, onSelect }) {
                       aria-label={`${p.title || 'Application'}${p.company ? ` at ${p.company}` : ''} — ${STATUS_LABELS[p.status]}`}
                       onClick={() => onSelect(p.variantId)}
                       className={cn(
-                        'absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-offset-background transition-transform hover:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+                        'absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-offset-background transition-transform hover:scale-125 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
                         STATUS_DOT_CLASSES[p.status],
                       )}
                       style={{ left: `${positionPct(range, p.at)}%` }}
