@@ -9,9 +9,22 @@ independently verified reachable with version 0.1.6 and an Add to Chrome action.
 The visibility setting is owner-confirmed; install-link availability is
 independently verified.
 
-The current `main` (`2059a3bf`) and `next` (`1c0ba3cb`) contain the same extension
-tree and version 0.1.6. The Store version gate reports `release_required=false`
-for that comparison. The unrelated changes on `next` need no new extension ZIP.
+Before this update, `main` (`2059a3bf`) and `next` (`1c0ba3cb`) contained the
+same extension tree and version 0.1.6. Fresh PR #150 audits then identified
+GHSA-68fv-2mgg-jv7q in the development dependency `source-map-js` 1.2.1 in both
+lockfiles. This update takes patched 1.2.2 and prepares Companion **0.1.7** to
+satisfy the existing package-input version gate. Extension application code is
+unchanged. Store **0.1.6** remains the published version; 0.1.7 is not uploaded
+or published by this work, and automatic uploading remains deferred.
+
+The desktop audit also identified GHSA-hp3w-g68c-fv3c in `sprintf-js`, pulled in
+by Mammoth's command-line argument parser. A scoped npm override uses `argparse`
+2.0.1 for Mammoth and removes `sprintf-js`; Mammoth stays at 1.12.0 and its
+browser DOCX import code is unchanged. Argparse 2 retains the v1 API used by
+Mammoth. Isolated checks verified CLI help, DOCX-to-HTML conversion, and Unicode
+text extraction through Mammoth's browser bundle. The browser-bundle check ran
+under Node, not a live browser. Both complete dependency audits report zero
+vulnerabilities with these repairs.
 
 ## Website prepared
 
@@ -29,6 +42,7 @@ The owner approved merging this website update into `next` through PR #150,
 using `skip-build` to avoid an unchanged desktop/iOS build. The initial direct
 `main` attempt passed Codex review but inherited existing dependency-audit and
 Rust compatibility failures; those fixes are already present on `next`.
+The subsequent dependency-audit repairs are included in the same PR.
 Normal CI and Codex review must pass against the updated base before a
 history-preserving merge commit. GitHub Pages will deploy the website when
 `next` is subsequently promoted to `main`; that app release remains separate.
