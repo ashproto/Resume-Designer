@@ -12,7 +12,9 @@
  * Pure — no storage, no DOM.
  */
 
-import { withoutSettingsCredential } from '../profileKeys.js';
+import {
+  withoutSettingsCredential, withoutDeadProviderSettings, CHANGELOG_SEEN_FIELD,
+} from '../profileKeys.js';
 
 export const RESUME_UNIT_PREFIX = 'resume:';
 
@@ -32,9 +34,53 @@ const PLAIN_FIELDS = ['settings', 'userProfile'];
  *
  * Applied inbound as well, so a record uploaded by an older build cannot put
  * the plaintext copy back on a device that has already cleaned itself up.
+ *
+ * The same goes for the pre-OpenRouter provider keys the Electron migration
+ * carried in (profileKeys.js's withoutDeadProviderSettings). Nothing reads them,
+ * but a blob the boot sweep has not cleaned yet still holds them — and because
+ * the payload is also what decides whether the unit CHANGED, the sweep removing
+ * them used to stamp `data:settings` as a fresh edit.
+ *
+ * Nor do the fields of `settings` that describe THIS INSTALL rather than the
+ * person (`DEVICE_SETTINGS_FIELDS`). They stay on the device the way
+ * `currentVariantId` does, and for a reason beyond tidiness: a unit's payload is
+ * also what decides whether it CHANGED (`changedDataUnits` in syncModel.js).
+ * With the release-notes record inside it, every app update made each device's
+ * settings the newest copy, and a fresh install's first-run record made its
+ * DEFAULT settings look like something a person had written.
  */
-const withoutCredential = (field, value) =>
-  (field === 'settings' ? withoutSettingsCredential(value) : value);
+const DEVICE_SETTINGS_FIELDS = [CHANGELOG_SEEN_FIELD];
+
+const isPlainObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+
+const withoutDeviceSettings = (settings) => {
+  if (!isPlainObject(settings)) return settings;
+  if (!DEVICE_SETTINGS_FIELDS.some((key) => key in settings)) return settings;
+  const next = { ...settings };
+  for (const key of DEVICE_SETTINGS_FIELDS) delete next[key];
+  return next;
+};
+
+/** A field's value as it crosses the boundary, in either direction. */
+function withoutLocalOnly(field, value) {
+  if (field !== 'settings') return value;
+  return withoutDeviceSettings(withoutDeadProviderSettings(withoutSettingsCredential(value)));
+}
+
+/**
+ * A landed `settings` keeps THIS device's own fields. The unit carried none of
+ * them, and landing replaces the field whole, so without this a pull erased
+ * which release's notes this install had shown and the next launch took it for
+ * a first run.
+ */
+function keepDeviceSettings(field, landed, local) {
+  if (field !== 'settings' || !isPlainObject(landed) || !isPlainObject(local)) return landed;
+  const kept = DEVICE_SETTINGS_FIELDS.filter((key) => key in local);
+  if (kept.length === 0) return landed;
+  const next = { ...landed };
+  for (const key of kept) next[key] = local[key];
+  return next;
+}
 
 /**
  * `currentVariantId` is absent from this list ON PURPOSE and must stay absent:
@@ -60,7 +106,7 @@ export function splitData(blob) {
       units.push({
         id: `data:${field}`,
         kind: 'plain',
-        payload: JSON.stringify(withoutCredential(field, blob[field])),
+        payload: JSON.stringify(withoutLocalOnly(field, blob[field])),
       });
     }
   }
@@ -92,7 +138,9 @@ export function mergeData(blob, units) {
       next.variants[unit.id.slice(RESUME_UNIT_PREFIX.length)] = value;
     } else if (unit.id.startsWith('data:')) {
       const field = unit.id.slice('data:'.length);
-      if (PLAIN_FIELDS.includes(field)) next[field] = withoutCredential(field, value);
+      if (PLAIN_FIELDS.includes(field)) {
+        next[field] = keepDeviceSettings(field, withoutLocalOnly(field, value), base[field]);
+      }
     }
   }
 
