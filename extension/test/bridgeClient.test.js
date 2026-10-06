@@ -523,3 +523,24 @@ it('requires durable application idempotency before connecting', async () => {
   const client = createBridgeClient({ fetchImpl: async () => jsonResponse({ ok: true, app: 'resume-designer', protocolVersion: 2, capabilities: REQUIRED_CAPABILITIES.filter((capability) => capability !== 'applications.idempotent') }) });
   await expect(client.health()).rejects.toMatchObject({ code: 'app_update_required' });
 });
+
+describe('live AI progress', () => {
+  it('polls a running operation, reports reasoning, and returns the original result', async () => {
+    const operationId = '550e8400-e29b-41d4-a716-446655440000';
+    const onProgress = vi.fn();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ operationId, state: 'running', progress: { stage: 'thinking', kind: 'reasoning', message: 'Comparing experience' } }, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse({ operationId, state: 'complete', result: { status: 200, body: { text: 'Done' } } }));
+    const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 0 });
+    await expect(client.complete({ operationId, profileContextId: 'context', messages: [] }, { onProgress })).resolves.toEqual({ text: 'Done' });
+    expect(onProgress).toHaveBeenCalledWith({ stage: 'thinking', kind: 'reasoning', message: 'Comparing experience' });
+    expect(fetchImpl.mock.calls[1][0]).toBe(`${BRIDGE_BASE_URL}/ai/progress`);
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ operationId, profileContextId: 'context' });
+  });
+
+  it('keeps AI failures distinct from connection failures when delivered through polling', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ operationId: 'operation', state: 'complete', result: { status: 502, body: { code: 'ai_failed', error: 'Provider unavailable' } } }));
+    const client = createBridgeClient({ fetchImpl, getToken: async () => 'token' });
+    await expect(client.complete({})).rejects.toMatchObject({ code: 'ai_failed', message: 'Provider unavailable' });
+  });
+});

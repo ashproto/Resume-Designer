@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PairingView from './PairingView.jsx';
 import ReviewList from './ReviewList.jsx';
+import FitAnalysis from './FitAnalysis.jsx';
+import JobContext from './JobContext.jsx';
+import ProcessingView from './ProcessingView.jsx';
 import { buildFillPayload, buildReviewItems } from './reviewModel.js';
 import { runtimeClient } from './runtimeClient.js';
 import { isSensitiveDescriptor } from '../sensitivity.js';
@@ -113,47 +116,6 @@ function defaultRequestId() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function analysisItemText(item) {
-  if (typeof item === 'string') return item;
-  if (!item || typeof item !== 'object') return String(item ?? '');
-  return [
-    item.area,
-    item.issue,
-    item.suggestion,
-    item.section,
-    item.suggested,
-    item.reason,
-  ].map((value) => String(value ?? '').trim()).filter(Boolean).join(' — ');
-}
-
-function AnalysisList({ heading, items }) {
-  if (!Array.isArray(items) || items.length === 0) return null;
-  return (
-    <>
-      <p className="field-label">{heading}</p>
-      <ul>
-        {items.map((item, index) => {
-          const text = analysisItemText(item);
-          return <li key={`${heading}-${index}-${text}`}>{text}</li>;
-        })}
-      </ul>
-    </>
-  );
-}
-
-function FitAnalysis({ analysis }) {
-  if (!analysis) return null;
-  return (
-    <section className="result-block fit-result" aria-labelledby="fit-result-heading">
-      <h3 id="fit-result-heading">{Number(analysis.matchScore)}% match</h3>
-      <AnalysisList heading="Strengths" items={analysis.strengths} />
-      <AnalysisList heading="Gaps" items={analysis.gaps} />
-      <AnalysisList heading="Missing keywords" items={analysis.missingKeywords} />
-      <AnalysisList heading="Recommendations" items={analysis.recommendations} />
-    </section>
-  );
-}
-
 function readyReviewStatus(items) {
   const fieldCount = items.length;
   const manualOnly = (item) => item.manualFile || item.manualCustom || item.manualSensitive;
@@ -194,6 +156,7 @@ function Workspace({
     kind: 'checking', profileId: '', profileContextId: '', resumes: [],
   });
   const [selectedResumeId, setSelectedResumeId] = useState('');
+  const [tailoringSourceId, setTailoringSourceId] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [modelSearch, setModelSearch] = useState('');
   const [modelCatalog, setModelCatalog] = useState({ state: 'loading', models: [], defaults: {}, autoFallback: false, error: '' });
@@ -227,6 +190,12 @@ function Workspace({
   const [jobAction, setJobAction] = useState('idle');
   const [jobActionStatus, setJobActionStatus] = useState('');
   const [fitAnalysis, setFitAnalysis] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [progressNotes, setProgressNotes] = useState('');
+  const [discoveredFields, setDiscoveredFields] = useState([]);
+  const [revealedFields, setRevealedFields] = useState([]);
+  const knownFieldIds = useRef(new Set());
+  const fitResultRef = useRef(null);
   const operationPending = useRef(null);
   const answerPending = useRef(new Set());
   const logPending = useRef(false);
@@ -238,6 +207,22 @@ function Workspace({
   const applicationStorageQueue = useRef(Promise.resolve());
   const pairingGeneration = useRef(0);
   const pairingAttempt = useRef(null);
+
+  useEffect(() => {
+    if (!fitAnalysis || jobAction !== 'idle') return;
+    fitResultRef.current?.scrollIntoView?.({
+      block: 'start',
+      behavior: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+    });
+  }, [fitAnalysis, jobAction]);
+
+  useEffect(() => {
+    if (connection.kind !== 'connected' || !tailoringSourceId
+      || connection.resumes.some((resume) => resume.id === tailoringSourceId)) return;
+    setTailoringSourceId('');
+    setFitAnalysis(null);
+    tailoringRequest.current = null;
+  }, [connection.kind, connection.resumes, tailoringSourceId]);
 
   useEffect(() => {
     let active = true;
@@ -304,6 +289,7 @@ function Workspace({
     setLogState('idle');
     setReviewNeedsRefresh(false);
     setFillAnnouncement('');
+    setRevealedFields([]);
   }, []);
 
   const resetProfileScopedState = useCallback(() => {
@@ -312,6 +298,7 @@ function Workspace({
     setJobDraft(null);
     setManualJobDescription('');
     setFitAnalysis(null);
+    setTailoringSourceId('');
     setJobActionStatus('');
     tailoringRequest.current = null;
     resetPostScanState();
@@ -517,7 +504,19 @@ function Workspace({
   function beginOperation(name) {
     if (hasPendingInteraction()) return false;
     operationPending.current = name;
+    setProgress(null);
+    setProgressNotes('');
+    setDiscoveredFields([]);
     return true;
+  }
+
+  function handleProgress(update) {
+    if (!operationPending.current) return;
+    if (update?.kind === 'reasoning') {
+      setProgressNotes((current) => String(update.message || `${current}${update.delta || ''}`).slice(-2000));
+    } else if (update?.message) {
+      setProgress({ stage: update.stage, message: String(update.message) });
+    }
   }
 
   function finishOperation(name) {
@@ -672,6 +671,15 @@ function Workspace({
     }
   }
 
+  function handleSourceChange(event) {
+    if (!beginOperation('source-change')) return;
+    setTailoringSourceId(event.target.value);
+    setFitAnalysis(null);
+    setJobActionStatus('');
+    tailoringRequest.current = null;
+    finishOperation('source-change');
+  }
+
   function handleModelChange(event) {
     if (!beginOperation('model-change')) return;
     setSelectedModel(event?.target?.value ?? '');
@@ -694,13 +702,17 @@ function Workspace({
     activeResumeId,
     forceFresh = false,
     successPrefix = '',
+    onlyNewFields = false,
   }) {
     let snapshot = forceFresh ? null : pendingReview;
 
     setRuntimeError(null);
+    setProgress(null);
+    setProgressNotes('');
     if (snapshot) {
       setScanBusy(false);
       setMappingBusy(true);
+      setDiscoveredFields(snapshot.descriptors);
       setReviewStatus('Preparing field suggestions from your saved details…');
     } else {
       setScanBusy(true);
@@ -714,8 +726,19 @@ function Workspace({
     try {
       if (!snapshot) {
         const result = await client.scanPage();
-        const descriptors = Array.isArray(result?.descriptors) ? result.descriptors : [];
         const page = result?.page && typeof result.page === 'object' ? result.page : {};
+        if (onlyNewFields && (page.url !== reviewContext?.page?.url
+          || (reviewContext?.page?.tabId != null && page.tabId !== reviewContext.page.tabId))) {
+          setReviewStatus('The application page changed. Prepare a fresh autofill review.');
+          return false;
+        }
+        const allDescriptors = Array.isArray(result?.descriptors) ? result.descriptors : [];
+        const descriptors = onlyNewFields
+          ? allDescriptors.filter((field) => !knownFieldIds.current.has(field.field_id))
+          : allDescriptors;
+        if (!onlyNewFields) knownFieldIds.current = new Set();
+        for (const field of allDescriptors) knownFieldIds.current.add(field.field_id);
+        setDiscoveredFields(descriptors);
         const pendingLog = applicationDraft.current;
         const samePendingApplication = pendingLog
           && pendingLog.profileId === activeConnection.profileId
@@ -753,7 +776,7 @@ function Workspace({
         snapshot.profileContextId,
         snapshot.resumeId,
         snapshot.descriptors,
-        { job: snapshot.job, ...(selectedModel ? { model: selectedModel } : {}) },
+        { job: snapshot.job, ...(selectedModel ? { model: selectedModel } : {}), onProgress: handleProgress },
       );
       setPendingReview(null);
       setReviewContext(structuredClone({ page: snapshot.page, descriptors: snapshot.descriptors }));
@@ -796,6 +819,17 @@ function Workspace({
       });
     } finally {
       finishOperation('review');
+    }
+  }
+
+  async function handleReviewRevealedFields() {
+    if (!selectedResumeId || !beginOperation('revealed-fields')) return;
+    try {
+      const ready = await connectionForAction();
+      if (!ready || ready.contextChanged) return;
+      await prepareReview({ activeConnection: ready.connection, activeResumeId: selectedResumeId, forceFresh: true, onlyNewFields: true });
+    } finally {
+      finishOperation('revealed-fields');
     }
   }
 
@@ -855,6 +889,8 @@ function Workspace({
   async function performFill(snapshot) {
     if (!beginOperation('fill')) return;
     setFillBusy(true);
+    setDiscoveredFields(reviewItems.filter((item) => snapshot.fields.some((field) => field.field_id === item.field_id)));
+    setRevealedFields([]);
     setRuntimeError(null);
     try {
       const result = await client.fillPage(
@@ -876,6 +912,25 @@ function Workspace({
           ? `Attached ${filenames.join(', ')}. Filled ${filledLabel}.`
           : `Filled ${filledLabel}.`,
       );
+      if (filledCount > 0) {
+        setProgress({ stage: 'checking-fields', message: 'Checking for fields revealed by your answers…' });
+        // Conditional sections often appear after selecting a degree or country.
+        // A read-only rescan never fills these new fields without another review.
+        try {
+          const after = await client.scanPage();
+          const originalPage = snapshot.reviewContext?.page;
+          if (originalPage?.url && after?.page?.url === originalPage.url
+            && (originalPage.tabId == null || after.page.tabId === originalPage.tabId)) {
+            const nextFields = (Array.isArray(after.descriptors) ? after.descriptors : [])
+              .filter((field) => !knownFieldIds.current.has(field.field_id));
+            setRevealedFields(nextFields);
+          }
+        } catch {
+          // The fill was acknowledged. A later scan failure must not invite
+          // retrying an already completed write.
+          setFillAnnouncement((message) => `${message} If another section appeared, prepare a new review.`);
+        }
+      }
     } catch (error) {
       await handleWorkflowError(error);
       setRetrySnapshot(error?.code === 'pdf_busy' ? snapshot : null);
@@ -1021,24 +1076,22 @@ function Workspace({
   }
 
   async function handleAnalyzeFit() {
-    if (!selectedResumeId || !beginOperation('analyze-fit')) return;
+    if (!beginOperation('analyze-fit')) return;
     setJobAction('analyzing');
-    setJobActionStatus('Analyzing this role against your selected resume…');
+    setJobActionStatus(tailoringSourceId ? 'Comparing this role with your resume…' : 'Comparing this role with your full profile…');
     setRuntimeError(null);
     setFitAnalysis(null);
     try {
       const ready = await connectionForAction();
       if (!ready) return;
-      const resumeId = ready.connection.resumes.some((resume) => resume.id === selectedResumeId)
-        ? selectedResumeId
-        : ready.connection.resumes[0]?.id ?? '';
-      if (!resumeId) return;
+      const resumeId = ready.connection.resumes.some((resume) => resume.id === tailoringSourceId) ? tailoringSourceId : '';
       const scanned = await scanJobForAction();
       if (!scanned.job) return;
       const result = await client.analyzeJobFit({
         profileContextId: ready.connection.profileContextId,
-        resumeId,
+        ...(resumeId ? { resumeId } : {}),
         job: scanned.job,
+        onProgress: handleProgress,
         ...(selectedModel ? { model: selectedModel } : {}),
       });
       setFitAnalysis(result?.analysis ?? null);
@@ -1053,17 +1106,14 @@ function Workspace({
   }
 
   async function handleCreateTailoredResume() {
-    if (!selectedResumeId || !beginOperation('tailor')) return;
+    if (!beginOperation('tailor')) return;
     setJobAction('tailoring');
     setJobActionStatus('Creating a tailored resume in On Paper…');
     setRuntimeError(null);
     try {
       const ready = await connectionForAction();
       if (!ready) return;
-      const baseResumeId = ready.connection.resumes.some((resume) => resume.id === selectedResumeId)
-        ? selectedResumeId
-        : ready.connection.resumes[0]?.id ?? '';
-      if (!baseResumeId) return;
+      const baseResumeId = ready.connection.resumes.some((resume) => resume.id === tailoringSourceId) ? tailoringSourceId : '';
       const scanned = await scanJobForAction();
       if (!scanned.job) return;
       const requestKey = [
@@ -1078,8 +1128,9 @@ function Workspace({
       }
       const result = await client.createTailoredResume({
         profileContextId: ready.connection.profileContextId,
-        resumeId: baseResumeId,
+        ...(baseResumeId ? { resumeId: baseResumeId } : {}),
         job: scanned.job,
+        onProgress: handleProgress,
         requestId: tailoringRequest.current.id,
         ...(selectedModel ? { model: selectedModel } : {}),
       });
@@ -1123,12 +1174,16 @@ function Workspace({
       }
 
       setMappingBusy(true);
+      setProgress({ stage: 'mapping', message: 'Preparing answers from your new resume…' });
+      setProgressNotes('');
+      setDiscoveredFields(descriptors);
+      knownFieldIds.current = new Set(descriptors.map((field) => field.field_id));
       const items = await createReviewItems(
         client,
         refreshed.profileContextId,
         tailored.id,
         descriptors,
-        { job: jobFromPage(afterPage, scanned.job.description), ...(selectedModel ? { model: selectedModel } : {}) },
+        { job: jobFromPage(afterPage, scanned.job.description), ...(selectedModel ? { model: selectedModel } : {}), onProgress: handleProgress },
       );
       setReviewContext(structuredClone({ page: afterPage, descriptors }));
       setReviewItems(items);
@@ -1183,7 +1238,11 @@ function Workspace({
     || savingAnswers.size > 0
     || jobAction !== 'idle'
     || pairingBusy;
-  const hasWorkspace = connection.resumes.length > 0;
+  const hasWorkspace = connection.resumes.length > 0 || connection.kind === 'connected';
+  const processing = scanBusy || mappingBusy || fillBusy || jobAction !== 'idle';
+  const processingHeading = fillBusy ? 'Filling your application' : mappingBusy ? 'Preparing your answers' : jobAction === 'analyzing' ? 'Reviewing your fit' : jobAction === 'tailoring' ? 'Creating your resume' : 'Reading the application';
+  const processingMessage = scanBusy ? 'Capturing the role and application fields…'
+    : progress?.message || (fillBusy ? 'Filling the fields you reviewed…' : mappingBusy ? 'Matching your details to each field…' : jobActionStatus);
   const connectionLabel = connection.kind === 'connected'
     ? 'Connected'
     : connection.kind === 'checking'
@@ -1210,18 +1269,19 @@ function Workspace({
   const workflowControls = (
     <section className="panel-section controls-section" aria-label={workflow === 'tailor' ? 'Tailoring settings' : 'Autofill settings'}>
       <div className="picker-field">
-        <label htmlFor="resume-picker">{workflow === 'tailor' ? 'Base resume' : 'Resume to fill from'}</label>
+        <label htmlFor="resume-picker">{workflow === 'tailor' ? 'Source' : 'Resume to fill from'}</label>
         <select
           id="resume-picker"
-          value={selectedResumeId}
-          onChange={handleResumeChange}
+          value={workflow === 'tailor' ? tailoringSourceId : selectedResumeId}
+          onChange={workflow === 'tailor' ? handleSourceChange : handleResumeChange}
           disabled={workflowBusy}
         >
+          {workflow === 'tailor' ? <option value="">My full profile</option> : !connection.resumes.length ? <option value="">Create a resume to autofill</option> : null}
           {connection.resumes.map((resume) => (
             <option key={resume.id} value={resume.id}>{resume.name}</option>
           ))}
         </select>
-        {workflow === 'tailor' ? <p className="supporting-copy">Creates a new copy. Your base resume stays unchanged.</p> : null}
+        {workflow === 'tailor' ? <p className="supporting-copy">{tailoringSourceId ? 'Creates a new copy. Your base resume stays unchanged.' : 'Uses your complete career details in On Paper. No existing resume needed.'}</p> : null}
       </div>
       <div className="picker-field">
         <label htmlFor="model-picker">AI model</label>
@@ -1280,7 +1340,9 @@ function Workspace({
   );
 
   return (
-    <main className="panel-shell">
+    <>
+    {processing ? <ProcessingView heading={processingHeading} message={processingMessage} reasoning={progressNotes} fields={discoveredFields} job={scanBusy ? null : jobDraft} step={scanBusy ? 'scanning' : progress?.stage} /> : null}
+    <main className="panel-shell" hidden={processing}>
       <header className="panel-header">
         <div className="brand-lockup">
           <h1>On Paper <span>Companion</span></h1>
@@ -1318,10 +1380,10 @@ function Workspace({
         />
       ) : null}
 
-      {connection.kind === 'connected' && !hasWorkspace ? (
+      {connection.kind === 'connected' && !connection.resumes.length && workflow === 'autofill' ? (
         <section className="panel-section" aria-labelledby="empty-resumes-heading">
-          <h2 id="empty-resumes-heading">Add a resume in On Paper</h2>
-          <p className="supporting-copy">Create or import a resume in your current profile, then refresh this connection.</p>
+          <h2 id="empty-resumes-heading">Create your first resume</h2>
+          <p className="supporting-copy">Choose Tailor resume to build one from your full profile, or add a resume in On Paper.</p>
           <button type="button" className="secondary-button" onClick={checkConnectionAgain}>Check connection again</button>
         </section>
       ) : null}
@@ -1353,7 +1415,7 @@ function Workspace({
               <section className="panel-section job-actions-section" aria-labelledby="job-actions-heading">
                 <h2 id="job-actions-heading">Prepare for this role</h2>
                 <p className="supporting-copy">
-                  Compare this role with the selected resume or create a new tailored version.
+                  Compare your experience with this role, then create a focused resume for it.
                 </p>
                 {jobDraft && !String(jobDraft.description ?? '').trim() ? (
                   <>
@@ -1371,7 +1433,7 @@ function Workspace({
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={!selectedResumeId || workflowBusy}
+                    disabled={workflowBusy}
                     onClick={handleAnalyzeFit}
                   >
                     {jobAction === 'analyzing' ? 'Analyzing fit…' : 'Analyze fit'}
@@ -1379,7 +1441,7 @@ function Workspace({
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={!selectedResumeId || workflowBusy}
+                    disabled={workflowBusy}
                     onClick={handleCreateTailoredResume}
                   >
                     {jobAction === 'tailoring' ? 'Creating tailored resume…' : 'Create tailored resume'}
@@ -1392,7 +1454,10 @@ function Workspace({
                 ) : null}
               </section>
 
-              <FitAnalysis analysis={fitAnalysis} />
+              {jobDraft ? <div className="job-results" ref={fitResultRef}>
+                <JobContext job={jobDraft} description={manualJobDescription} />
+                <FitAnalysis analysis={fitAnalysis} />
+              </div> : null}
             </div>
           ) : (
             <div id="autofill-workflow" className="workflow-content">
@@ -1468,6 +1533,15 @@ function Workspace({
                 </p>
               ) : null}
 
+              {revealedFields.length ? (
+                <section className="panel-section revealed-fields" aria-label="Newly revealed fields">
+                  <h3>{revealedFields.length} more {revealedFields.length === 1 ? 'field appeared' : 'fields appeared'}</h3>
+                  <p className="supporting-copy">The form revealed more questions after your answers.</p>
+                  <ul className="keyword-list">{revealedFields.map((field) => <li key={field.field_id}>{field.label || 'Application field'}</li>)}</ul>
+                  <button type="button" className="primary-button" disabled={workflowBusy} onClick={handleReviewRevealedFields}>Review newly revealed fields</button>
+                </section>
+              ) : null}
+
               {hasFilled ? (
                 <section className="panel-section log-section" aria-labelledby="log-heading">
                   <h2 id="log-heading">Log application</h2>
@@ -1516,6 +1590,7 @@ function Workspace({
         <a href={privacyUrl()} target="_blank" rel="noreferrer">Privacy</a>
       </footer>
     </main>
+    </>
   );
 }
 

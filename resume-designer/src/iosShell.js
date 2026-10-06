@@ -41,6 +41,8 @@ import { TYPE_LABELS } from './historyEntryLabels.js';
 import { CHAT_THREADS_STATE_EVENT, threadsSaveFailed } from './chatThreads.js';
 import { DATA_SAVE_STATE_EVENT, dataSaveFailed, designSaveFailed } from './persistence.js';
 import { store } from './store.js';
+import { CONTACT_FIELDS, getContactOrder } from './contactFields.js';
+import { SECTION_AREAS, SECTION_TEMPLATES } from './sectionTemplates.js';
 import {
   hasAIConsent, isAIConsentRevocationPending, requestAIConsent, revokeAIConsent, subscribeAIConsent,
 } from './aiConsent.js';
@@ -207,13 +209,39 @@ export function buildDiffReview({
  * follows. `hasKey` says whether one is configured; the native field writes a
  * new one and never displays the old.
  */
+function onboardingTargetPages(value) {
+  return Math.min(3, Math.max(1, Math.round(Number(value) || 1)));
+}
+
+// Native commands use string values. Keep the older single-job payload valid
+// while carrying the entire generation brief through Back and Generate.
+function onboardingBriefInput(input) {
+  const brief = {
+    title: String(input.title ?? ''),
+    company: String(input.company ?? ''),
+    description: String(input.description ?? ''),
+  };
+  if (input.inputMode !== undefined) brief.inputMode = input.inputMode === 'prompt' ? 'prompt' : 'jobs';
+  if (input.prompt !== undefined) brief.prompt = String(input.prompt ?? '');
+  if (input.targetPages !== undefined) brief.targetPages = onboardingTargetPages(input.targetPages);
+  if (input.jobDescriptions !== undefined) {
+    const jobs = typeof input.jobDescriptions === 'string' ? JSON.parse(input.jobDescriptions) : input.jobDescriptions;
+    if (!Array.isArray(jobs)) throw new Error('Job descriptions must be a list.');
+    brief.jobDescriptions = jobs.map((job) => ({
+      title: String(job?.title ?? ''), company: String(job?.company ?? ''), description: String(job?.description ?? ''),
+    }));
+  }
+  return brief;
+}
+
 export function buildOnboarding({
   open = false, step = 0, mode = null, isNewResumeMode = false, canDismiss = false,
   hasProviders = false, hasKey = false, keySaves = 0, importText = '', filePreview = null,
   question = 0, questions = [], answers = {}, improved = null,
   jobDescriptions = [], targetJob = null,
   jobGaps = [], models = [], model = '', reasoning = 'medium', generating = null,
-  resume = null, busy = '', notice = null,
+  resume = null, busy = '', notice = null, hasProfileData = false,
+  revision = null, canRevise = false, canUndoRevision = false, draftRevision = 0, revisionCompletions = 0,
 } = {}) {
   const text = (v) => (typeof v === 'string' ? v : '');
   const list = (v) => (Array.isArray(v) ? v : []);
@@ -270,6 +298,15 @@ export function buildOnboarding({
       : null,
 
     // Step 2, job.
+    hasProfileData: !!hasProfileData,
+    generationBrief: {
+      inputMode: targetJob?.inputMode === 'prompt' ? 'prompt' : 'jobs',
+      prompt: text(targetJob?.prompt),
+      targetPages: onboardingTargetPages(targetJob?.targetPages),
+      jobDescriptions: list(targetJob?.jobDescriptions ?? (targetJob?.description ? [targetJob] : [])).map((job) => ({
+        title: text(job?.title), company: text(job?.company), description: text(job?.description),
+      })),
+    },
     targetJob: targetJob
       ? {
         title: text(targetJob.title),
@@ -277,7 +314,8 @@ export function buildOnboarding({
         description: text(targetJob.description),
       }
       : null,
-    jobGaps: list(jobGaps).map((g) => text(typeof g === 'string' ? g : g?.text)),
+    jobGaps: list(jobGaps).map((g) => (typeof g === 'string'
+      ? g : text(g?.text) || [text(g?.requirement), text(g?.note)].filter(Boolean).join(': '))).filter(Boolean),
     models: list(models).map((m) => ({
       id: text(m?.id), label: text(m?.label) || text(m?.id), group: text(m?.group),
     })).filter((m) => m.id),
@@ -311,6 +349,14 @@ export function buildOnboarding({
     // onboarding preview reaches the decoder directly through this builder.
     resume: resume ? { ...buildDocumentOutline(resume), revision: 0, saveFailed: false } : null,
     isTailored: list(jobDescriptions).length > 0,
+    canRevise: !!canRevise,
+    canUndoRevision: !!canUndoRevision,
+    draftRevision: Number(draftRevision) || 0,
+    revisionCompletions: Number(revisionCompletions) || 0,
+    revision: revision ? {
+      phase: text(revision.phase), reasoning: text(revision.reasoning),
+      elapsed: Number(revision.elapsed) || 0, done: !!revision.done,
+    } : null,
 
     // A long AI call — parse, tailor, improve — with nothing else to show for
     // it. Named rather than boolean so the native side can say which.
@@ -397,7 +443,7 @@ export function buildSettings({
  * Returns `undefined` for a path with no template, which is how `addItem`
  * refuses a list it was never meant to grow.
  */
-export function newListItem(path, makeId = () => `id-${Math.random().toString(36).slice(2, 10)}`) {
+export function newListItem(path, makeId = () => `id-${Math.random().toString(36).slice(2, 10)}`, { area = 'sidebar', template = 'custom' } = {}) {
   switch (String(path ?? '').replace(/\[\d+\]/g, '[]')) {
     case 'experience[].bullets': return 'New bullet point';
     case 'sections[].content': return 'New item';
@@ -413,19 +459,21 @@ export function newListItem(path, makeId = () => `id-${Math.random().toString(36
       // dropping it would mean the same résumé opens differently on desktop.
       _expanded: true,
     };
-    case 'sections': return {
-      id: makeId('section'),
-      title: 'New section',
-      type: 'list',
-      area: 'sidebar',
-      content: ['Item 1'],
-    };
+    case 'sections': {
+      if (!SECTION_AREAS.some(option => option.id === area)) return undefined;
+      const preset = template === 'custom' ? { title: 'New section', type: 'list', content: ['Item 1'] }
+        : Object.hasOwn(SECTION_TEMPLATES, template) ? SECTION_TEMPLATES[template] : null;
+      if (!preset) return undefined;
+      return { id: makeId('section'), ...preset, area, content: [...preset.content] };
+    }
     default: return undefined;
   }
 }
 
-export function buildDocumentOutline(data) {
-  if (!data || typeof data !== 'object') return { groups: [] };
+export function buildDocumentOutline(data, { layout = 'sidebar' } = {}) {
+  // A fresh workspace has no document yet. Keep the complete native wire
+  // shape without offering edits the store cannot persist until one is open.
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { groups: [], additions: [] };
   const groups = [];
   const text = (v) => (typeof v === 'string' ? v : '');
   const list = (v) => (Array.isArray(v) ? v : []);
@@ -436,15 +484,16 @@ export function buildDocumentOutline(data) {
   groups.push({
     id: 'header',
     title: 'Header',
-    listPath: null,
-    listOffset: 0,
+    listPath: 'contactOrder',
+    listOffset: 2,
+    deletableRows: false,
+    help: 'Drag contact rows to change their order. Empty fields stay hidden on your resume.',
     fields: [
       { path: 'name', label: 'Name', value: text(data.name), multiline: false },
       { path: 'tagline', label: 'Professional title', value: text(data.tagline), multiline: false },
-      { path: 'contact.location', label: 'Location', value: text(contact.location), multiline: false },
-      { path: 'contact.email', label: 'Email', value: text(contact.email), multiline: false },
-      { path: 'contact.phone', label: 'Phone', value: text(contact.phone), multiline: false },
-      { path: 'contact.portfolio', label: 'Portfolio', value: text(contact.portfolio), multiline: false },
+      ...getContactOrder(data.contactOrder, layout).map(field => ({
+        path: `contact.${field}`, label: CONTACT_FIELDS[field].label, value: text(contact[field]), multiline: false,
+      })),
     ],
   });
 
@@ -535,6 +584,7 @@ export function buildDocumentOutline(data) {
       removeIndex: i,
       removeTitle: text(section?.title) || `Section ${i + 1}`,
       removeId: text(section?.id),
+      area: { path: `sections[${i}].area`, value: section?.area === 'main' ? 'main' : 'sidebar', options: SECTION_AREAS },
     });
   });
 
@@ -551,7 +601,8 @@ export function buildDocumentOutline(data) {
   // Defaults applied once rather than at six push sites, so every group
   // decodes into the same Swift struct whether or not it has list actions.
   const withActions = (group) => ({
-    addLabel: '', removePath: null, removeIndex: -1, removeTitle: '', removeId: '', ...group,
+    addLabel: '', removePath: null, removeIndex: -1, removeTitle: '', removeId: '',
+    area: null, deletableRows: true, help: '', ...group,
   });
 
   return {
@@ -562,7 +613,9 @@ export function buildDocumentOutline(data) {
     additions: [
       { path: 'experience', label: 'Add role' },
       { path: 'education', label: 'Add education' },
-      { path: 'sections', label: 'Add section' },
+      { path: 'sections', label: 'Add section', areas: SECTION_AREAS,
+        templates: [...Object.entries(SECTION_TEMPLATES).map(([id, preset]) => ({ id, name: preset.title })), { id: 'custom', name: 'Custom section' }],
+      },
     ],
   };
 }
@@ -914,6 +967,7 @@ export function buildDesign(state, saveFailed = false) {
       .filter((f) => f && typeof f.family === 'string' && f.family)
       .map((f) => ({ family: f.family, category: text(f.category) })),
     spacing: {
+      headerScale: num(spacing.headerScale),
       fontScale: num(spacing.fontScale),
       lineHeight: num(spacing.lineHeight),
       sectionSpacing: num(spacing.sectionSpacing),
@@ -1559,13 +1613,11 @@ export function initIOSShell(deps) {
     onboardingInterviewNext: ({ value }) => onboardingHandlers.interviewNext?.(String(value ?? '')),
     onboardingInterviewBack: () => onboardingHandlers.interviewBack?.(),
     onboardingImprove: ({ value }) => onboardingHandlers.improve?.(String(value ?? '')),
-    onboardingGenerate: ({ title, company, description, model, reasoning }) =>
+    onboardingGenerate: (input) =>
       onboardingHandlers.generateForJob?.({
-        title: String(title ?? ''),
-        company: String(company ?? ''),
-        description: String(description ?? ''),
-        model: String(model ?? ''),
-        reasoning: String(reasoning ?? 'medium'),
+        ...onboardingBriefInput(input),
+        model: String(input.model ?? ''),
+        reasoning: String(input.reasoning ?? 'medium'),
       }),
     onboardingAddJob: ({ title, company, description }) => onboardingHandlers.addJob?.({
       title: String(title ?? ''),
@@ -1574,17 +1626,19 @@ export function initIOSShell(deps) {
     }),
     onboardingRemoveJob: ({ index }) => onboardingHandlers.removeJob?.(Number(index)),
     onboardingCancelGenerate: () => onboardingHandlers.cancelGenerate?.(),
+    onboardingEditBrief: () => onboardingHandlers.editBrief?.(),
+    onboardingRevise: ({ revisionInstruction, targetPages }) => onboardingHandlers.revise?.({
+      revisionInstruction: String(revisionInstruction ?? ''), targetPages: onboardingTargetPages(targetPages),
+    }),
+    onboardingCancelRevision: () => onboardingHandlers.cancelRevision?.(),
+    onboardingUndoRevision: () => onboardingHandlers.undoRevision?.(),
     onboardingNext: () => onboardingHandlers.next?.(),
     // The job step carries its half-typed draft back with it. Absent from every
     // other step, and harmless there — `back()` only reads it in job mode.
-    onboardingBack: ({ title, company, description }) => onboardingHandlers.back?.(
-      title === undefined && company === undefined && description === undefined
+    onboardingBack: (input) => onboardingHandlers.back?.(
+      ['title', 'company', 'description', 'inputMode', 'prompt', 'targetPages', 'jobDescriptions'].every((key) => input[key] === undefined)
         ? null
-        : {
-          title: String(title ?? ''),
-          company: String(company ?? ''),
-          description: String(description ?? ''),
-        },
+        : onboardingBriefInput(input),
     ),
     onboardingCreate: () => onboardingHandlers.saveResume?.(),
     onboardingFinish: () => onboardingHandlers.finish?.(),
@@ -1692,7 +1746,27 @@ export function initIOSShell(deps) {
     moveItem: ({ path, from, to, revision }) => {
       if (typeof path !== 'string' || !path) throw new Error('moveItem needs a list path');
       requireCurrentDocument(revision, 'moveItem');
+      if (path === 'contactOrder') {
+        const order = getContactOrder(store.get('contactOrder'), deps.getSettings?.()?.layout);
+        const start = Number(from);
+        const end = Number(to);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start >= order.length || end < 0 || end > order.length) {
+          throw new Error('moveItem needs valid contact positions');
+        }
+        const [moved] = order.splice(start, 1);
+        order.splice(end > start ? end - 1 : end, 0, moved);
+        deps.updateField(path, order);
+        return;
+      }
       deps.moveListItem(path, Number(from), Number(to));
+    },
+    setSectionArea: ({ path, value, revision }) => {
+      requireCurrentDocument(revision, 'setSectionArea');
+      const match = /^sections\[(\d+)\]\.area$/.exec(String(path ?? ''));
+      if (!match || !store.get(`sections[${match[1]}]`) || !SECTION_AREAS.some(area => area.id === value)) {
+        throw new Error('setSectionArea needs an existing section and a supported area');
+      }
+      deps.updateField(path, value);
     },
     // Adding and removing rows. Same path-echo contract as moveItem: the path
     // came from the outline Swift was handed and goes back verbatim.
@@ -1702,19 +1776,20 @@ export function initIOSShell(deps) {
     // in the native side would be the second place the document's schema is
     // known. A path with no template is refused rather than appending
     // something the renderer cannot draw.
-    addItem: ({ path, revision }) => {
+    addItem: ({ path, revision, area, template }) => {
       if (typeof path !== 'string' || !path) throw new Error('addItem needs a list path');
       // The same check its two siblings carry. `experience[0].bullets` is a
       // POSITION too: an adopted résumé that reordered the roles leaves that
       // path naming a different role's list, and the new row lands under it.
       requireCurrentDocument(revision, 'addItem');
-      const item = newListItem(path, deps.generateId);
+      const item = newListItem(path, deps.generateId, { area, template });
       if (item === undefined) throw new Error(`addItem has no template for ${path}`);
       deps.addListItem(path, item);
     },
     removeItem: ({ path, index, revision }) => {
       if (typeof path !== 'string' || !path) throw new Error('removeItem needs a list path');
       requireCurrentDocument(revision, 'removeItem');
+      if (path === 'contactOrder') throw new Error('Contact fields are cleared, not deleted');
       const at = Number(index);
       // `removeFromArray` silently ignores an out-of-range index, so a stale
       // row tapped after the list shrank underneath would look like it worked.

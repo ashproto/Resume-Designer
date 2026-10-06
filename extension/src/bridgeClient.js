@@ -7,6 +7,8 @@ export const REQUIRED_CAPABILITIES = Object.freeze([
   'profile.context',
   'resume.pdf',
   'ai.complete',
+  'ai.progress',
+  'ai.profile-source',
   'ai.job-fit',
   'ai.tailored-resume',
   'profile.answers',
@@ -194,6 +196,7 @@ export function createBridgeClient({
   getToken = async () => null,
   baseUrl = BRIDGE_BASE_URL,
   requestTimeoutMs,
+  progressPollIntervalMs = 500,
 } = {}) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
 
@@ -271,6 +274,7 @@ export function createBridgeClient({
     const controller = new AbortController();
     const timeoutMs = requestTimeoutMs ?? (
       path === '/health' || path.startsWith('/pairing/') ? 4_000
+        : options.payload?.operationId ? 15_000
         : (path.startsWith('/ai/') && path !== '/ai/models') || path.endsWith('/pdf') ? 185_000 : 30_000
     );
     let timer;
@@ -302,6 +306,41 @@ export function createBridgeClient({
 
   const resumePath = (id) => `/resumes/${encodeURIComponent(String(id))}`;
 
+  async function aiRequest(path, payload, options = {}) {
+    let response = await request(path, {
+      ...options, method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
+    });
+    const deadline = Date.now() + 10 * 60_000;
+    let lastProgress = '';
+    while (response?.operationId && ['running', 'complete'].includes(response.state)) {
+      const serialized = JSON.stringify(response.progress);
+      if (serialized !== lastProgress && response.progress) {
+        options.onProgress?.(response.progress);
+        lastProgress = serialized;
+      }
+      if (response.state === 'complete') {
+        const result = response.result;
+        if (!result || !Number.isInteger(result.status) || !result.body) {
+          throw new BridgeError('On Paper returned an invalid operation result', { code: 'invalid_response' });
+        }
+        if (result.status >= 400) {
+          const message = result.body.error || 'AI request failed';
+          throw new BridgeError(message, { status: result.status, ...classifyHttpError(result.status, message, result.body) });
+        }
+        return result.body;
+      }
+      if (options.signal?.aborted) throw new BridgeError('Request cancelled', { code: 'request_cancelled' });
+      if (Date.now() >= deadline) throw new BridgeError('This request is taking longer than expected. Retry to reconnect to it.', { code: 'app_timeout', retryable: true });
+      await new Promise((resolve) => setTimeout(resolve, progressPollIntervalMs));
+      response = await request('/ai/progress', {
+        method: 'POST', payload: { operationId: response.operationId, profileContextId: payload.profileContextId },
+        signal: options.signal, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
+      });
+    }
+    // Older desktop versions return the final response directly.
+    return response;
+  }
+
   return {
     health: async (options = {}) => validateHealth(await request('/health', { ...options, authenticated: false })),
     claimPairing: (payload, options = {}) => request('/pairing/claim', {
@@ -315,17 +354,9 @@ export function createBridgeClient({
     getAIModels: () => request('/ai/models', { maxResponseBytes: MAX_AI_RESPONSE_BYTES }),
     getResume: (id) => request(resumePath(id)),
     getPdf: (id) => request(`${resumePath(id)}/pdf`),
-    complete: (payload) => request('/ai/complete', {
-      method: 'POST',
-      payload,
-      maxResponseBytes: MAX_AI_RESPONSE_BYTES,
-    }),
-    analyzeJobFit: (payload) => request('/ai/job-fit', {
-      method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
-    }),
-    createTailoredResume: (payload, options = {}) => request('/ai/tailored-resume', {
-      ...options, method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
-    }),
+    complete: (payload, options) => aiRequest('/ai/complete', payload, options),
+    analyzeJobFit: (payload, options) => aiRequest('/ai/job-fit', payload, options),
+    createTailoredResume: (payload, options) => aiRequest('/ai/tailored-resume', payload, options),
     logApplication: (payload, options = {}) => request('/applications', { ...options, method: 'POST', payload }),
     saveAnswer: (payload, options = {}) => request('/profile/answers', { ...options, method: 'POST', payload }),
   };

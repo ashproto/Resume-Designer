@@ -140,14 +140,14 @@ Chrome clearing its session storage remove the pending identity.
 
 ## Analyze fit and create a tailored resume
 
-Switch to **Tailor resume**, then choose a **Base resume** and **AI model** within that workflow to analyze the role or create a tailored copy. Results stay in this view; a successful tailored copy returns to Autofill for review.
+Switch to **Tailor resume**, then choose a **Source** and **AI model**. **My full profile** is the default: you can analyze fit and create a new resume before saving any other resume. Choose an existing resume as the source when you want to tailor that version. Results stay in this view; a successful resume returns to Autofill for review.
 
 The scan also extracts conservative job context: structured `JobPosting`
 metadata or a known job-description container, never arbitrary page-body text.
 When a description cannot be found, paste it into the panel's job-description
 field.
 
-- **Analyze fit** sends the selected resume and job context to On Paper,
+- **Analyze fit** sends the selected source and job context to On Paper,
   which uses the selected model (or the app's analysis default) and its saved key. The panel shows the
   bounded match score, strengths, gaps, missing keywords, and recommendations.
 - **Create tailored resume** uses the selected model (or the app's tailoring default) to save
@@ -161,13 +161,25 @@ field.
   logged, or sent to the desktop app or AI provider. It never fills that review
   automatically or activates the site’s final Submit control.
 
+The captured-role card shows the title, company, and locations, with the
+description available in an expandable view. Fit results highlight the strongest
+matches, important gaps, and next steps. While scanning, analyzing, drafting, or
+filling, the panel shows a dedicated progress view with discovered field names
+and live AI notes when the selected provider supplies them.
+
+After filling, the extension checks for fields revealed by earlier answers and
+offers **Review newly revealed fields**. For example, Intuit's Avature form shows
+University/School and Major after Degree is chosen. Major can be reviewed and
+filled normally; the remote university autocomplete is identified for manual
+selection. Hidden fields and autocomplete search helpers are never filled.
+
 ## Retry and connection behavior
 
 - **PDF export already busy:** no page fields are changed. Choose **Retry fill** to resend the exact reviewed payload captured by the failed fill attempt.
 - **Review preparation failed after scanning:** choose **Retry preparing review** to reuse the captured application fields without rescanning. Choose **Start over** instead when the page changed or you want a fresh scan. A completed review also requires **Start over** before its edited values are discarded.
 - **The reviewed page changed:** return to the original application tab or choose **Refresh review**. The extension checks the tab, URL, page context, and each field again before filling.
 - **Page access was lost:** after switching tabs or navigating across origins, click the extension toolbar button again on that page. The extension does not compensate with broad host permissions.
-- **Timeout, network, or unavailable app window:** the green status disappears immediately. Use **Open On Paper**; app-backed actions also offer to launch/reconnect. A review may stay visible for reference, but it cannot be filled after an app restart. Prepare a fresh review once the new profile context is known.
+- **Timeout, network, or unavailable app window during AI work:** the extension automatically wakes the already-paired app once, checks the same profile context, and rejoins the original operation. Progress and saved-resume identities are preserved. It does not silently re-pair or continue across a profile reload. If recovery fails, the panel offers the existing open/reconnect actions. After an app restart, prepare a fresh review once the new profile context is known.
 - **Disconnected startup:** the panel does not launch anything by itself. It shows an explicit open/connect action plus a download path for users who have not installed the app.
 - **Wrong process on the fixed port:** a health response with the wrong identity is shown as a port conflict and no bearer token is sent.
 - **Incompatible app:** an old protocol or missing required capability is shown as **Update On Paper** rather than as connected.

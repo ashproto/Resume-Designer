@@ -4,6 +4,7 @@
  */
 
 import { groupExperience } from './experienceGroups.js';
+import { getContactOrder } from './contactFields.js';
 
 // Separator between inline skill/tool tokens. The trailing <wbr> is a zero-width
 // soft-wrap opportunity: the tag spans are joined with no surrounding whitespace,
@@ -272,7 +273,7 @@ export function renderResume(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact">
-        ${renderContact(data.contact)}
+        ${renderContact(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -320,7 +321,7 @@ export function renderResumeStacked(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact stacked-contact">
-        ${renderContactStacked(data.contact)}
+        ${renderContactStacked(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -364,7 +365,7 @@ export function renderResumeStackedVertical(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact stacked-contact">
-        ${renderContactStacked(data.contact)}
+        ${renderContactStacked(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -458,8 +459,23 @@ function renderStackedVerticalSections(data) {
   return html;
 }
 
-function renderContact(contact) {
+function renderOrderedContact(contact, order, separator = '') {
+  return getContactOrder(order).filter(field => contact?.[field]).map(field => {
+    const value = String(contact[field]);
+    const attributes = `class="contact-item ${field}" data-editable="contact.${field}"`;
+    // Contact values are editable text, like the default sidebar header. An
+    // anchor lets the native host open a browser before the editor sees a tap.
+    return `<span ${attributes}>${escapeHtml(value)}</span>`;
+  }).join(separator);
+}
+
+function extraContactItems(contact, fields) {
+  return fields.filter(field => contact?.[field]).map(field => renderOrderedContact({ [field]: contact[field] }, [field]));
+}
+
+function renderContact(contact, order) {
   if (!contact) return '';
+  if (Array.isArray(order)) return renderOrderedContact(contact, order);
   
   const items = [];
   
@@ -478,12 +494,14 @@ function renderContact(contact) {
   if (contact.instagram) {
     items.push(`<span class="contact-item instagram" data-editable="contact.instagram">${escapeHtml(contact.instagram)}</span>`);
   }
+  items.push(...extraContactItems(contact, ['linkedin', 'github', 'twitter']));
   
   return items.join('');
 }
 
-function renderContactStacked(contact) {
+function renderContactStacked(contact, order) {
   if (!contact) return '';
+  if (Array.isArray(order)) return `<div class="contact-row contact-row-ordered">${renderOrderedContact(contact, order, '<span class="contact-sep">•</span>')}</div>`;
   
   const items = [];
   
@@ -499,6 +517,7 @@ function renderContactStacked(contact) {
   if (contact.instagram) {
     items.push(`<span class="contact-item instagram" data-editable="contact.instagram">${escapeHtml(contact.instagram)}</span>`);
   }
+  items.push(...extraContactItems(contact, ['linkedin', 'github', 'twitter']));
   
   let html = '';
   if (contact.location) {
@@ -740,7 +759,7 @@ export function renderResumeRightSidebar(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact">
-        ${renderContact(data.contact)}
+        ${renderContact(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -788,7 +807,7 @@ export function renderResumeCompact(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact compact-contact">
-        ${renderContactCompact(data.contact)}
+        ${renderContactCompact(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -830,8 +849,9 @@ export function renderResumeCompact(data) {
 }
 
 // Compact contact renderer (inline)
-function renderContactCompact(contact) {
+function renderContactCompact(contact, order) {
   if (!contact) return '';
+  if (Array.isArray(order)) return `<div class="compact-contact-row">${renderOrderedContact(contact, order, ' <span class="contact-sep">•</span> ')}</div>`;
   contact = contact || {};
   const items = [];
   
@@ -839,6 +859,7 @@ function renderContactCompact(contact) {
   if (contact.email) items.push(`<a href="mailto:${contact.email}" class="contact-item">${contact.email}</a>`);
   if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
   if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
+  items.push(...extraContactItems(contact, ['instagram', 'linkedin', 'github', 'twitter']));
   
   return `<div class="compact-contact-row">${items.join(' <span class="contact-sep">•</span> ')}</div>`;
 }
@@ -852,7 +873,7 @@ export function renderResumeExecutive(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact executive-contact">
-        ${renderContactStacked(data.contact)}
+        ${renderContactStacked(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -900,7 +921,7 @@ export function renderResumeClassic(data) {
         <h1 class="resume-name" data-editable="name">${escapeHtml(data.name)}</h1>
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
         <div class="classic-contact">
-          ${renderContactClassic(data.contact)}
+          ${renderContactClassic(data.contact, data.contactOrder)}
         </div>
       </div>
     </header>
@@ -963,7 +984,7 @@ export function renderResumeClassicFeatured(data) {
         <h1 class="resume-name" data-editable="name">${escapeHtml(data.name)}</h1>
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
         <div class="classic-contact">
-          ${renderContactClassic(data.contact)}
+          ${renderContactClassic(data.contact, data.contactOrder)}
         </div>
       </div>
     </header>
@@ -1030,8 +1051,9 @@ export function renderResumeClassicFeatured(data) {
 }
 
 // Classic contact renderer
-function renderContactClassic(contact) {
+function renderContactClassic(contact, order) {
   if (!contact) return '';
+  if (Array.isArray(order)) return renderOrderedContact(contact, order, ' <span class="contact-sep">|</span> ');
   contact = contact || {};
   const items = [];
   
@@ -1040,6 +1062,7 @@ function renderContactClassic(contact) {
   if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
   if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
   if (contact.linkedin) items.push(`<a href="${contact.linkedin}" class="contact-item" target="_blank">${formatUrl(contact.linkedin)}</a>`);
+  items.push(...extraContactItems(contact, ['instagram', 'github', 'twitter']));
   
   return items.join(' <span class="contact-sep">|</span> ');
 }
@@ -1059,7 +1082,7 @@ export function renderResumeModern(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact modern-contact">
-        ${renderContactModern(data.contact)}
+        ${renderContactModern(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -1099,14 +1122,16 @@ export function renderResumeModern(data) {
 }
 
 // Modern contact renderer
-function renderContactModern(contact) {
+function renderContactModern(contact, order) {
   if (!contact) return '';
+  if (Array.isArray(order)) return renderOrderedContact(contact, order, ' <span class="contact-sep">•</span> ');
   contact = contact || {};
   const items = [];
   
   if (contact.email) items.push(`<a href="mailto:${contact.email}" class="contact-item">${contact.email}</a>`);
   if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
   if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
+  items.push(...extraContactItems(contact, ['location', 'instagram', 'linkedin', 'github', 'twitter']));
   
   return items.join(' <span class="contact-sep">•</span> ');
 }
@@ -1120,7 +1145,7 @@ export function renderResumeTimeline(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact">
-        ${renderContact(data.contact)}
+        ${renderContact(data.contact, data.contactOrder)}
       </div>
     </header>
     
@@ -1205,7 +1230,7 @@ export function renderResumeCreative(data) {
         <h1 class="resume-name" data-editable="name">${escapeHtml(data.name)}</h1>
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
         <div class="creative-contact">
-          ${renderContactCreative(data.contact)}
+          ${renderContactCreative(data.contact, data.contactOrder)}
         </div>
       </div>
     </header>
@@ -1258,8 +1283,9 @@ export function renderResumeCreative(data) {
 }
 
 // Creative contact renderer
-function renderContactCreative(contact) {
+function renderContactCreative(contact, order) {
   if (!contact) return '';
+  if (Array.isArray(order)) return renderOrderedContact(contact, order, ' <span class="contact-sep">•</span> ');
   contact = contact || {};
   const items = [];
   
@@ -1267,6 +1293,7 @@ function renderContactCreative(contact) {
   if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
   if (contact.location) items.push(`<span class="contact-item">${contact.location}</span>`);
   if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
+  items.push(...extraContactItems(contact, ['instagram', 'linkedin', 'github', 'twitter']));
   
   return items.join(' <span class="contact-sep">•</span> ');
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createBridgeRouter } from '../src/bridgeRoutes.js';
+import { buildResumeData } from '../src/onboardingLogic.js';
 
 import {
   MAX_JOB_DESCRIPTION_BYTES,
@@ -80,6 +81,7 @@ function makeDeps(overrides = {}) {
       tailorReasoning: 'high',
     })),
     getDefaultModelId: vi.fn(() => 'fallback/model'),
+    buildResumeData,
     analyzeResumeDataAgainstJobs: vi.fn(async () => analysis()),
     generateResumeChangesForData: vi.fn(async () => ({
       changes: {
@@ -130,7 +132,7 @@ describe('createCompanionJobActions analyzeJobFit', () => {
         description: 'Build accessible products and lead cross-functional teams.',
         url: 'https://jobs.example.test/staff-product-engineer',
       }],
-      { reasoningEffort: 'low' },
+      { reasoningEffort: 'low', concise: true },
     );
   });
 
@@ -535,4 +537,45 @@ describe('revocation before tailored resume persistence', () => {
     expect(await fixture.tailor()).toMatchObject({ status: 200, body: { created: false } });
     expect(fixture.deps.saveVariant).toHaveBeenCalledOnce();
   });
+});
+
+describe('profile-based companion generation', () => {
+  it('generates without an existing resume and retries the same saved identity', async () => {
+    const resume = { name: 'Ash', email: 'ash@example.com', summary: 'Product engineer', education: [{ degree: 'BS', school: 'Example University', year: '2020' }], experience: [], skills: ['Research'], tools: ['Figma'] };
+    const generate = vi.fn(async () => ({ resume, gaps: [] }));
+    const deps = makeDeps({ generateResumeFromProfileForJob: generate });
+    const actions = createCompanionJobActions(deps);
+    const hooks = { onReasoning: vi.fn() };
+    const request = { requestId: REQUEST_ID, job: JOB, hooks };
+    const first = await actions.createTailoredResume(request);
+    const replay = await actions.createTailoredResume(request);
+    expect(first.created).toBe(true);
+    expect(replay.created).toBe(false);
+    expect(replay.resume.id).toBe(first.resume.id);
+    expect(generate).toHaveBeenCalledOnce();
+    expect(generate).toHaveBeenCalledWith('tailor/model', expect.objectContaining({ title: 'Staff Product Engineer' }), { targetPages: 1, reasoningEffort: 'high', hooks });
+    expect(deps.generateResumeChangesForData).not.toHaveBeenCalled();
+    expect(deps.saveVariant.mock.calls[0][2]).toMatchObject({ name: 'Ash', contact: { email: 'ash@example.com' }, tools: 'Figma', education: [expect.stringContaining('Example University')], sections: [expect.objectContaining({ title: 'Skills', content: ['Research'] })] });
+  });
+
+  it('rejects invalid profile-generated documents before saving', async () => {
+    const deps = makeDeps({ generateResumeFromProfileForJob: vi.fn(async () => ({ resume: { name: 'Ash', experience: 'invalid' } })) });
+    await expect(createCompanionJobActions(deps).createTailoredResume({ requestId: REQUEST_ID, job: JOB })).rejects.toMatchObject({ code: 'invalid_ai_response' });
+    expect(deps.saveVariant).not.toHaveBeenCalled();
+  });
+
+  it('analyzes the full profile with no saved resume and forwards progress hooks', async () => {
+    const profile = { markdown: '# Ash\nEngineer building accessible products' };
+    const hooks = { onReasoning: vi.fn() };
+    const deps = makeDeps({ getUserProfile: () => profile });
+    const result = await createCompanionJobActions(deps).analyzeJobFit({ job: JOB, hooks });
+    expect(result.resumeId).toBeNull();
+    expect(deps.analyzeResumeDataAgainstJobs).toHaveBeenCalledWith('analysis/model', { profile }, expect.any(Array), { concise: true, reasoningEffort: 'low', hooks });
+  });
+});
+
+it('asks for career details before analyzing an empty profile', async () => {
+  const deps = makeDeps({ getUserProfile: () => ({}), hasProfileData: () => false });
+  await expect(createCompanionJobActions(deps).analyzeJobFit({ job: JOB })).rejects.toMatchObject({ code: 'profile_empty' });
+  expect(deps.analyzeResumeDataAgainstJobs).not.toHaveBeenCalled();
 });

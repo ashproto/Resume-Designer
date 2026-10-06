@@ -23,14 +23,17 @@ import { addApplication, getCompanionApplication } from './applications.js';
 import { getAllLearnedAnswers, saveLearnedAnswer } from './learnedAnswers.js';
 import {
   analyzeResumeDataAgainstJobs,
+  checkProfileHasData,
   completeForBridge,
   generateResumeChangesForData,
+  generateResumeFromProfileForJob,
   getDefaultModelId,
 } from './aiService.js';
 import { getCompanionModels } from './companionModels.js';
 import { createCompanionJobActions } from './companionJobActions.js';
 import { createCompanionPairing } from './companionPairing.js';
 import { loadVariant } from './variantManager.js';
+import { buildResumeData } from './onboardingLogic.js';
 
 const TOKEN_KEY = 'resume-designer-bridge-token';
 
@@ -149,6 +152,10 @@ export async function initBridge({ profileId = null } = {}) {
     getDefaultModelId,
     analyzeResumeDataAgainstJobs,
     generateResumeChangesForData,
+    generateResumeFromProfileForJob,
+    getUserProfile,
+    buildResumeData,
+    hasProfileData: checkProfileHasData,
     generateUniqueVariantName,
     saveVariant,
     loadVariant,

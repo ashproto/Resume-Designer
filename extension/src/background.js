@@ -120,6 +120,54 @@ export function createBackgroundService({
   let tokenWriteQueue = Promise.resolve();
   const pendingMutations = new Set();
 
+  function reportProgress(message, progress) {
+    if (!message.operationId) return;
+    try {
+      void chromeApi.runtime.sendMessage?.({
+        type: 'operation.progress', operationId: message.operationId, progress,
+      })?.catch?.(() => {});
+    } catch { /* A closed panel must not interrupt an operation. */ }
+  }
+
+  async function withConnectionRecovery(message, expectedEpoch, operation) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!['network_error', 'app_timeout', 'app_unavailable'].includes(error?.code)) throw error;
+      assertConnectionEpoch(expectedEpoch);
+      // Keep the token, context, operation ID and mutation request ID. Recovery
+      // must never approve a new pairing or silently cross a profile reload.
+      if (!String(await getStoredToken()).trim()) throw error;
+      reportProgress(message, { stage: 'reconnecting', message: 'Reconnecting to On Paper. Your progress is saved.' });
+      const attempt = { controller: new AbortController(), epoch: expectedEpoch };
+      pendingMutations.add(attempt.controller);
+      let sourceTab;
+      let launchTab;
+      const restoreSourceTab = async () => {
+        if (!sourceTab?.id || !launchTab?.id || !chromeApi.tabs.update) return;
+        try {
+          const [activeTab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
+          if (activeTab?.id === launchTab.id) await chromeApi.tabs.update(sourceTab.id, { active: true });
+        } catch { /* The originating tab may have closed during recovery. */ }
+      };
+      try {
+        [sourceTab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
+        launchTab = await launchUrl(APP_OPEN_URL);
+        await pollForHealth(attempt);
+        await assertProfileContext(message.profileContextId, { signal: attempt.controller.signal });
+        assertConnectionEpoch(expectedEpoch);
+        await restoreSourceTab();
+        reportProgress(message, { stage: 'resuming', message: 'Connected. Continuing your request' });
+        return await operation();
+      } finally {
+        pendingMutations.delete(attempt.controller);
+        // Restore only the tab we displaced, and only while our launch tab is
+        // still selected. Never override a tab the user selected meanwhile.
+        await restoreSourceTab();
+      }
+    }
+  }
+
   function cancelledError() {
     return new BridgeError('Connection cancelled. You can pair manually.', { code: 'pairing_cancelled', retryable: false });
   }
@@ -309,7 +357,7 @@ export function createBackgroundService({
   async function launchUrl(url) {
     try {
       // Chrome needs a foreground tab to present its external-app permission prompt.
-      await chromeApi.tabs.create({ url, active: true });
+      return await chromeApi.tabs.create({ url, active: true });
     } catch (error) {
       throw launchFailedError(error);
     }
@@ -630,7 +678,9 @@ export function createBackgroundService({
       case 'page.scan':
         return scanPage();
       case 'mapping.create': {
-        return withinProfileContext(message.profileContextId, async () => {
+        const operationIds = [];
+        return withConnectionRecovery(message, expectedEpoch, () => withinProfileContext(message.profileContextId, async () => {
+          let completionIndex = 0;
           const resume = assertResponseContext(
             message.profileContextId,
             await bridge.getResume(message.resumeId),
@@ -639,13 +689,18 @@ export function createBackgroundService({
             descriptors: message.descriptors,
             resume,
             job: message.job,
-            complete: (payload) => bridge.complete({
+            complete: (payload) => {
+              const index = completionIndex++;
+              if (message.operationId && !operationIds[index]) operationIds[index] = cryptoImpl.randomUUID();
+              return bridge.complete({
               ...payload,
               profileContextId: message.profileContextId,
+              ...(message.operationId ? { operationId: operationIds[index] } : {}),
               ...(message.model ? { model: message.model } : {}),
-            }),
+            }, { onProgress: (progress) => reportProgress(message, progress) });
+            },
           });
-        });
+        }));
       }
       case 'page.fill':
         return fillPage(message, expectedEpoch);
@@ -678,19 +733,20 @@ export function createBackgroundService({
         );
       }
       case 'job.fit.analyze':
-        return withinProfileContext(message.profileContextId, async () => (
+        return withConnectionRecovery(message, expectedEpoch, () => withinProfileContext(message.profileContextId, async () => (
           assertResponseContext(
             message.profileContextId,
             await bridge.analyzeJobFit({
               profileContextId: message.profileContextId,
               resumeId: message.resumeId,
               job: message.job,
+              ...(message.operationId ? { operationId: message.operationId } : {}),
               ...(message.model ? { model: message.model } : {}),
-            }),
+            }, { onProgress: (progress) => reportProgress(message, progress) }),
           )
-        ));
+        )));
       case 'resume.tailor':
-        return withinProfileMutation(message.profileContextId, expectedEpoch, async (options) => (
+        return withConnectionRecovery(message, expectedEpoch, () => withinProfileMutation(message.profileContextId, expectedEpoch, async (options) => (
           assertResponseContext(
             message.profileContextId,
             await bridge.createTailoredResume({
@@ -698,10 +754,11 @@ export function createBackgroundService({
               resumeId: message.resumeId,
               requestId: message.requestId,
               job: message.job,
+              ...(message.operationId ? { operationId: message.operationId } : {}),
               ...(message.model ? { model: message.model } : {}),
-            }, options),
+            }, { ...options, onProgress: (progress) => reportProgress(message, progress) }),
           )
-        ));
+        )));
       default:
         throw new BridgeError(`Unsupported message type: ${message?.type ?? 'unknown'}`, {
           code: 'unsupported_message',

@@ -9,6 +9,8 @@
  * body:string}; output is {status, body:object} — bridge.js stringifies body.
  */
 
+import { createBridgeProgress } from './bridgeProgress.js';
+
 const json = (status, body) => ({ status, body });
 
 export const COMPANION_PROTOCOL_VERSION = 2;
@@ -20,6 +22,8 @@ export const COMPANION_CAPABILITIES = Object.freeze([
   'profile.context',
   'resume.pdf',
   'ai.complete',
+  'ai.progress',
+  'ai.profile-source',
   'ai.models',
   'ai.job-fit',
   'ai.tailored-resume',
@@ -44,6 +48,7 @@ const isProfileSensitiveRequest = (method, path) => (
     method === 'POST'
     && [
       '/ai/complete',
+      '/ai/progress',
       '/ai/job-fit',
       '/ai/tailored-resume',
       '/applications',
@@ -70,6 +75,7 @@ function pdfFilename(name) {
 }
 
 export function createBridgeRouter(deps) {
+  const progress = createBridgeProgress();
   let authorizationGeneration = 0;
   let pendingRevocations = 0;
   let saveTail;
@@ -96,7 +102,7 @@ export function createBridgeRouter(deps) {
 
   async function executeBridgeRequest({ method, path, authorization, body }, authorizationState = {
     generation: authorizationGeneration, revoking: pendingRevocations > 0,
-  }) {
+  }, hooks) {
     if (method === 'GET' && path === '/health') {
       return json(200, {
         ok: true,
@@ -177,6 +183,18 @@ export function createBridgeRouter(deps) {
         return importInProgress();
       }
 
+      if (method === 'POST' && (path === '/ai/progress'
+        || (parsed.operationId && ['/ai/complete', '/ai/job-fit', '/ai/tailored-resume'].includes(path)))) {
+        if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) return profileChanged();
+        assertAuthorized();
+        const owner = `${authorizationGeneration}:${token}:${deps.profileContextId}`;
+        if (path === '/ai/progress') return progress.read(parsed.operationId, owner);
+        if (!hooks) {
+          return progress.start(parsed.operationId, owner, `${path}:${body}`, (streamHooks) =>
+            executeBridgeRequest({ method, path, authorization, body }, authorizationState, streamHooks));
+        }
+      }
+
       if (method === 'GET' && path === '/ai/models') {
         return json(200, deps.getAiModels());
       }
@@ -249,6 +267,7 @@ export function createBridgeRouter(deps) {
             ...modelOptions,
             systemPrompt: parsed.systemPrompt,
             reasoningEffort: parsed.reasoningEffort,
+            ...(hooks ? { hooks } : {}),
           });
           if (deps.writesSuspended?.()) return importInProgress();
           return json(200, { text });
@@ -265,6 +284,7 @@ export function createBridgeRouter(deps) {
           ...modelOptions,
           resumeId: parsed.resumeId,
           job: parsed.job,
+          ...(hooks ? { hooks } : {}),
         });
         if (deps.writesSuspended?.()) return importInProgress();
         return json(200, {
@@ -284,6 +304,7 @@ export function createBridgeRouter(deps) {
           resumeId: parsed.resumeId,
           requestId: parsed.requestId,
           job: parsed.job,
+          ...(hooks ? { hooks } : {}),
         }, { assertAuthorized });
         if (deps.writesSuspended?.()) return importInProgress();
         return json(result.created ? 201 : 200, {

@@ -464,20 +464,41 @@ export function checkProfileHasData() {
  * generateResumeFromProfileForJob so the wording is unit-testable without a
  * network call — the grounding rules are a correctness requirement, not styling.
  */
-export function buildGenerateResumePrompt(profileContext, jobDescription) {
-  return `You are an expert resume consultant. Create the strongest resume the user's profile truthfully supports, targeted at the job below.
+export function buildGenerateResumePrompt(profileContext, jobDescription, options = {}) {
+  const targetPages = Math.min(3, Math.max(1, Math.round(Number(options.targetPages) || 1)));
+  const jobs = (Array.isArray(options.jobDescriptions) ? options.jobDescriptions : [jobDescription])
+    .filter((job) => job && typeof job.description === 'string' && job.description.trim());
+  const jobContext = jobs.length ? jobs.map((job, i) => `### Target job ${i + 1}
+**Position:** ${job.title || 'Not specified'}
+**Company:** ${job.company || 'Not specified'}
+**Job description:**
+${job.description}`).join('\n\n') : 'No target job supplied. Follow the user\'s brief and career goals in their profile.';
+  const wordBudget = ['300–450', '550–800', '850–1100'][targetPages - 1];
+  const revision = options.previousResume && options.revisionInstruction
+    ? `\n## Revise the current draft\n${JSON.stringify(options.previousResume)}\n\nRequested changes: ${options.revisionInstruction}\nReturn the COMPLETE revised resume, not a patch. Preserve factual details and useful content unless the request calls for changing them. The profile remains the authority for facts; do not carry forward unsupported claims from the draft.\n`
+    : '';
+  return `You are an expert resume consultant. Create a concise resume the user's profile truthfully supports, following the brief and target jobs below.
 
 ${GROUNDING_RULES_TEXT}
 
 ${profileContext}
 
-## Target Job
+## Target jobs
+${jobContext}
+${jobs.length > 1 ? '\nCreate ONE resume for these jobs together. Prioritize shared requirements and transferable strengths, balancing all targets rather than tailoring only to the first job. Do not place an employer name in the summary unless explicitly requested.' : ''}
 
-**Position:** ${jobDescription.title || 'Not specified'}
-**Company:** ${jobDescription.company || 'Not specified'}
+## User brief
+${options.prompt?.trim() || 'Use clear, direct language and prioritize the most relevant experience.'}
 
-**Job Description:**
-${jobDescription.description}
+## Length and editing rules
+Target length: ${targetPages} page${targetPages === 1 ? '' : 's'} (approximately ${wordBudget} words of resume content).
+This is a content budget, not a guarantee of pagination; final pages depend on layout and typography. Stay below the budget when the evidence is thin.
+- Keep the summary to 1–2 short sentences, at most 45 words.
+- Write short, specific bullets (usually 12–22 words), with one clear idea per bullet.
+- Use ${targetPages === 1 ? '2–3 bullets for the most relevant roles and 0–1 for older or less relevant roles' : '3–4 bullets for the most relevant roles and 1–2 for older or less relevant roles'}.
+- Select relevant facts instead of reproducing the entire profile. Do not repeat achievements across the summary, highlights, and experience.
+- Remove filler, generic self-praise, and unnecessary adjectives. Never pad the resume to reach a page target.
+${revision}
 
 ## Your Task
 
@@ -490,10 +511,10 @@ Create a clear, well-structured resume that:
    split apart by a role at a different employer
 4. Writes a professional summary grounded in the profile and targeted at this position
 5. Writes bullets that quantify results ONLY where the profile supplies the number
-6. Includes 3-4 highlights that are DISTINCT, career-level achievements — not
-   restatements of the experience bullets
+6. Includes at most ${targetPages === 1 ? '2' : '3'} optional highlights that are DISTINCT, career-level achievements — not
+   restatements of the experience bullets; omit highlights when they add repetition
 7. Separates concrete tools/software from competency skills (see the fields below)
-8. Reports, in "gaps", what this job asks for that the profile does not support
+8. Reports, in "gaps", what the target jobs ask for that the profile does not support; return an empty gaps array when there are no target jobs
 
 Return ONLY a valid JSON object (no code fences, no prose outside the JSON) in this exact format:
 {
@@ -504,11 +525,10 @@ Return ONLY a valid JSON object (no code fences, no prose outside the JSON) in t
   "location": "location from profile if available",
   "linkedin": "linkedin url if available",
   "portfolio": "portfolio url if available",
-  "summary": "2-3 sentence summary, every claim traceable to the profile",
+  "summary": "1-2 short sentences, at most 45 words, every claim traceable to the profile",
   "highlights": [
     "Career-level achievement, distinct from the experience bullets below",
-    "Another high-level qualification matching the job (not repeated below)",
-    "Summary-level achievement relevant to the role"
+    "Another high-level qualification matching the brief (not repeated below)"
   ],
   "skills": ["competency1", "competency2", "... (at most 12, most relevant only)"],
   "tools": ["Concrete tool/software/platform e.g. Figma", "Git", "Docker"],
@@ -530,6 +550,9 @@ Return ONLY a valid JSON object (no code fences, no prose outside the JSON) in t
     { "degree": "Degree Name", "school": "School Name", "year": "Year" }
   ],
   "certifications": ["Certification present in the profile"],
+  "sections": [
+    { "id": "projects", "title": "Projects", "type": "list", "area": "main", "content": ["Relevant project supported by the profile, only if useful for the brief"] }
+  ],
   "gaps": [
     {
       "requirement": "What the job asks for that the profile does not support",
@@ -541,6 +564,7 @@ Return ONLY a valid JSON object (no code fences, no prose outside the JSON) in t
 
 IMPORTANT:
 - Only include sections that have relevant content from the profile
+- Use optional "sections" for relevant projects, awards, publications, volunteering, or other requested content, with "area": "main" and "type": "list" or "paragraph". Omit this array when no additional section is useful. Keep existing section ids, titles, types, and areas when revising unless the user requests a change.
 - Order experience by relevance (most relevant first); ALWAYS include
   machine-readable startDate/endDate as "YYYY-MM" (a bare year is not enough —
   the app uses the month to decide whether two roles at one employer were one
@@ -557,7 +581,7 @@ IMPORTANT:
   adjacency, so splitting them prints the employer twice as unrelated jobs
 - Put concrete tools/software/platforms (e.g. Figma, Git, Docker, Excel) in
   "tools"; keep "skills" for competencies. Do NOT duplicate an item across both.
-- Limit "highlights" to 3-4 entries, each a DISTINCT career-level achievement
+- Limit "highlights" to ${targetPages === 1 ? '2' : '3'} entries, each a DISTINCT career-level achievement, or omit them
 - Select at most 12 of the most relevant skills (quality over quantity)
 - Use action verbs, but never ones that overstate the profile's scope
 - "gaps" must be honest and may be empty. Do NOT close a gap by inventing
@@ -748,7 +772,7 @@ export async function generateResumeFromProfileForJob(modelId, jobDescription, o
   }
   
   // Build the prompt
-  const prompt = buildGenerateResumePrompt(profileContext, jobDescription);
+  const prompt = buildGenerateResumePrompt(profileContext, jobDescription, options);
 
   const messages = [{ role: 'user', content: prompt }];
   
@@ -1192,7 +1216,9 @@ export async function completeForBridge(messages, options = {}) {
   return callOpenRouter(modelId, messages, {
     feature: 'bridge',
     systemPrompt: options.systemPrompt,
-    reasoningEffort: options.reasoningEffort,
+    reasoningEffort: options.reasoningEffort ?? 'low',
+    hooks: options.hooks,
+    signal: options.signal,
   });
 }
 
@@ -1458,6 +1484,10 @@ export async function analyzeResumeDataAgainstJobs(
   
   prompt += `\nProvide your analysis as a JSON object. No markdown, just raw JSON.`;
   
+  if (options.concise) {
+    prompt += '\nKeep this analysis succinct: at most three strengths, three gaps, three recommendations and five keywords per list. Each explanation must be one short sentence. Focus on the most consequential evidence; do not restate the resume or job description.';
+  }
+
   const messages = [{ role: 'user', content: prompt }];
   const response = await callOpenRouter(validModelId, messages, {
     feature: 'analyze',

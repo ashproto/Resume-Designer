@@ -453,7 +453,7 @@ describe('App explicit workflow', () => {
 
     await click(button('Prepare autofill review'));
     expect(client.scanPage).toHaveBeenCalledOnce();
-    expect(client.createMapping).toHaveBeenCalledWith('context-1', 'resume-1', descriptors, { job: { company: 'Acme', title: 'Engineer', description: '' } });
+    expect(client.createMapping).toHaveBeenCalledWith('context-1', 'resume-1', descriptors, { job: { company: 'Acme', title: 'Engineer', description: '' }, onProgress: expect.any(Function) });
     expect(labelled('Full name').value).toBe('Jane');
     expect(container.querySelector('.workflow-status')?.textContent)
       .toBe('Review ready — 1 field.');
@@ -651,7 +651,7 @@ describe('App explicit workflow', () => {
     await scanAndCreate(client);
 
     expect(client.createMapping).toHaveBeenCalledWith(
-      'context-1', 'resume-1', [descriptors[0]], { job: { company: '', title: '', description: '' } },
+      'context-1', 'resume-1', [descriptors[0]], { job: { company: '', title: '', description: '' }, onProgress: expect.any(Function) },
     );
 
     const countryItem = [...container.querySelectorAll('.review-item')]
@@ -1088,7 +1088,7 @@ describe('App explicit workflow', () => {
       title: 'Edited Role',
     });
     expect(resumePicker.value).toBe('resume-1');
-    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.scanPage).toHaveBeenCalledTimes(2); // initial scan and read-only post-fill scan
     expect(client.createMapping).toHaveBeenCalledOnce();
     expect(client.fillPage).toHaveBeenCalledOnce();
     expect(resumePicker.disabled).toBe(true);
@@ -1285,6 +1285,7 @@ describe('App explicit workflow', () => {
 
     await change(labelled('AI model'), 'provider/test-model');
     await click(button('Tailor resume'));
+    await change(labelled('Source'), 'resume-1');
     await click(button('Analyze fit'));
     expect(client.analyzeJobFit).not.toHaveBeenCalled();
     expect(labelled('Job description')).toBeTruthy();
@@ -1294,6 +1295,7 @@ describe('App explicit workflow', () => {
     expect(client.analyzeJobFit).toHaveBeenCalledWith({
       profileContextId: 'context-1',
       resumeId: 'resume-1',
+      onProgress: expect.any(Function),
       job: {
         company: 'Acme',
         title: 'Staff Product Engineer',
@@ -1375,7 +1377,7 @@ describe('App explicit workflow', () => {
     expect(client.fillPage).not.toHaveBeenCalled();
     expect(labelled('Resume').value).toBe(tailoredId);
     expect(client.createMapping).toHaveBeenLastCalledWith(
-      'context-1', tailoredId, [tailoredDescriptors[0]], { job: { company: 'Acme', title: 'Staff Product Engineer', description: 'Lead product development.' }, model: 'provider/test-model' },
+      'context-1', tailoredId, [tailoredDescriptors[0]], { job: { company: 'Acme', title: 'Staff Product Engineer', description: 'Lead product development.' }, model: 'provider/test-model', onProgress: expect.any(Function) },
     );
     expect(labelled('Full name').value).toBe('Tailored Jane');
     expect(container.textContent).toContain('Country');
@@ -1471,8 +1473,8 @@ describe('App explicit workflow', () => {
 
     expect([...container.querySelector('#resume-picker').options]
       .map((option) => ({ id: option.value, name: option.textContent })))
-      .toEqual([{ id: currentResumeId, name: 'Current profile resume' }]);
-    expect(container.querySelector('#resume-picker').value).toBe(currentResumeId);
+      .toEqual([{ id: '', name: 'My full profile' }, { id: currentResumeId, name: 'Current profile resume' }]);
+    expect(container.querySelector('#resume-picker').value).toBe('');
     expect(container.textContent).not.toContain('Private old-profile tailored resume');
     expect(container.textContent).toMatch(/reloaded or switched profiles/i);
     expect(client.scanPage).toHaveBeenCalledTimes(2);
@@ -1550,8 +1552,11 @@ describe('focused application workspace', () => {
     await click(button('Tailor resume'));
     expect(button('Analyze fit')).toBeTruthy();
     expect(button('Create tailored resume')).toBeTruthy();
-    expect(labelled('Base resume').closest('#tailor-workflow')).toBeTruthy();
+    expect(labelled('Source').closest('#tailor-workflow')).toBeTruthy();
+    expect(labelled('Source').value).toBe('');
     expect(labelled('AI model').closest('#tailor-workflow')).toBeTruthy();
+    expect(container.textContent).toContain('No existing resume needed.');
+    await change(labelled('Source'), 'resume-1');
     expect(container.textContent).toContain('Creates a new copy. Your base resume stays unchanged.');
     expect(container.querySelector('#autofill-workflow')).toBeNull();
   });
@@ -1568,6 +1573,7 @@ describe('focused application workspace', () => {
     expect(client.createMapping).toHaveBeenCalledWith('context-1', 'resume-1', expect.any(Array), {
       job: { company: 'Acme', title: 'Designer', description: 'Design accessible tools.' },
       model: 'provider/test-model',
+      onProgress: expect.any(Function),
     });
     expect(labelled('What interests you about this role?').tagName).toBe('TEXTAREA');
     expect(container.textContent).toContain('AI draft — review before filling');
@@ -1595,6 +1601,7 @@ describe('focused application workspace', () => {
     await click(button('Prepare autofill review'));
     expect(client.createMapping).toHaveBeenCalledWith('context-1', 'resume-1', expect.any(Array), {
       job: { company: 'Second', title: 'Engineer', description: '' },
+      onProgress: expect.any(Function),
     });
     await click(button('Tailor resume'));
     expect(labelled('Job description').value).toBe('');
@@ -1694,7 +1701,7 @@ describe('connection recovery and review polish', () => {
   it('provides a resume-empty state and read-only refresh after connecting', async () => {
     const client = makeClient({ checkConnection: vi.fn(async () => ({ connected: true, resumes: [], profileContextId: 'context-1' })) });
     await renderApp(client);
-    expect(container.textContent).toContain('Add a resume in On Paper');
+    expect(container.textContent).toContain('Create your first resume');
     await click(button('Check connection again'));
     expect(client.checkConnection).toHaveBeenCalledTimes(2);
     expect(client.openApp).not.toHaveBeenCalled();
@@ -2189,5 +2196,86 @@ describe('idempotent application logging', () => {
     await click(button('Log application'));
     await waitFor(() => expect(container.textContent).toContain('Session storage unavailable'));
     expect(client.logApplication).not.toHaveBeenCalled();
+  });
+});
+
+describe('transparent AI workspace', () => {
+  const page = { title: 'Product engineer', company: 'Acme', locations: ['San Diego, CA', 'Remote'], description: 'About the role\nBuild useful products.\n\nResponsibilities\n- Design accessible interfaces\n- Collaborate with designers', url: 'https://jobs.test/engineer', fingerprint: 'job-role' };
+
+  it('creates from the full profile by default, including a profile without saved resumes', async () => {
+    const client = makeClient({
+      checkConnection: vi.fn(async () => ({ connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [] })),
+      scanPage: vi.fn(async () => ({ descriptors: [], page })),
+    });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Tailor resume'));
+    expect(labelled('Source').value).toBe('');
+    expect(button('Create tailored resume').disabled).toBe(false);
+    await click(button('Create tailored resume'));
+    expect(client.createTailoredResume).toHaveBeenCalledOnce();
+    expect(client.createTailoredResume.mock.calls[0][0]).not.toHaveProperty('resumeId');
+  });
+
+  it('replaces the workspace with real progress and captured role details during analysis', async () => {
+    const analysisRequest = deferred();
+    const client = makeClient({ scanPage: vi.fn(async () => ({ descriptors: [], page })), analyzeJobFit: vi.fn(() => analysisRequest.promise) });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Tailor resume'));
+    await click(button('Analyze fit'));
+    const processing = container.querySelector('.processing-view');
+    expect(processing).not.toBeNull();
+    expect(container.querySelector('.panel-shell').hidden).toBe(true);
+    expect(processing.textContent).toContain('Product engineer');
+    expect(processing.textContent).toContain('San Diego, CA');
+    const { onProgress, resumeId } = client.analyzeJobFit.mock.calls[0][0];
+    expect(resumeId).toBeUndefined();
+    await act(async () => onProgress({ stage: 'analyzing', kind: 'reasoning', message: 'Comparing your design experience with this role.' }));
+    expect(processing.textContent).toContain('Comparing your design experience');
+    analysisRequest.resolve({ analysis: { matchScore: 82, strengths: ['Relevant experience'], gaps: [], recommendations: ['Emphasize accessible design.'], missingKeywords: ['prototyping'] } });
+    await settle();
+    expect(container.querySelector('.processing-view')).toBeNull();
+    expect(container.querySelector('.panel-shell').hidden).toBe(false);
+    expect(container.querySelector('.captured-job').textContent).toContain('Remote');
+    expect(container.querySelector('.captured-job details').open).toBe(false);
+    expect(container.querySelector('.fit-overview').textContent).toContain('82% match');
+    expect(container.querySelector('.fit-actions').textContent).toContain('Emphasize accessible design.');
+  });
+
+  it('shows discovered field labels while suggestions are prepared', async () => {
+    const mappingRequest = deferred();
+    const client = makeClient({ scanPage: vi.fn(async () => ({ descriptors: [descriptor('school', { label: 'University / School' }), descriptor('major', { label: 'Major' })], page })), createMapping: vi.fn(() => mappingRequest.promise) });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Prepare autofill review'));
+    const processing = container.querySelector('.processing-view');
+    expect(processing.textContent).toContain('2 fields found');
+    expect(processing.textContent).toContain('University / School');
+    expect(processing.textContent).toContain('Major');
+    mappingRequest.resolve({ fields: [mapped('school', 'State University'), mapped('major', 'Design')], needs_human: [] });
+    await settle();
+    expect(labelled('University / School').value).toBe('State University');
+  });
+
+  it('detects fields revealed by a fill and prepares only the new fields after review is requested', async () => {
+    const degree = descriptor('degree', { label: 'Degree', type: 'select', options: [{ value: 'bs', label: 'Bachelor' }] });
+    const school = descriptor('school', { label: 'University / School' });
+    const major = descriptor('major', { label: 'Major' });
+    const after = { ...page, fingerprint: 'expanded-education' };
+    const client = makeClient({
+      scanPage: vi.fn().mockResolvedValueOnce({ descriptors: [degree], page }).mockResolvedValue({ descriptors: [degree, school, major], page: after }),
+      createMapping: vi.fn().mockResolvedValueOnce({ fields: [mapped('degree', 'bs')], needs_human: [] }).mockResolvedValue({ fields: [mapped('school', 'State University'), mapped('major', 'Design')], needs_human: [] }),
+      fillPage: vi.fn(async () => ({ filled: ['degree'], unfilled: [] })),
+    });
+    await renderApp(client, { heartbeatMs: 0 });
+    await scanAndCreate(client);
+    await click(button('Fill reviewed fields'));
+    expect(container.textContent).toContain('2 more fields appeared');
+    expect(container.querySelector('.revealed-fields').textContent).toContain('University / School');
+    await click(button('Review newly revealed fields'));
+    expect(client.createMapping.mock.calls[1][2]).toEqual([school, major]);
+    expect(labelled('University / School').value).toBe('State University');
+    expect(client.fillPage).toHaveBeenCalledOnce();
+    await click(button('Fill reviewed fields'));
+    expect(container.querySelector('.revealed-fields')).toBeNull();
+    expect(client.createMapping).toHaveBeenCalledTimes(2);
   });
 });

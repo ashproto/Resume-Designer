@@ -802,7 +802,7 @@ export async function init() {
     exportFullBackupWithFeedback, importBackupFromFile,
     // Structure panel. The document only ever leaves through this projection,
     // and only ever comes back as a path the projection handed out.
-    getDocument: () => buildDocumentOutline(store.getDataRef()),
+    getDocument: () => buildDocumentOutline(store.getDataRef(), { layout: getSettings().layout }),
     updateField: (path, value) => store.update(path, value),
     // Reorder by rewriting the WHOLE array through the same `store.update`
     // every other edit uses, rather than adding a second mutation path. The

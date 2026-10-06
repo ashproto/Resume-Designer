@@ -346,6 +346,20 @@ struct ShellSnapshot: Decodable, Equatable {
       /// The row's own id, so a confirmation can find it again after the array
       /// under it has changed. Empty for documents older than the ids.
       let removeId: String
+      /// Presentation controls and list behavior supplied by the shared editor.
+      let area: Area?
+      let deletableRows: Bool?
+      let help: String?
+
+      struct Area: Decodable, Equatable {
+        let path: String
+        let value: String
+        let options: [Choice]
+      }
+    }
+    struct Choice: Decodable, Equatable, Identifiable {
+      let id: String
+      let name: String
     }
     var groups: [Group]
     /// Adding the FIRST of something. A group only exists once its array is
@@ -356,6 +370,8 @@ struct ShellSnapshot: Decodable, Equatable {
     struct Addition: Decodable, Equatable, Identifiable {
       let path: String
       let label: String
+      let areas: [Choice]?
+      let templates: [Choice]?
       var id: String { path }
     }
   }
@@ -449,6 +465,7 @@ struct ShellSnapshot: Decodable, Equatable {
     }
 
     struct Spacing: Decodable, Equatable {
+      var headerScale: Double?
       var fontScale: Double
       var lineHeight: Double
       var sectionSpacing: Double
@@ -5308,6 +5325,7 @@ private struct DocumentSaveWarning: View {
 private struct StructureSheet: View {
   @ObservedObject var model: ShellModel
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   @FocusState private var focusedPath: String?
   @State private var drafts: [String: String] = [:]
@@ -5387,10 +5405,15 @@ private struct StructureSheet: View {
   var body: some View {
     NavigationStack {
       Group {
-        if groups.isEmpty {
+        if model.snapshot.document == nil {
           // The first outline lands a frame after the sheet opens; an empty
           // form would read as "this résumé has no content".
           ProgressView()
+        } else if groups.isEmpty {
+          ContentUnavailableView(
+            "No resume open", systemImage: "doc",
+            description: Text("Create or open a resume to edit its structure.")
+          )
         } else {
           Form {
             // FIRST, and a standing state rather than a notice: a full disk
@@ -5409,14 +5432,31 @@ private struct StructureSheet: View {
               // no help either — "workExperience" means the same thing in every
               // résumé.
               let renderedIn = model.snapshot.whereAmI
-              Section(group.title) {
+              let renderedRevision = model.snapshot.document?.revision ?? -1
+              Section {
+                if let area = group.area {
+                  Picker("Area", selection: sectionAreaBinding(area, renderedIn: renderedIn, revision: renderedRevision)) {
+                    ForEach(area.options) { Text($0.name).tag($0.id) }
+                  }
+                  .deleteDisabled(true)
+                  .moveDisabled(true)
+                }
                 // Split, not one ForEach with `.onMove`: attaching the move to
                 // the whole group put a drag handle on Role, Company and Dates
                 // too, and a handle that refuses to do anything is worse than
                 // no handle. Only the rows backed by an array get one.
                 ForEach(fixedFields(of: group)) { fieldRow($0) }
                 if let listPath = group.listPath {
-                  ForEach(listFields(of: group)) { fieldRow($0) }
+                  let rows = listFields(of: group)
+                  ForEach(Array(rows.enumerated()), id: \.element.id) { index, field in
+                    if listPath == "contactOrder" {
+                      contactFieldRow(field, index: index, count: rows.count, renderedIn: renderedIn, revision: renderedRevision)
+                        .deleteDisabled(true)
+                        .moveDisabled(true)
+                    } else {
+                      fieldRow(field).deleteDisabled(group.deletableRows == false)
+                    }
+                  }
                     .onMove { indices, destination in
                       // Indices are already list-relative here, so there is no
                       // offset arithmetic to get wrong. Swift moves within a
@@ -5430,10 +5470,11 @@ private struct StructureSheet: View {
                         "path": listPath,
                         "from": String(from),
                         "to": String(destination),
-                        "revision": String(model.snapshot.document?.revision ?? -1),
+                        "revision": String(renderedRevision),
                       ]) { ok in if !ok { staleAction = movedMessage } }
                     }
                     .onDelete { offsets in
+                      guard group.deletableRows != false else { return }
                       // Same property as the move: list-relative, so the offset
                       // arithmetic that maps a ROW to an array element never
                       // happens here.
@@ -5444,7 +5485,7 @@ private struct StructureSheet: View {
                       }
                       model.send("removeItem", [
                         "path": listPath, "index": String(at),
-                        "revision": String(model.snapshot.document?.revision ?? -1),
+                        "revision": String(renderedRevision),
                       ]) { ok in if !ok { staleAction = movedMessage } }
                     }
                 }
@@ -5482,27 +5523,52 @@ private struct StructureSheet: View {
                   .deleteDisabled(true)
                   .moveDisabled(true)
                 }
+              } header: {
+                Text(group.title)
+              } footer: {
+                if group.listPath == "contactOrder" {
+                  Text("Use the arrows to change the order of contact information. Empty fields stay hidden on your resume.")
+                } else if let help = group.help, !help.isEmpty { Text(help) }
               }
             }
 
             if let additions = model.snapshot.document?.additions, !additions.isEmpty {
               Section {
                 ForEach(additions) { addition in
-                  Button {
-                    // The revision, like every other list command. Without it
-                    // `requireCurrentDocument` refuses before adding anything,
-                    // and these buttons are the ONLY way to create the first
-                    // experience, education or section row — so the empty state
-                    // had no way out of itself.
-                    model.send("addItem", [
-                      "path": addition.path,
-                      "revision": String(model.snapshot.document?.revision ?? -1),
-                    ]) { ok in if !ok { staleAction = movedMessage } }
-                  } label: {
-                    Label(addition.label, systemImage: "plus")
+                  let renderedIn = model.snapshot.whereAmI
+                  let renderedRevision = model.snapshot.document?.revision ?? -1
+                  if let areas = addition.areas, let templates = addition.templates {
+                    Menu {
+                      ForEach(areas) { area in
+                        Menu(area.name) {
+                          ForEach(templates) { template in
+                            Button(template.name) {
+                              addSection(addition, area: area.id, template: template.id, renderedIn: renderedIn, revision: renderedRevision)
+                            }
+                          }
+                        }
+                      }
+                    } label: {
+                      Label(addition.label, systemImage: "plus")
+                    }
+                    .deleteDisabled(true)
+                    .moveDisabled(true)
+                  } else {
+                    Button {
+                      guard renderedIn == model.snapshot.whereAmI else {
+                        staleAction = movedMessage
+                        return
+                      }
+                      model.send("addItem", [
+                        "path": addition.path,
+                        "revision": String(renderedRevision),
+                      ]) { ok in if !ok { staleAction = movedMessage } }
+                    } label: {
+                      Label(addition.label, systemImage: "plus")
+                    }
+                    .deleteDisabled(true)
+                    .moveDisabled(true)
                   }
-                  .deleteDisabled(true)
-                  .moveDisabled(true)
                 }
               }
             }
@@ -5601,6 +5667,102 @@ private struct StructureSheet: View {
       }
     }
     .padding(.vertical, 2)
+  }
+
+  private func contactFieldRow(
+    _ field: ShellSnapshot.DocumentOutline.Field,
+    index: Int,
+    count: Int,
+    renderedIn: ShellSnapshot.Where,
+    revision: Int
+  ) -> some View {
+    // Keep the full field width at accessibility sizes while retaining two
+    // separate, discoverable buttons instead of relying on Form drag handles.
+    let layout = dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+      : AnyLayout(HStackLayout(alignment: .center, spacing: 8))
+    return layout {
+      fieldRow(field).frame(maxWidth: .infinity, alignment: .leading)
+      HStack(spacing: 0) {
+        Button {
+          moveContact(field, from: index, to: index - 1, renderedIn: renderedIn, revision: revision)
+        } label: {
+          Image(systemName: "arrow.up")
+            .frame(width: 44, height: 44)
+            .contentShape(.rect)
+        }
+        .accessibilityLabel("Move \(field.label) up")
+        .disabled(index == 0)
+        Button {
+          // The bridge takes Swift's insertion destination before removal.
+          moveContact(field, from: index, to: index + 2, renderedIn: renderedIn, revision: revision)
+        } label: {
+          Image(systemName: "arrow.down")
+            .frame(width: 44, height: 44)
+            .contentShape(.rect)
+        }
+        .accessibilityLabel("Move \(field.label) down")
+        .disabled(index == count - 1)
+      }
+      .buttonStyle(.borderless)
+    }
+  }
+
+  private func moveContact(
+    _ field: ShellSnapshot.DocumentOutline.Field,
+    from: Int,
+    to: Int,
+    renderedIn: ShellSnapshot.Where,
+    revision: Int
+  ) {
+    guard renderedIn == model.snapshot.whereAmI,
+      let header = groups.first(where: { $0.listPath == "contactOrder" }),
+      listFields(of: header).indices.contains(from),
+      listFields(of: header)[from].id == field.id
+    else {
+      staleAction = movedMessage
+      return
+    }
+    model.send("moveItem", [
+      "path": "contactOrder", "from": String(from), "to": String(to),
+      "revision": String(revision),
+    ]) { ok in if !ok { staleAction = movedMessage } }
+  }
+
+  private func addSection(
+    _ addition: ShellSnapshot.DocumentOutline.Addition,
+    area: String,
+    template: String,
+    renderedIn: ShellSnapshot.Where,
+    revision: Int
+  ) {
+    guard renderedIn == model.snapshot.whereAmI else {
+      staleAction = movedMessage
+      return
+    }
+    model.send("addItem", [
+      "path": addition.path, "area": area, "template": template,
+      "revision": String(revision),
+    ]) { ok in if !ok { staleAction = movedMessage } }
+  }
+
+  private func sectionAreaBinding(
+    _ area: ShellSnapshot.DocumentOutline.Group.Area,
+    renderedIn: ShellSnapshot.Where,
+    revision: Int
+  ) -> Binding<String> {
+    Binding(
+      get: { area.value },
+      set: { value in
+        guard renderedIn == model.snapshot.whereAmI else {
+          staleAction = movedMessage
+          return
+        }
+        model.send("setSectionArea", ["path": area.path, "value": value, "revision": String(revision)]) {
+          ok in if !ok { staleAction = movedMessage }
+        }
+      }
+    )
   }
 
   /// The rows above the list: a section's heading, a role's title/company/dates.
@@ -8780,6 +8942,19 @@ private struct HeaderScreen: View {
   @ViewBuilder
   private var content: some View {
     if let design = model.snapshot.design {
+      Section {
+        DesignSlider(
+          title: "Header size",
+          readout: designPercent(design.spacing.headerScale ?? 1),
+          value: designNumber(model, "spacing", "headerScale", fallback: 1, places: 2) {
+            $0.spacing.headerScale ?? 1
+          },
+          range: 0.25...1.5,
+          step: 0.05
+        )
+      } footer: {
+        Text("Adjust the space around your name and contact details. 100% is the original size.")
+      }
       Section {
         DesignChoiceRow(
           selected: design.header.type == "solid",

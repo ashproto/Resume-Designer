@@ -1,4 +1,5 @@
 import { experienceScalarWrite } from './changeApply.js';
+import { assertResumeData } from './resumeValidation.js';
 
 export const MAX_JOB_DESCRIPTION_BYTES = 64 * 1024;
 
@@ -320,9 +321,12 @@ export function createCompanionJobActions(deps) {
     return variant;
   }
 
-  async function analyzeJobFit({ resumeId, job, model: selectedModel }) {
+  async function analyzeJobFit({ resumeId, job, model: selectedModel, hooks }) {
     ensureAvailable();
-    const variant = selectedVariant(resumeId);
+    const variant = resumeId ? selectedVariant(resumeId) : null;
+    if (!variant && (!deps.getUserProfile?.() || deps.hasProfileData?.() === false)) {
+      throw actionError(400, 'profile_empty', 'Add your career details to your profile in On Paper first.');
+    }
     const normalizedJob = normalizeJob(job);
     const settings = deps.getSettings();
     const model = selectedModel || modelFor(settings, 'analysisModel', deps.getDefaultModelId());
@@ -330,20 +334,20 @@ export function createCompanionJobActions(deps) {
     try {
       result = await deps.analyzeResumeDataAgainstJobs(
         model,
-        structuredClone(variant.data),
+        structuredClone(variant?.data ?? { profile: deps.getUserProfile() }),
         [normalizedJob],
-        { reasoningEffort: settings?.analysisReasoning || 'medium' },
+        { reasoningEffort: settings?.analysisReasoning || 'medium', concise: true, ...(hooks ? { hooks } : {}) },
       );
     } catch (error) {
       if (error?.code) throw error;
       throw actionError(502, 'ai_failed', error?.message || 'Job-fit analysis failed');
     }
     ensureAvailable();
-    return { resumeId: variant.id, analysis: validateAnalysis(result) };
+    return { resumeId: variant?.id ?? null, analysis: validateAnalysis(result) };
   }
 
   async function createTailoredResume(
-    { resumeId, requestId, job, model: selectedModel },
+    { resumeId, requestId, job, model: selectedModel, hooks },
     { assertAuthorized = () => {} } = {},
   ) {
     if (!REQUEST_ID_PATTERN.test(requestId ?? '')) {
@@ -388,29 +392,41 @@ export function createCompanionJobActions(deps) {
     }
 
     const operation = (async () => {
-      const base = selectedVariant(resumeId);
+      const base = resumeId ? selectedVariant(resumeId) : null;
       const settings = deps.getSettings();
       const model = selectedModel || modelFor(settings, 'tailorModel', deps.getDefaultModelId());
       let generated;
       try {
-        generated = await deps.generateResumeChangesForData(
+        generated = base ? await deps.generateResumeChangesForData(
           model,
           structuredClone(base.data),
-          'Tailor this resume for the target job while keeping every claim truthful.',
+          'Tailor this resume for the target job while keeping every claim truthful. Be concise: remove repetition, prefer short specific bullets, and include only relevant details.',
           null,
           { jobDescriptions: [normalizedJob] },
           'tailor',
-          { reasoningEffort: settings?.tailorReasoning || 'medium' },
-        );
+          { reasoningEffort: settings?.tailorReasoning || 'medium', ...(hooks ? { hooks } : {}) },
+        ) : await deps.generateResumeFromProfileForJob(model, normalizedJob, {
+          targetPages: 1, reasoningEffort: settings?.tailorReasoning || 'medium', ...(hooks ? { hooks } : {}),
+        });
       } catch (error) {
         if (error?.code) throw error;
         throw actionError(502, 'ai_failed', error?.message || 'Resume tailoring failed');
       }
 
-      const data = tailoredData(base.data, generated);
+      let data;
+      if (!base) {
+        try {
+          validateBoundedAiValue(generated?.resume);
+          if (typeof generated?.resume?.name !== 'string' || !generated.resume.name.trim()) throw new Error('Missing name');
+          data = deps.buildResumeData(generated.resume);
+          assertResumeData(data, { requireIdentity: true });
+        } catch {
+          throw actionError(502, 'invalid_ai_response', 'AI returned an invalid resume. Try again.');
+        }
+      } else data = tailoredData(base.data, generated);
       ensureAvailable();
       const baseName = [normalizedJob.title, normalizedJob.company].filter(Boolean).join(' — ')
-        || `${base.name} — Tailored`;
+        || `${base?.name || 'Profile'} — Tailored`;
       const name = deps.generateUniqueVariantName(baseName, deps.getVariants());
       // No await between this guard and the synchronous save/select block.
       // Once saved, finish durability and report success even if disconnected;

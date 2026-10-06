@@ -24,7 +24,10 @@ function defaultSendMessage(message) {
   return globalThis.chrome.runtime.sendMessage(message);
 }
 
-export function createRuntimeClient(sendMessage = defaultSendMessage) {
+export function createRuntimeClient(sendMessage = defaultSendMessage, {
+  onMessage = globalThis.chrome?.runtime?.onMessage,
+  createOperationId = () => globalThis.crypto.randomUUID(),
+} = {}) {
   async function request(message) {
     let response;
     try {
@@ -56,6 +59,22 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
     });
   }
 
+  async function requestWithProgress(message, onProgress) {
+    if (typeof onProgress !== 'function' || !onMessage?.addListener) return request(message);
+    const operationId = createOperationId();
+    const listener = (event) => {
+      if (event?.type === 'operation.progress' && event.operationId === operationId && event.progress) {
+        onProgress(event.progress);
+      }
+    };
+    onMessage.addListener(listener);
+    try {
+      return await request({ ...message, operationId });
+    } finally {
+      onMessage.removeListener(listener);
+    }
+  }
+
   return {
     getPrivacyConsent: () => request({ type: 'privacy.status' }),
     acceptPrivacyConsent: () => request({ type: 'privacy.accept', accepted: true }),
@@ -80,14 +99,14 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
       }
     },
     scanPage: () => request({ type: 'page.scan' }),
-    createMapping: (profileContextId, resumeId, descriptors, { job, model } = {}) => request({
+    createMapping: (profileContextId, resumeId, descriptors, { job, model, onProgress } = {}) => requestWithProgress({
       type: 'mapping.create',
       profileContextId,
       resumeId,
       descriptors,
       ...(job ? { job } : {}),
       ...(model ? { model } : {}),
-    }),
+    }, onProgress),
     fillPage: (profileContextId, resumeId, fields, reviewContext) => request({
       type: 'page.fill', profileContextId, resumeId, fields,
       ...(reviewContext ? { reviewContext } : {}),
@@ -104,12 +123,12 @@ export function createRuntimeClient(sendMessage = defaultSendMessage) {
       }
       return request(message);
     },
-    analyzeJobFit: ({ profileContextId, resumeId, job, model }) => request({
-      type: 'job.fit.analyze', profileContextId, resumeId, job, ...(model ? { model } : {}),
-    }),
-    createTailoredResume: ({ profileContextId, resumeId, requestId, job, model }) => request({
-      type: 'resume.tailor', profileContextId, resumeId, requestId, job, ...(model ? { model } : {}),
-    }),
+    analyzeJobFit: ({ profileContextId, resumeId, job, model, onProgress }) => requestWithProgress({
+      type: 'job.fit.analyze', profileContextId, ...(resumeId ? { resumeId } : {}), job, ...(model ? { model } : {}),
+    }, onProgress),
+    createTailoredResume: ({ profileContextId, resumeId, requestId, job, model, onProgress }) => requestWithProgress({
+      type: 'resume.tailor', profileContextId, ...(resumeId ? { resumeId } : {}), requestId, job, ...(model ? { model } : {}),
+    }, onProgress),
   };
 }
 

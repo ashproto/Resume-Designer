@@ -1528,3 +1528,48 @@ it('retains an application request committed before disconnect so re-pairing can
   expect(saved.size).toBe(1);
   expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/applications')).map(([, options]) => JSON.parse(options.body).requestId)).toEqual([pending.requestId, pending.requestId]);
 });
+
+describe('automatic in-flight connection recovery', () => {
+  const operationId = '550e8400-e29b-41d4-a716-446655440000';
+  it('wakes the already-paired app and rejoins the same operation without re-pairing', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    chromeApi.runtime.sendMessage = vi.fn(async () => {});
+    const context = { profileId: 'profile-1', profileContextId: 'context-1', resumes: [] };
+    let attempts = 0;
+    const bodies = [];
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/resumes')) return jsonResponse(context);
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/ai/tailored-resume')) {
+        bodies.push(JSON.parse(options.body));
+        if (++attempts === 1) throw new Error('Connection dropped');
+        return jsonResponse({ ...context, resume: { id: 'companion-same' } });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type: 'resume.tailor', operationId, requestId: operationId,
+      profileContextId: 'context-1', job: { description: 'Build useful software' } })).resolves.toMatchObject({ resume: { id: 'companion-same' } });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(chromeApi.tabs.create).toHaveBeenCalledWith({ url: 'resume-designer://companion/open?protocolVersion=2', active: true });
+    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'operation.progress', operationId,
+      progress: expect.objectContaining({ stage: 'reconnecting' }) }));
+    expect(chromeApi.storage.session.set).not.toHaveBeenCalled();
+  });
+
+  it('does not resume AI after recovery reveals a different profile context', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    let woke = false;
+    let calls = 0;
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) return jsonResponse({ profileId: 'profile-1', profileContextId: woke ? 'context-2' : 'context-1', resumes: [] });
+      if (url.endsWith('/health')) { woke = true; return jsonResponse(HEALTH); }
+      if (url.endsWith('/ai/job-fit')) { calls++; throw new Error('Connection dropped'); }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type: 'job.fit.analyze', operationId, profileContextId: 'context-1', job: { description: 'Build software' } })).rejects.toMatchObject({ code: 'profile_changed' });
+    expect(calls).toBe(1);
+  });
+});

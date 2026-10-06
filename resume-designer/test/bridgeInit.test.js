@@ -29,12 +29,13 @@ vi.mock('../src/persistence.js', () => ({
 vi.mock('../src/applications.js', () => ({ addApplication: vi.fn(), getCompanionApplication: vi.fn(() => null) }));
 vi.mock('../src/learnedAnswers.js', () => ({ getAllLearnedAnswers: vi.fn(), saveLearnedAnswer: vi.fn() }));
 vi.mock('../src/aiService.js', () => ({
-  analyzeResumeDataAgainstJobs: vi.fn(), completeForBridge: vi.fn(),
-  generateResumeChangesForData: vi.fn(), getDefaultModelId: vi.fn(),
+  analyzeResumeDataAgainstJobs: vi.fn(), checkProfileHasData: vi.fn(), completeForBridge: vi.fn(),
+  generateResumeChangesForData: vi.fn(), generateResumeFromProfileForJob: vi.fn(), getDefaultModelId: vi.fn(),
   getAllModels: vi.fn(), getCustomModels: vi.fn(), getSelectableChatModels: vi.fn(),
   isSafeModelSlug: vi.fn(), validateModelId: vi.fn(),
 }));
 vi.mock('../src/companionJobActions.js', () => ({ createCompanionJobActions: () => ({}) }));
+vi.mock('../src/onboardingLogic.js', () => ({ buildResumeData: vi.fn() }));
 vi.mock('../src/variantManager.js', () => ({ loadVariant: vi.fn() }));
 vi.mock('../src/pdf.js', () => ({ exportVariantPdfBase64: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }));
