@@ -25,10 +25,13 @@ Browser checks at 320, 390, 540, 800, 880, 1000, and 1280px showed zero horizont
 overflow and zero branch endpoint offset. The previous SVG missed the outer
 role centers by 70px at 1280px and 219px at 800px. Desktop/phone screenshots,
 light/dark logo loading, section order, and internal links were checked.
-The owner approved this website update for publication through a website-only
-PR directly into `main`, using `skip-build` to avoid a desktop/iOS release.
-Normal CI and Codex review must pass before a history-preserving merge commit.
-GitHub Pages deployment and live-file verification follow the merge.
+The owner approved merging this website update into `next` through PR #150,
+using `skip-build` to avoid an unchanged desktop/iOS build. The initial direct
+`main` attempt passed Codex review but inherited existing dependency-audit and
+Rust compatibility failures; those fixes are already present on `next`.
+Normal CI and Codex review must pass against the updated base before a
+history-preserving merge commit. GitHub Pages will deploy the website when
+`next` is subsequently promoted to `main`; that app release remains separate.
 
 Companion requires On Paper for macOS, macOS 14.4+, Chrome 116+, and an OpenRouter
 key for its AI workflows. Desktop Windows availability does not establish
