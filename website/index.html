@@ -237,12 +237,16 @@ a{color:inherit;text-decoration:none;}
 
 /* ===== NAV ===== */
 .nav{display:flex;align-items:center;justify-content:space-between;padding:22px 28px;max-width:1040px;margin:0 auto;}
-/* nowrap: the wordmark is two words, so a line break splits it into "On" /
-   "Paper" — two ordinary words with nothing left to signal they're one name.
-   Broke at <=360px (a very common Android width). Text is only ~53px wide, so
-   this can't overflow. Matches the app header's own whitespace-nowrap. */
-.brand{display:flex;align-items:center;gap:11px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:19px;letter-spacing:-0.01em;white-space:nowrap;}
-.mark{width:34px;height:34px;border-radius:9px;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+/* Approved outlined wordmark; keep its proportions in both themes. */
+.brand{display:inline-flex;flex:none;}
+.brand-logo{display:block;width:152px;height:40px;}
+.brand-logo-dark{display:none;}
+:root[data-theme="dark"] .brand-logo-light{display:none;}
+:root[data-theme="dark"] .brand-logo-dark{display:block;}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme]) .brand-logo-light{display:none;}
+  :root:not([data-theme]) .brand-logo-dark{display:block;}
+}
 .nav-links{display:flex;align-items:center;gap:24px;font-size:14px;font-weight:500;}
 .nav-links a.lnk{color:var(--ink);opacity:.72;transition:opacity .15s;}
 .nav-links a.lnk:hover{opacity:1;}
@@ -312,7 +316,7 @@ a{color:inherit;text-decoration:none;}
 .fcard.big p{color:var(--on-band-muted);}
 .fcard.acid p{color:rgba(255,255,255,.9);}
 /* fan-out illustration inside the big band card */
-.fanout{margin-top:30px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;}
+.fanout{position:relative;margin-top:30px;display:grid;grid-template-columns:148px minmax(180px,1fr);align-items:center;column-gap:clamp(24px,5vw,80px);}
 .fanout .master{display:flex;flex-direction:column;gap:8px;border:1.5px solid var(--band-line);background:var(--band-fill);border-radius:14px;padding:16px 18px;min-width:140px;}
 .fanout .master .mlabel{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--on-band-faint);}
 .fanout .master .mname{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:18px;color:var(--on-band);line-height:1.05;}
@@ -321,9 +325,9 @@ a{color:inherit;text-decoration:none;}
 .fanout .master .mrows i:nth-child(1){width:88%;}
 .fanout .master .mrows i:nth-child(2){width:70%;}
 .fanout .master .mrows i:nth-child(3){width:80%;}
-.fanout .lines{align-self:stretch;min-width:46px;}
-.fanout .lines svg{display:block;width:100%;height:100%;}
-.fanout .variants{display:flex;flex-direction:column;gap:10px;}
+.fanout-lines{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;}
+.fanout-lines path{fill:none;stroke:var(--band-line);stroke-width:2;}
+.fanout .variants{display:flex;flex-direction:column;gap:10px;justify-self:end;max-width:100%;}
 .fanout .vchip{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1.5px solid var(--band-line);border-radius:999px;padding:9px 9px 9px 15px;background:var(--band-fill);}
 .fanout .vchip .vname{font-size:13.5px;font-weight:600;color:var(--on-band);white-space:nowrap;}
 .fanout .vchip .vtag{display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;flex-shrink:0;color:#fff;}
@@ -332,9 +336,9 @@ a{color:inherit;text-decoration:none;}
 .fanout .vchip:nth-child(3) .vtag{background:var(--panel-acid);}
 @media (max-width:520px){
   .fanout{grid-template-columns:1fr;gap:14px;}
-  .fanout .lines{display:none;}
-  .fanout .master{min-width:0;}
-  .fanout .vchip{justify-content:flex-start;}
+  .fanout .master{min-width:0;width:160px;max-width:100%;}
+  .fanout .variants{margin-left:32px;justify-self:stretch;}
+  .fanout .vchip .vname{white-space:normal;}
 }
 .feat-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:18px;}
 .feat-row .fcard h3{font-size:21px;}
@@ -369,6 +373,44 @@ a{color:inherit;text-decoration:none;}
 .diff-actions .ya:hover{filter:brightness(1.06);}
 .diff-actions .na{background:transparent;border-color:var(--line-strong);color:var(--ink);}
 .diff-actions .na:hover{background:var(--ink);color:var(--paper);}
+
+/* ===== COMPANION: OPTIONAL CHROME ADD-ON ===== */
+.companion-intro{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:40px;align-items:end;}
+.companion-intro .sec-lead{max-width:560px;}
+.companion-install .btn{justify-content:center;}
+.companion-requirements{font-size:13px;color:var(--muted-2);line-height:1.6;margin-top:15px;max-width:350px;}
+.companion-requirements a{text-decoration:underline;text-underline-offset:3px;}
+.companion-diagram{margin:34px 0 0;padding:32px;border:1.5px solid var(--band);border-radius:16px;background:var(--band);color:var(--on-band);}
+.companion-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:36px;list-style:none;padding:0;margin:0;}
+.companion-flow-step{position:relative;min-width:0;display:flex;flex-direction:column;padding:22px;border:1.5px solid var(--band-line);border-radius:14px;background:var(--band-fill);}
+.companion-flow-step:not(:last-child)::after{content:"";position:absolute;left:calc(100% + 8px);top:50%;width:22px;border-top:2px solid var(--band-line);}
+.companion-flow-step:not(:last-child)::before{content:"";position:absolute;left:calc(100% + 23px);top:calc(50% - 3px);width:7px;height:7px;border-top:2px solid var(--band-line);border-right:2px solid var(--band-line);transform:rotate(45deg);}
+.companion-flow-label{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--on-band-faint);}
+.companion-flow-icon{display:flex;align-items:center;justify-content:center;width:44px;height:44px;margin:20px 0 16px;border:1.5px solid var(--band-line);border-radius:11px;color:var(--on-band);}
+.companion-flow-step:nth-child(2) .companion-flow-icon{background:var(--panel-cobalt);border-color:var(--panel-cobalt);color:#fff;}
+.companion-flow-step:nth-child(3) .companion-flow-icon{background:var(--panel-acid);border-color:var(--panel-acid);color:#fff;}
+.companion-flow-step h3{font-size:22px;line-height:1.08;margin-bottom:11px;}
+.companion-flow-step p{font-size:14px;line-height:1.55;color:var(--on-band-muted);}
+.companion-diagram figcaption{display:flex;align-items:flex-start;gap:10px;border-top:1px solid var(--band-line);padding-top:22px;margin-top:26px;font-size:14px;line-height:1.55;color:var(--on-band-muted);}
+.companion-diagram figcaption svg{flex:none;margin-top:2px;color:var(--acid-2);}
+.companion-diagram figcaption strong{color:var(--on-band);}
+.companion-tailor{margin-top:19px;font-size:14px;line-height:1.6;color:var(--muted-2);max-width:700px;}
+.hero-companion{margin-top:18px;font-size:14px;color:var(--muted-2);}
+.hero-companion a{color:var(--cobalt);text-decoration:underline;text-underline-offset:3px;}
+@media (max-width:880px){
+  .companion-intro{grid-template-columns:1fr;gap:24px;}
+  .companion-requirements{max-width:500px;}
+  .companion-diagram{padding:24px;}
+  .companion-flow-step{padding:18px;}
+  .companion-flow-step h3{font-size:20px;}
+}
+@media (max-width:700px){
+  .companion-flow{grid-template-columns:1fr;gap:34px;}
+  .companion-flow-step{padding:20px;}
+  .companion-flow-icon{margin:14px 0 12px;}
+  .companion-flow-step:not(:last-child)::after{left:50%;top:calc(100% + 8px);width:0;height:19px;border-top:none;border-left:2px solid var(--band-line);}
+  .companion-flow-step:not(:last-child)::before{left:calc(50% - 3px);top:calc(100% + 20px);transform:rotate(135deg);}
+}
 
 /* ===== DOWNLOAD ===== */
 .dl-band{margin-top:78px;background:var(--band);color:var(--on-band);border-radius:20px;padding:54px 44px;position:relative;overflow:hidden;}
@@ -432,8 +474,7 @@ a{color:inherit;text-decoration:none;}
 /* ===== FOOTER ===== */
 .foot{margin-top:70px;border-top:2px solid var(--line-strong);padding:40px 0 50px;}
 .foot-top{display:flex;align-items:flex-start;justify-content:space-between;gap:30px;flex-wrap:wrap;}
-.foot .display{font-size:52px;letter-spacing:-0.03em;}
-.foot .display .em{color:var(--acid);font-style:italic;}
+.foot-brand .brand-logo{width:243px;height:64px;max-width:100%;}
 .foot-tagline{margin-top:18px;font-size:14px;color:var(--muted-3);max-width:320px;line-height:1.55;}
 .foot-links{display:flex;flex-direction:column;gap:11px;font-size:14.5px;font-weight:500;}
 .foot-links a{display:inline-flex;align-items:center;gap:8px;opacity:.78;transition:opacity .15s, color .15s;}
@@ -446,12 +487,18 @@ a{color:inherit;text-decoration:none;}
   .hero-grid,.feat-grid,.feat-row,.dl-grid,.guides,.faq-grid,.split,.foot-top,.diff-wrap{grid-template-columns:1fr;}
   .diff-wrap{gap:34px;}
   .fcard.big{grid-row:auto;}
-  .sec-h,.foot .display,.diff-text h2{font-size:32px;}
+  .sec-h,.diff-text h2{font-size:32px;}
   .nav-links a.lnk{display:none;}
   .nav-links{gap:14px;}
   .dl-band,.oss,.comm{padding:34px 26px;}
   .shot-frame{box-shadow:10px 10px 0 var(--cobalt);}
   .diff-card{box-shadow:10px 10px 0 var(--acid);}
+}
+@media (max-width:480px){
+  .nav{padding:20px;gap:12px;}
+  .brand-logo{width:114px;height:30px;}
+  .nav-links{gap:8px;}
+  .nav-cta{font-size:13px;padding:9px 11px;gap:5px;}
 }
 </style>
 </head>
@@ -459,20 +506,19 @@ a{color:inherit;text-decoration:none;}
   <h1 class="sr-only">On Paper — a private career workspace for resumes and job applications, for macOS and Windows.</h1>
 
   <nav class="nav">
-    <div class="brand">
-      <span class="mark" aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 3h8l4 4v14H6z" stroke="var(--paper)" stroke-width="2" stroke-linejoin="round"/><path d="M13 3v5h5" stroke="var(--acid)" stroke-width="2" stroke-linejoin="round"/><path d="M9 13h6M9 17h4" stroke="var(--paper)" stroke-width="2" stroke-linecap="round"/></svg>
-      </span>
-      On Paper
-    </div>
+    <a class="brand" href="#" aria-label="On Paper home">
+      <img class="brand-logo brand-logo-light" src="assets/on-paper-logo.svg" width="152" height="40" alt="On Paper">
+      <img class="brand-logo brand-logo-dark" src="assets/on-paper-logo-reversed.svg" width="152" height="40" alt="On Paper">
+    </a>
     <div class="nav-links">
       <a class="lnk" href="#features">Features</a>
       <a class="lnk" href="#download">Download</a>
+      <a class="lnk" href="#companion">Companion</a>
       <a class="lnk" href="#guides">Guides</a>
       <a class="lnk" href="https://github.com/ashproto/Resume-Designer">GitHub</a>
       <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch between light and dark theme">
         <svg class="ico-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <svg class="ico-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 14.5A8 8 0 119.5 4a6.5 6.5 0 0010.5 10.5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        <svg class="ico-moon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.9 13A9 9 0 1 1 11 3.1 7 7 0 0 0 20.9 13Z"/></svg>
       </button>
       <a class="nav-cta" href="https://github.com/ashproto/Resume-Designer/releases/latest">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -498,6 +544,7 @@ a{color:inherit;text-decoration:none;}
               See how it works
             </a>
           </div>
+          <p class="hero-companion">Already have On Paper? <a href="#companion">Bring it to Chrome →</a></p>
         </div>
         <div class="hero-side">
           <div class="stat"><div class="n">11</div><div class="l">distinct resume layouts</div></div>
@@ -533,13 +580,9 @@ a{color:inherit;text-decoration:none;}
               <span class="mname">Your full<br>history</span>
               <span class="mrows"><i></i><i></i><i></i></span>
             </div>
-            <div class="lines">
-              <svg viewBox="0 0 46 120" preserveAspectRatio="none" fill="none">
-                <path d="M0 60 C 24 60, 24 22, 46 22" stroke="var(--band-line)" stroke-width="2"/>
-                <path d="M0 60 C 24 60, 24 60, 46 60" stroke="var(--band-line)" stroke-width="2"/>
-                <path d="M0 60 C 24 60, 24 98, 46 98" stroke="var(--band-line)" stroke-width="2"/>
-              </svg>
-            </div>
+            <svg class="fanout-lines" aria-hidden="true" focusable="false">
+              <path/><path/><path/>
+            </svg>
             <div class="variants">
               <div class="vchip">
                 <span class="vname">Product designer</span>
@@ -692,9 +735,60 @@ a{color:inherit;text-decoration:none;}
       </div>
     </section>
 
+    <!-- COMPANION: OPTIONAL ADD-ON, AFTER THE DESKTOP APP DOWNLOAD -->
+    <section class="sec" id="companion" aria-labelledby="companion-title">
+      <div class="sec-num">04 / Optional Chrome companion</div>
+      <div class="companion-intro">
+        <div>
+          <h2 class="sec-h" id="companion-title">Bring your resume<br>to the <span class="blue">application</span>.</h2>
+          <p class="sec-lead">Already using On Paper? Add Companion to Chrome to carry your resume into job applications, draft thoughtful answers, and spend less time retyping.</p>
+        </div>
+        <div class="companion-install">
+          <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/on-paper-companion/keggfbelidgpjiapcbgkjidenhdjmega">
+            Add to Chrome
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m0 0l-6-6m6 6l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <p class="companion-requirements">Requires <a href="#download">On Paper for macOS</a>, macOS 14.4+ and Chrome 116+. Keep the app open while using Companion. AI features use your own OpenRouter key.</p>
+        </div>
+      </div>
+      <figure class="companion-diagram">
+        <ol class="companion-flow" aria-label="From your resume to your application">
+          <li class="companion-flow-step">
+            <span class="companion-flow-label">On Paper app</span>
+            <span class="companion-flow-icon" aria-hidden="true">
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5M9 12h6M9 16h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <h3>Choose your resume</h3>
+            <p>Use a resume you’ve shaped for the role in On Paper.</p>
+          </li>
+          <li class="companion-flow-step">
+            <span class="companion-flow-label">Companion in Chrome</span>
+            <span class="companion-flow-icon" aria-hidden="true">
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none"><path d="M4 6l2 2 3-4M12 6h8M4 14l2 2 3-4M12 14h8M12 20h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <h3>Review every answer</h3>
+            <p>Check your details and make each AI draft your own.</p>
+          </li>
+          <li class="companion-flow-step">
+            <span class="companion-flow-label">Job application</span>
+            <span class="companion-flow-icon" aria-hidden="true">
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M3 8h18M7 12h4M7 16h4M14 14l2 2 3-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <h3>Fill the application</h3>
+            <p>Fill compatible fields and attach your resume PDF.</p>
+          </li>
+        </ol>
+        <figcaption>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l8 3v6c0 4-3 7-8 9-5-2-8-5-8-9V6zM8 12l3 3 5-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span><strong>You make the final call.</strong> Sensitive questions stay yours to answer. Companion never submits an application for you.</span>
+        </figcaption>
+      </figure>
+      <p class="companion-tailor">Found a new role? Bring it into On Paper to assess your fit and tailor a resume for that opportunity.</p>
+    </section>
+
     <!-- GUIDES -->
     <section class="sec" id="guides">
-      <div class="sec-num">04 / Set up in minutes</div>
+      <div class="sec-num">05 / Set up in minutes</div>
       <h2 class="sec-h">Two short setups. Then you're <span class="blue">writing</span>.</h2>
 
       <div class="guides">
@@ -728,7 +822,7 @@ a{color:inherit;text-decoration:none;}
 
     <!-- FAQ -->
     <section class="sec">
-      <div class="sec-num">05 / Questions</div>
+      <div class="sec-num">06 / Questions</div>
       <h2 class="sec-h">The short answers.</h2>
       <div class="faq-grid">
         <div class="faq">
@@ -741,7 +835,7 @@ a{color:inherit;text-decoration:none;}
         </div>
         <div class="faq">
           <div class="q">Do I need the AI?</div>
-          <div class="a">No. The AI assistant is entirely optional. Every other feature — layouts, import, export, variants — works fully without a key.</div>
+          <div class="a">No. You can create and edit resumes, choose layouts, and export PDFs without AI. Companion’s autofill suggestions, answer drafts, fit analysis, and resume tailoring use your own OpenRouter key.</div>
         </div>
         <div class="faq">
           <div class="q">Wasn't this called Resume Designer?</div>
@@ -749,7 +843,7 @@ a{color:inherit;text-decoration:none;}
         </div>
         <div class="faq">
           <div class="q">Which platforms?</div>
-          <div class="a">A native desktop app for macOS and Windows. There's also a browser build, but it isn't hosted anywhere — you run it yourself from source.</div>
+          <div class="a">The desktop app is available for macOS and Windows. Companion currently supports Chrome on macOS only and requires the On Paper desktop app to be open. A browser build of On Paper is also available to run from source.</div>
         </div>
       </div>
     </section>
@@ -791,7 +885,10 @@ a{color:inherit;text-decoration:none;}
     <footer class="foot">
       <div class="foot-top">
         <div>
-          <div class="display">On<br><span class="em">Paper</span></div>
+          <a class="brand foot-brand" href="#" aria-label="On Paper home">
+            <img class="brand-logo brand-logo-light" src="assets/on-paper-logo.svg" width="243" height="64" alt="On Paper">
+            <img class="brand-logo brand-logo-dark" src="assets/on-paper-logo-reversed.svg" width="243" height="64" alt="On Paper">
+          </a>
           <p class="foot-tagline">A private career workspace for resumes and job applications — one profile, shaped for each role, on your own machine.</p>
         </div>
         <div class="foot-links">
@@ -811,6 +908,7 @@ a{color:inherit;text-decoration:none;}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4l7 3v5c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
             CC BY-NC-SA 4.0 license
           </a>
+          <a href="#companion">Companion for Chrome</a>
           <a href="privacy.html">Privacy policy</a>
         </div>
       </div>
@@ -866,6 +964,54 @@ a{color:inherit;text-decoration:none;}
           if (!root.getAttribute('data-theme')) syncIcons();
         });
       }
+    })();
+
+    (function () {
+      var diagram = document.querySelector('.fanout');
+      if (!diagram) return;
+      var master = diagram.querySelector('.master');
+      var variants = diagram.querySelector('.variants');
+      var chips = Array.from(variants.children);
+      var svg = diagram.querySelector('.fanout-lines');
+      var paths = svg.querySelectorAll('path');
+      var pending = false;
+
+      function drawBranches() {
+        pending = false;
+        var bounds = diagram.getBoundingClientRect();
+        if (!bounds.width || !bounds.height) return;
+        var source = master.getBoundingClientRect();
+        var stacked = variants.getBoundingClientRect().top >= source.bottom;
+        var x = stacked ? source.left - bounds.left + 16 : source.right - bounds.left;
+        var y = stacked ? source.bottom - bounds.top : source.top - bounds.top + source.height / 2;
+        svg.setAttribute('viewBox', '0 0 ' + bounds.width + ' ' + bounds.height);
+        chips.forEach(function (chip, index) {
+          var target = chip.getBoundingClientRect();
+          var tx = target.left - bounds.left;
+          var ty = target.top - bounds.top + target.height / 2;
+          var middle = (x + tx) / 2;
+          var d = stacked
+            ? 'M ' + x + ' ' + y + ' L ' + x + ' ' + (ty - 12) + ' Q ' + x + ' ' + ty + ' ' + tx + ' ' + ty
+            : 'M ' + x + ' ' + y + ' C ' + middle + ' ' + y + ' ' + middle + ' ' + ty + ' ' + tx + ' ' + ty;
+          paths[index].setAttribute('d', d);
+        });
+      }
+
+      function scheduleDraw() {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(drawBranches);
+      }
+
+      // Measure the cards themselves so wrapping, font loading and resizing
+      // cannot move the labels away from their branch endpoints.
+      if ('ResizeObserver' in window) {
+        var observer = new ResizeObserver(scheduleDraw);
+        [diagram, master, variants].concat(chips).forEach(function (node) { observer.observe(node); });
+      }
+      window.addEventListener('resize', scheduleDraw);
+      if (document.fonts) document.fonts.ready.then(scheduleDraw);
+      scheduleDraw();
     })();
   </script>
 </body>
