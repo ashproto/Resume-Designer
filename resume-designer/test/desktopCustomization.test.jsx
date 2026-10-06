@@ -61,33 +61,41 @@ it.each(layouts)('renders saved contact order in %s with intact inline editing p
   }, layout);
   const contacts = [...document.querySelectorAll('.resume-header [data-editable^="contact."]')];
   expect(contacts.map(el => el.getAttribute('data-editable'))).toEqual(['contact.phone', 'contact.linkedin', 'contact.email', 'contact.location']);
-  expect(contacts[1].closest('a[href]')).toBeNull();
+  expect(contacts[0].getAttribute('href')).toBe('tel:123');
+  expect(contacts[1].getAttribute('href')).toBe('https://linkedin.com/in/alex');
+  expect(contacts[2].getAttribute('href')).toBe('mailto:alex@example.com');
+  expect(contacts[3].tagName).toBe('SPAN');
 });
 
-it('edits reordered and additional website contacts without triggering native external navigation', () => {
+it('keeps reordered and additional website links editable', () => {
   const data = { name: 'Alex', contact: { portfolio: 'https://alex.example', github: 'https://github.com/alex' }, contactOrder: ['portfolio'], sections: [] };
   store.setData(data, true);
   const resume = document.querySelector('.resume');
   resume.id = 'resume';
   resume.innerHTML = renderResumeForLayout(data, 'sidebar');
-  // The native host intercepts links in capture, before inline editing sees the click.
-  const openExternal = vi.fn();
-  const nativeClick = event => {
-    if (event.target.closest('a[href]')) openExternal();
-  };
-  document.addEventListener('click', nativeClick, true);
-  try {
-    initInlineEditor();
-    for (const field of ['portfolio', 'github']) {
-      const contact = resume.querySelector(`[data-editable="contact.${field}"]`);
-      fireEvent.click(contact);
-      expect(contact.contentEditable).toBe('true');
-      expect(openExternal).not.toHaveBeenCalled();
-      commitActiveInlineEdit();
-    }
-  } finally {
-    document.removeEventListener('click', nativeClick, true);
+  initInlineEditor();
+  for (const field of ['portfolio', 'github']) {
+    const contact = resume.querySelector(`[data-editable="contact.${field}"]`);
+    expect(contact.tagName).toBe('A');
+    expect(fireEvent.click(contact)).toBe(false);
+    expect(contact.contentEditable).toBe('true');
+    commitActiveInlineEdit();
   }
+});
+
+it('links website addresses safely while preserving contact text', () => {
+  document.querySelector('.resume').innerHTML = renderResumeForLayout({ name: 'Alex', sections: [], contactOrder: [], contact: {
+    portfolio: 'alex.example/work?view=all&sort=new', github: 'javascript:alert(1)',
+    linkedin: 'https://linkedin.com/in/alex', twitter: '@alex.design', location: 'https://example.com',
+    email: 'alex@example.com" onclick="alert(1)',
+  } }, 'compact');
+  const field = name => document.querySelector(`[data-editable="contact.${name}"]`);
+  expect(field('portfolio').getAttribute('href')).toBe('https://alex.example/work?view=all&sort=new');
+  expect(field('portfolio').textContent).toBe('alex.example/work?view=all&sort=new');
+  expect(field('linkedin').getAttribute('href')).toBe('https://linkedin.com/in/alex');
+  for (const name of ['github', 'twitter', 'location']) expect(field(name).tagName).toBe('SPAN');
+  expect(field('email').getAttribute('href')).toBe('mailto:alex@example.com" onclick="alert(1)');
+  expect(field('email').hasAttribute('onclick')).toBe(false);
 });
 
 it.each(layouts)('shows newly populated social contact fields in %s without requiring a reorder first', layout => {
@@ -96,7 +104,8 @@ it.each(layouts)('shows newly populated social contact fields in %s without requ
   } }, layout);
   const text = document.querySelector('.resume-header').textContent;
   for (const value of ['linkedin.com/in/alex', 'github.com/alex', '@alex', '@alex.design']) expect(text).toContain(value);
-  expect(document.querySelector('[data-editable="contact.github"]').closest('a[href]')).toBeNull();
+  expect(document.querySelector('[data-editable="contact.github"]').getAttribute('href')).toBe('https://github.com/alex');
+  expect(document.querySelector('[data-editable="contact.instagram"]').closest('a[href]')).toBeNull();
 });
 
 it('normalizes incomplete saved contact orders without dropping, duplicating or injecting fields', () => {

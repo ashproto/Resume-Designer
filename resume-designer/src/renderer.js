@@ -459,12 +459,27 @@ function renderStackedVerticalSections(data) {
   return html;
 }
 
+function contactHref(field, value) {
+  const text = value.trim();
+  if (field === 'email') return `mailto:${text}`;
+  if (field === 'phone') return `tel:${text}`;
+  if (field === 'location' || text.startsWith('@')) return '';
+  try {
+    const url = new URL(/^[a-z][a-z\d+.-]*:/i.test(text) ? text : `https://${text}`);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname.includes('.')
+      || url.username || url.password) return '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
 function renderOrderedContact(contact, order, separator = '') {
   return getContactOrder(order).filter(field => contact?.[field]).map(field => {
     const value = String(contact[field]);
     const attributes = `class="contact-item ${field}" data-editable="contact.${field}"`;
-    // Contact values are editable text, like the default sidebar header. An
-    // anchor lets the native host open a browser before the editor sees a tap.
+    const href = contactHref(field, value);
+    if (href) return `<a ${attributes} href="${escapeHtmlRaw(href)}">${escapeHtml(value)}</a>`;
     return `<span ${attributes}>${escapeHtml(value)}</span>`;
   }).join(separator);
 }
