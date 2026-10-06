@@ -1,5 +1,7 @@
 # Chrome Web Store release operations
 
+Latest operational status: [October 5 launch and automation setup](companion-launch-2026-10-05.md). Older upload and review statuses below are historical snapshots.
+
 This document is the operational source of truth for shipping the On Paper Companion extension. The workflow is designed so Store credentials
 never reach pull-request code and an extension that requires a new bridge
 capability is submitted only after the corresponding production desktop
