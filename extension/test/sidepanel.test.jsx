@@ -1666,6 +1666,25 @@ describe('focused application workspace', () => {
     expect(button('Retry loading models')).toBeTruthy();
     expect(button('Prepare autofill review').disabled).toBe(false);
   });
+
+  it('can clear an override after reconnecting with an unavailable model catalog', async () => {
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors: [descriptor('name')], page: {} })),
+      createMapping: vi.fn().mockRejectedValueOnce(new RuntimeMessageError({ message: 'Connection interrupted', code: 'app_timeout' })).mockResolvedValue({ fields: [], needs_human: [] }),
+    });
+    await renderApp(client, { heartbeatMs: 0 });
+    await chooseModel('provider/test-model');
+    client.getAIModels.mockRejectedValueOnce(new Error('Model catalog unavailable'));
+    await click(button('Prepare autofill review'));
+    await click(button('Check connection again'));
+    await waitFor(() => expect(container.textContent).toContain('Model catalog unavailable'));
+    expect(labelled('AI model').disabled).toBe(false);
+    await click(labelled('AI model'));
+    await click([...container.querySelectorAll('[role="option"]')].find((item) => item.textContent.includes('Use app default')));
+    expect(container.textContent).not.toContain('Selected model: provider/test-model');
+    await click(button('Prepare autofill review'));
+    expect(client.createMapping.mock.calls.at(-1)[3]).not.toHaveProperty('model');
+  });
 });
 
 

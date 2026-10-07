@@ -1367,7 +1367,7 @@ function Workspace({
           defaultModelId={modelCatalog.defaults[workflow === 'autofill' ? 'mapping' : 'tailoring'] || ''}
           defaultModelName={defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring')}
           onChange={handleModelChange}
-          disabled={workflowBusy || modelCatalog.state !== 'ready' || modelCatalog.models.length === 0}
+          disabled={workflowBusy || modelCatalog.state === 'loading' || (!selectedModel && (modelCatalog.state !== 'ready' || modelCatalog.models.length === 0))}
           loading={modelCatalog.state === 'loading'}
           error={modelCatalog.error}
         />
