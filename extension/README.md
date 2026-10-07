@@ -10,7 +10,7 @@ The first Unlisted Store release supports **macOS 14.4 or later only**. Windows 
 - A compatible signed On Paper for macOS release installed for the first Store release. The extension can open it when an
   app-backed action needs it; the app must then remain running and unlocked
   while that action completes.
-- A resume variant in On Paper.
+- A resume variant in On Paper for autofill; fit analysis and tailoring can start from your full profile.
 - Node.js `^20.19.0`, `^22.13.0`, or `>=24` to build from source.
 - Python 3 (optional; only needed to serve the local test fixtures).
 - For AI mapping, your own OpenRouter account/key and an available model configured in On Paper. Provider charges may apply; AI credits are not included. The key stays in the app and is never copied into the extension.
@@ -135,7 +135,7 @@ Chrome clearing its session storage remove the pending identity.
 
 ## Review and fill an application
 
-1. Choose **Autofill**, then choose **Resume to fill from** and **AI model** within that workflow. The model picker initially shows the actual model configured in On Paper; choosing a different model applies to this companion session without changing app defaults. The API key stays in On Paper. If automatic fallback is enabled there, it still applies. A failed model-list request shows its cause and a retry action.
+1. Choose **Autofill**, then choose **Resume to fill from** and **AI model** within that workflow. The integrated model picker initially shows the app default. Click it and type a model name or provider to see live results; choose **Use app default** to return to your settings in On Paper. Choosing a different model applies to this companion session without changing app defaults. The API key stays in On Paper. If automatic fallback is enabled there, it still applies. A failed model-list request shows its cause and a retry action.
 2. In **Autofill**, click **Prepare autofill review**. The extension first scans the application for compact field descriptors and page context without sending raw HTML or the raw DOM. On Paper then uses the selected resume, active profile data, learned answers, and extracted job context to prepare suggestions. It drafts open-ended motivation and experience answers from those facts; unknown factual answers and sensitive questions remain manual. The button reports **Scanning application form…** and **Preparing field suggestions…**, then announces when the review is ready, including separate counts for on-page manual fields and unanswered editable fields.
 3. Review every item in descriptor order:
    - Edit text values inline; narrative answers have multiline editors.
@@ -152,26 +152,27 @@ Chrome clearing its session storage remove the pending identity.
 
 ## Analyze fit and create a tailored resume
 
-Switch to **Tailor resume**, then choose a **Source** and **AI model**. **My full profile** is the default: you can analyze fit and create a new resume before saving any other resume. Choose an existing resume as the source when you want to tailor that version. Results stay in this view; a successful resume returns to Autofill for review.
+Switch to **Tailor resume**, then choose a **Source** and **AI model**. **My full profile** is the default: you can analyze fit and create a new resume before saving any other resume. Choose an existing resume as the source when you want to tailor that version. Fit results and saved resumes stay in this view until you choose a next step.
 
 The scan also extracts conservative job context: structured `JobPosting`
 metadata or a known job-description container, never arbitrary page-body text.
-When a description cannot be found, paste it into the panel's job-description
-field.
+When a description cannot be found, open the job posting and choose **Check web page again**, or choose **Manually enter job description**. Checking again updates the captured details without running AI. Manual entry also works on pages that Chrome cannot read.
 
 - **Analyze fit** sends the selected source and job context to On Paper,
   which uses the selected model (or the app's analysis default) and its saved key. The panel shows the
   bounded match score, strengths, gaps, missing keywords, and recommendations.
 - **Create tailored resume** uses the selected model (or the app's tailoring default) to save
-  and select a new variant. Each click has a UUID idempotency key, so a retry
-  cannot create duplicates. If the application page still has the origin/path
-  and fingerprint that were scanned, the extension may prepare a fresh review
-  for the new variant. These job comparisons ignore query parameters and
-  fragments. Filling separately requires the reviewed tab and its exact full
-  address, including query parameters and fragments, to remain unchanged.
-  The full address stays temporarily in extension memory and is never stored,
-  logged, or sent to the desktop app or AI provider. It never fills that review
-  automatically or activates the site’s final Submit control.
+  and select a new variant. A retry of the same generation intent reuses its UUID
+  idempotency key. The saved-success card shows the actual first-page PDF thumbnail
+  and page count. **View in On Paper** opens that exact saved resume in the app.
+  These two actions need the updated desktop bridge; an older app shows update
+  guidance while the resume remains saved.
+- To use the new resume for an application, navigate to the application page,
+  choose **Prepare application autofill**, then **Prepare autofill review**.
+  Generation itself never scans or maps the page's fields. Preview or list-refresh
+  failures preserve the acknowledged saved result; **Try preview again** only
+  retries the preview. Filling requires a separate **Fill reviewed fields** action
+  and never activates the site's final application control.
 
 The captured-role card shows the title, company, and locations, with the
 description available in an expandable view. Fit results highlight the strongest
@@ -209,7 +210,7 @@ selection. Hidden fields and autocomplete search helpers are never filled.
 - V1 trusts the same-user local processes and host. Loopback binding plus the bearer token does not defend against a malicious local process impersonating On Paper on the fixed port, or against a compromised host.
 - The extension contains no OpenRouter key and makes no direct model request. AI calls go through the running app and its configured provider account.
 - Compact field labels, types, native options, and required flags reach the user's configured model together with the selected resume, active profile data, and that profile's learned answers. Labels and resume content are treated as untrusted data and cannot override the mapping instructions.
-- Raw application HTML and DOM nodes do not leave the page. The generated resume PDF returns through the authenticated loopback bridge only when a reviewed resume-file marker requires it.
+- Raw application HTML and DOM nodes do not leave the page. The generated resume PDF returns through the authenticated loopback bridge when a reviewed resume-file marker requires it; saved-success previews return only a small PNG of the first page.
 - Password inputs are never scanned, marked, proposed, saved, or filled, even if a stale field marker remains on a page.
 - The extension adds no account, telemetry, background job service, or remote companion backend. On supported Apple devices, saved resumes, profiles, answers, and application records can sync through the desktop app’s Apple CloudKit integration in your own iCloud account.
 - **Settings → Disconnect** contains the connection action; **Privacy** is in the panel footer.
@@ -286,6 +287,6 @@ The items below are intentionally manual release checks. Their presence is not a
 - [ ] While the app's PDF preview/export path is busy, attempt a resume-file fill; confirm no page mutation occurs, **Retry fill** appears, and retry uses the captured values.
 - [ ] Analyze fit with extracted job text and with the manual-description fallback; confirm results use the selected resume and the app's configured model/key.
 - [ ] Create a tailored resume; confirm exactly one new variant is saved and selected, the panel never auto-fills, and retrying the same request id does not duplicate it.
-- [ ] Change the application origin/path or job fingerprint while tailoring runs; confirm the old page context is not reused. With an unchanged origin/path and fingerprint, confirm any refreshed suggestions still require a new explicit Fill click.
+- [ ] Change the application origin/path or job fingerprint while tailoring runs; confirm the old page context is not reused. Confirm generation never starts an application scan or mapping, even if the posting contains search inputs. Explicitly navigate to the application page and prepare its review.
 - [ ] Stop On Paper and confirm disconnected/open/download guidance appears without exposing the token or silently running offline AI.
 - [ ] Include a labelled password input beside a supported field; confirm the password receives no field marker, never appears in review, and cannot be filled by a stale marker.

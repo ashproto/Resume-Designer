@@ -21,6 +21,8 @@ export const COMPANION_CAPABILITIES = Object.freeze([
   'pairing.revoke',
   'profile.context',
   'resume.pdf',
+  'resume.preview',
+  'resume.open',
   'ai.complete',
   'ai.progress',
   'ai.profile-source',
@@ -44,6 +46,7 @@ const importInProgress = () => json(503, {
 
 const isProfileSensitiveRequest = (method, path) => (
   (method === 'GET' && /^\/resumes(?:\/|$)/.test(path))
+  || (method === 'POST' && /^\/resumes\/[^/]+\/open$/.test(path))
   || (
     method === 'POST'
     && [
@@ -79,6 +82,7 @@ export function createBridgeRouter(deps) {
   let authorizationGeneration = 0;
   let pendingRevocations = 0;
   let saveTail;
+  let previewInFlight = false;
 
   async function persistMutation(write, message) {
     let rollback;
@@ -135,6 +139,7 @@ export function createBridgeRouter(deps) {
     }
 
     const token = deps.getToken();
+    const requestProfileContextId = deps.profileContextId;
     if (!token || authorization !== `Bearer ${token}`) {
       return json(401, { error: 'invalid or missing bearer token' });
     }
@@ -146,6 +151,16 @@ export function createBridgeRouter(deps) {
         throw Object.assign(new Error('pairing was revoked; connect again to continue'), {
           status: 401, code: 'unauthorized',
         });
+      }
+    };
+
+    const assertCurrentContext = () => {
+      assertAuthorized();
+      if (deps.writesSuspended?.()) {
+        throw Object.assign(new Error(importInProgress().body.error), { status: 503, code: 'profile_changed' });
+      }
+      if (!matchesProfileContext(requestProfileContextId, deps.profileContextId)) {
+        throw Object.assign(new Error(profileChanged().body.error), { status: 409, code: 'profile_changed' });
       }
     };
 
@@ -238,6 +253,42 @@ export function createBridgeRouter(deps) {
           filename: pdfFilename(variant.name),
           pdfBase64,
         });
+      }
+
+      const preview = method === 'GET' && path.match(/^\/resumes\/([^/]+)\/preview$/);
+      if (preview) {
+        const variant = findVariant(deps.getVariants(), preview[1]);
+        if (!variant) return json(404, { error: `no resume with id ${preview[1]}` });
+        assertCurrentContext();
+        if (previewInFlight) return json(503, { error: 'Another resume preview is being prepared. Try again in a moment.', code: 'bridge_busy' });
+        previewInFlight = true;
+        try {
+          const pdfBase64 = await deps.exportVariantPdf(variant.id);
+          assertCurrentContext();
+          const thumbnail = await deps.renderResumeThumbnail(pdfBase64);
+          assertCurrentContext();
+          return json(200, {
+            profileId: deps.profileId,
+            profileContextId: requestProfileContextId,
+            id: variant.id,
+            name: variant.name,
+            updatedAt: variant.updatedAt,
+            ...thumbnail,
+          });
+        } finally {
+          previewInFlight = false;
+        }
+      }
+
+      const open = method === 'POST' && path.match(/^\/resumes\/([^/]+)\/open$/);
+      if (open) {
+        if (!matchesProfileContext(parsed.profileContextId, deps.profileContextId)) return profileChanged();
+        const variant = findVariant(deps.getVariants(), open[1]);
+        if (!variant) return json(404, { error: `no resume with id ${open[1]}` });
+        assertCurrentContext();
+        await deps.openVariant(variant.id, { assertCurrentContext });
+        assertCurrentContext();
+        return json(200, { opened: true, profileId: deps.profileId, profileContextId: requestProfileContextId, id: variant.id });
       }
 
       let modelOptions = {};

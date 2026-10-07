@@ -5,6 +5,8 @@ import ReviewList from './ReviewList.jsx';
 import FitAnalysis from './FitAnalysis.jsx';
 import JobContext from './JobContext.jsx';
 import ProcessingView from './ProcessingView.jsx';
+import ModelPicker from './ModelPicker.jsx';
+import GeneratedResume from './GeneratedResume.jsx';
 import { buildFillPayload, buildReviewItems } from './reviewModel.js';
 import { runtimeClient } from './runtimeClient.js';
 import { isSensitiveDescriptor } from '../sensitivity.js';
@@ -159,7 +161,6 @@ function Workspace({
   const [selectedResumeId, setSelectedResumeId] = useState('');
   const [tailoringSourceId, setTailoringSourceId] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
-  const [modelSearch, setModelSearch] = useState('');
   const [modelCatalog, setModelCatalog] = useState({ state: 'loading', models: [], defaults: {}, autoFallback: false, error: '' });
   const [modelLoadAttempt, setModelLoadAttempt] = useState(0);
   const [workflow, setWorkflow] = useState('autofill');
@@ -188,6 +189,13 @@ function Workspace({
   const [fillAnnouncement, setFillAnnouncement] = useState('');
   const [jobDraft, setJobDraft] = useState(null);
   const [manualJobDescription, setManualJobDescription] = useState('');
+  const [manualJobEntry, setManualJobEntry] = useState(false);
+  const [generatedResume, setGeneratedResume] = useState(null);
+  const [resumePreview, setResumePreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+  const [openingResume, setOpeningResume] = useState(false);
+  const [resumeOpenError, setResumeOpenError] = useState(null);
   const [jobAction, setJobAction] = useState('idle');
   const [jobActionStatus, setJobActionStatus] = useState('');
   const [fitAnalysis, setFitAnalysis] = useState(null);
@@ -208,6 +216,11 @@ function Workspace({
   const applicationStorageQueue = useRef(Promise.resolve());
   const pairingGeneration = useRef(0);
   const pairingAttempt = useRef(null);
+  const resumeActionGeneration = useRef(0);
+  const activeProfileContext = useRef(connection.profileContextId);
+  activeProfileContext.current = connection.profileContextId;
+
+  useEffect(() => () => { resumeActionGeneration.current += 1; }, []);
 
   useEffect(() => {
     if (!fitAnalysis || jobAction !== 'idle') return;
@@ -298,6 +311,13 @@ function Workspace({
     setTitle('');
     setJobDraft(null);
     setManualJobDescription('');
+    setManualJobEntry(false);
+    resumeActionGeneration.current += 1;
+    setGeneratedResume(null);
+    setResumePreview(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+    setResumeOpenError(null);
     setFitAnalysis(null);
     setTailoringSourceId('');
     setJobActionStatus('');
@@ -683,8 +703,7 @@ function Workspace({
 
   function handleModelChange(event) {
     if (!beginOperation('model-change')) return;
-    setSelectedModel(event?.target?.value ?? '');
-    setModelSearch('');
+    setSelectedModel(typeof event === 'string' ? event : event?.target?.value ?? '');
     setFitAnalysis(null);
     setJobActionStatus('');
     tailoringRequest.current = null;
@@ -752,7 +771,10 @@ function Workspace({
         const matchesJobDraft = samePage(page, jobDraft);
         const job = jobFromPage(page, matchesJobDraft ? manualJobDescription : '');
         setJobDraft(page);
-        if (page.description || !matchesJobDraft) setManualJobDescription('');
+        if (page.description || !matchesJobDraft) {
+          setManualJobDescription('');
+          setManualJobEntry(false);
+        }
         setScanBusy(false);
 
         if (descriptors.length === 0) {
@@ -1050,30 +1072,109 @@ function Workspace({
     }
   }
 
-  async function scanJobForAction() {
+  async function scanJobForAction({ forcePage = false } = {}) {
+    // Manual entry is an explicit source choice and works even on pages that
+    // cannot be scraped. It is cleared when a different application is scanned.
+    if (manualJobEntry && !forcePage) {
+      const description = manualJobDescription.trim();
+      if (!description) {
+        setJobActionStatus('Enter a job description to continue.');
+        return { page: jobDraft || {}, job: null };
+      }
+      return { page: jobDraft || {}, job: { ...jobFromPage(jobDraft), description } };
+    }
     setScanBusy(true);
     try {
       const result = await client.scanPage();
       const page = result?.page && typeof result.page === 'object' ? result.page : {};
-      const sameDraft = samePage(page, jobDraft);
-      const description = String(page.description ?? '').trim()
-        || (sameDraft ? manualJobDescription.trim() : '');
       setJobDraft(page);
-      if (!sameDraft) setManualJobDescription('');
+      setManualJobDescription('');
+      setManualJobEntry(false);
       setCompany(String(page.company ?? ''));
       setTitle(String(page.title ?? ''));
-      if (!description) {
-        setJobActionStatus('Paste the job description to continue.');
-        return { page, descriptors: result?.descriptors ?? [], job: null };
+      if (!String(page.description ?? '').trim()) {
+        setJobActionStatus('No job description found. Open the job posting and check again, or enter it manually.');
+        return { page, job: null };
       }
-      return {
-        page,
-        descriptors: Array.isArray(result?.descriptors) ? result.descriptors : [],
-        job: jobFromPage(page, description),
-      };
+      return { page, job: jobFromPage(page) };
     } finally {
       setScanBusy(false);
     }
+  }
+
+  async function handleCheckJobPage() {
+    if (!beginOperation('check-job-page')) return;
+    setFitAnalysis(null);
+    setRuntimeError(null);
+    tailoringRequest.current = null;
+    try {
+      const scanned = await scanJobForAction({ forcePage: true });
+      if (scanned.job) setJobActionStatus('Job description captured. Review it below, then choose your next step.');
+    } catch (error) {
+      setJobActionStatus('');
+      await handleWorkflowError(error);
+    } finally {
+      finishOperation('check-job-page');
+    }
+  }
+
+  function handleManualJobEntry() {
+    if (hasPendingInteraction()) return;
+    setManualJobEntry(true);
+    setFitAnalysis(null);
+    setJobActionStatus('Enter the job description, then choose Analyze fit or Create tailored resume.');
+    tailoringRequest.current = null;
+  }
+
+  async function loadResumePreview(saved, generation) {
+    setResumePreview(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    const current = () => generation === resumeActionGeneration.current
+      && activeProfileContext.current === saved.profileContextId;
+    try {
+      if (!client.getResumePreview) throw Object.assign(new Error('Update On Paper to see previews.'), { code: 'app_update_required' });
+      const preview = await client.getResumePreview(saved.profileContextId, saved.resume.id);
+      if (current()) setResumePreview(preview);
+    } catch (error) {
+      if (!current()) return;
+      if (error?.code === 'profile_changed' || PAIRING_ERROR_CODES.has(error?.code)) await handleWorkflowError(error);
+      else setPreviewError(error);
+    } finally {
+      if (current()) setPreviewLoading(false);
+    }
+  }
+
+  async function handleOpenGeneratedResume() {
+    if (!generatedResume || !beginOperation('open-resume')) return;
+    const saved = generatedResume;
+    const generation = resumeActionGeneration.current;
+    setOpeningResume(true);
+    setResumeOpenError(null);
+    try {
+      const ready = await connectionForAction();
+      if (!ready || ready.connection.profileContextId !== saved.profileContextId) return;
+      if (!client.openResume) throw Object.assign(new Error('Update On Paper to open this resume.'), { code: 'app_update_required' });
+      await client.openResume(saved.profileContextId, saved.resume.id);
+    } catch (error) {
+      if (generation !== resumeActionGeneration.current) return;
+      if (error?.code === 'profile_changed' || PAIRING_ERROR_CODES.has(error?.code)) await handleWorkflowError(error);
+      else setResumeOpenError(error);
+    } finally {
+      setOpeningResume(false);
+      finishOperation('open-resume');
+    }
+  }
+
+  function handleUseGeneratedResume() {
+    if (!generatedResume || !beginOperation('use-generated-resume')) return;
+    if (generatedResume.profileContextId === connection.profileContextId) {
+      setSelectedResumeId(generatedResume.resume.id);
+      resetPostScanState();
+      setReviewStatus('Open the application page, then prepare an autofill review from your new resume.');
+      setWorkflow('autofill');
+    }
+    finishOperation('use-generated-resume');
   }
 
   async function handleAnalyzeFit() {
@@ -1138,62 +1239,41 @@ function Workspace({
       const tailored = result?.resume;
       if (!tailored?.id) throw new Error('On Paper returned an invalid tailored resume');
 
-      const refreshedData = await client.checkConnection();
-      let refreshed = connectedState(refreshedData);
-      if (refreshed.kind !== 'connected') {
-        setConnection(refreshed);
-        return;
-      }
-      if (refreshed.profileContextId !== ready.connection.profileContextId) {
-        resetProfileScopedState();
-        setConnection(refreshed);
-        setSelectedResumeId(refreshed.resumes[0]?.id ?? '');
-        setJobActionStatus('On Paper reloaded or switched profiles. Review the refreshed resume list before continuing.');
-        return;
-      }
-      if (!refreshed.resumes.some((resume) => resume.id === tailored.id)) {
-        refreshed = { ...refreshed, resumes: [...refreshed.resumes, tailored] };
-      }
-      setConnection(refreshed);
+      // Record the acknowledged save before any ancillary list/preview request.
+      // If the connection drops now, the user still has the saved resume and
+      // cannot mistake a refresh failure for a failed generation.
+      const saved = { resume: tailored, profileContextId: ready.connection.profileContextId };
+      const generation = ++resumeActionGeneration.current;
+      setGeneratedResume(saved);
+      setResumeOpenError(null);
       setSelectedResumeId(tailored.id);
-      setWorkflow('autofill');
+      setConnection({ ...ready.connection, resumes: [...ready.connection.resumes.filter((resume) => resume.id !== tailored.id), tailored] });
       resetPostScanState();
-      setJobActionStatus(`Tailored resume created and selected: ${tailored.name}.`);
-
-      const after = await client.scanPage();
-      const afterPage = after?.page && typeof after.page === 'object' ? after.page : {};
-      const descriptors = Array.isArray(after?.descriptors) ? after.descriptors : [];
-      if (!samePage(scanned.page, afterPage)) {
-        setReviewStatus('Tailored resume created. The application page changed; prepare a new autofill review.');
-        tailoringRequest.current = null;
-        return;
-      }
-      if (descriptors.length === 0) {
-        setReviewStatus('Tailored resume created. No supported application fields were found on this page.');
-        tailoringRequest.current = null;
-        return;
-      }
-
-      setMappingBusy(true);
-      setProgress({ stage: 'mapping', message: 'Preparing answers from your new resume…' });
-      setProgressNotes('');
-      setDiscoveredFields(descriptors);
-      knownFieldIds.current = new Set(descriptors.map((field) => field.field_id));
-      const items = await createReviewItems(
-        client,
-        refreshed.profileContextId,
-        tailored.id,
-        descriptors,
-        { job: jobFromPage(afterPage, scanned.job.description), ...(selectedModel ? { model: selectedModel } : {}), onProgress: handleProgress },
-      );
-      setReviewContext(structuredClone({ page: afterPage, descriptors }));
-      setReviewItems(items);
-      setJobDraft(afterPage);
-      setCompany(String(afterPage.company ?? ''));
-      setTitle(String(afterPage.title ?? ''));
-      setReviewNeedsRefresh(false);
-      setReviewStatus(`Tailored resume created — ${readyReviewStatus(items)}`);
+      setJobActionStatus('');
       tailoringRequest.current = null;
+      try {
+        const refreshedData = await client.checkConnection();
+        let refreshed = connectedState(refreshedData);
+        if (refreshed.kind !== 'connected') {
+          setConnection({ ...refreshed, ...ready.connection, kind: refreshed.kind, resumes: [...ready.connection.resumes.filter((resume) => resume.id !== tailored.id), tailored] });
+        } else if (refreshed.profileContextId !== ready.connection.profileContextId) {
+          resetProfileScopedState();
+          setConnection(refreshed);
+          setSelectedResumeId(refreshed.resumes[0]?.id ?? '');
+          setJobActionStatus('On Paper reloaded or switched profiles. Review the refreshed resume list before continuing.');
+          return;
+        } else {
+          if (!refreshed.resumes.some((resume) => resume.id === tailored.id)) {
+            refreshed = { ...refreshed, resumes: [...refreshed.resumes, tailored] };
+          }
+          setConnection(refreshed);
+        }
+      } catch (refreshError) {
+        await handleWorkflowError(refreshError);
+      }
+      // Preview failures never undo the saved result. Profile resets invalidate
+      // this generation before any private thumbnail can be displayed.
+      if (generation === resumeActionGeneration.current) void loadResumePreview(saved, generation);
     } catch (error) {
       setJobActionStatus('');
       await handleWorkflowError(error);
@@ -1220,13 +1300,6 @@ function Workspace({
         : `Fit: ${analysisModelName}. Tailoring: ${tailoringModelName}.`
       : 'Uses your app’s model for each task.';
 
-  const activeModelId = selectedModel || modelCatalog.defaults[workflow === 'autofill' ? 'mapping' : 'tailoring'] || '';
-
-  const matchingModels = modelCatalog.models.filter((model) => (
-    `${model.name} ${model.id}`.toLowerCase().includes(modelSearch.trim().toLowerCase())
-  ));
-  const selectedCatalogModel = modelCatalog.models.find((model) => model.id === activeModelId);
-
   const contentWarnings = (fillResult?.unfilled ?? []).map((item) => ({
     field_id: item.field_id,
     label: reviewItems.find((reviewItem) => reviewItem.field_id === item.field_id)?.label,
@@ -1238,11 +1311,12 @@ function Workspace({
     || logState === 'pending'
     || savingAnswers.size > 0
     || jobAction !== 'idle'
-    || pairingBusy;
+    || pairingBusy
+    || openingResume;
   const hasWorkspace = connection.resumes.length > 0 || connection.kind === 'connected';
   const processing = scanBusy || mappingBusy || fillBusy || jobAction !== 'idle';
-  const processingHeading = fillBusy ? 'Filling your application' : mappingBusy ? 'Preparing your answers' : jobAction === 'analyzing' ? 'Reviewing your fit' : jobAction === 'tailoring' ? 'Creating your resume' : 'Reading the application';
-  const processingMessage = scanBusy ? 'Capturing the role and application fields…'
+  const processingHeading = fillBusy ? 'Filling your application' : mappingBusy ? 'Preparing your answers' : jobAction === 'analyzing' ? 'Reviewing your fit' : jobAction === 'tailoring' ? 'Creating your resume' : workflow === 'tailor' ? 'Reading the job page' : 'Reading the application';
+  const processingMessage = scanBusy ? workflow === 'tailor' ? 'Capturing the job description and role details…' : 'Capturing the role and application fields…'
     : progress?.message || (fillBusy ? 'Filling the fields you reviewed…' : mappingBusy ? 'Matching your details to each field…' : jobActionStatus);
   const connectionLabel = connection.kind === 'connected'
     ? 'Connected'
@@ -1286,37 +1360,17 @@ function Workspace({
       </div>
       <div className="picker-field">
         <label htmlFor="model-picker">AI model</label>
-        {modelCatalog.models.length > 20 ? (
-          <input
-            type="search"
-            aria-label="Search AI models"
-            aria-controls="model-picker"
-            placeholder="Search by model name or provider"
-            value={modelSearch}
-            disabled={workflowBusy || modelCatalog.state !== 'ready'}
-            onChange={(event) => setModelSearch(event.target.value)}
-          />
-        ) : null}
-        <select
+        <ModelPicker
           id="model-picker"
-          value={activeModelId}
+          models={modelCatalog.models}
+          value={selectedModel}
+          defaultModelId={modelCatalog.defaults[workflow === 'autofill' ? 'mapping' : 'tailoring'] || ''}
+          defaultModelName={defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring')}
           onChange={handleModelChange}
           disabled={workflowBusy || modelCatalog.state !== 'ready' || modelCatalog.models.length === 0}
-          aria-describedby={modelCatalog.error ? 'model-caption model-error' : 'model-caption'}
-        >
-          {modelCatalog.state !== 'ready' && !activeModelId ? <option value="">{modelCatalog.state === 'loading' ? 'Loading models…' : 'Models unavailable'}</option> : null}
-          {activeModelId && !matchingModels.some((model) => model.id === activeModelId) ? (
-            <optgroup label="Selected model"><option value={activeModelId}>{selectedCatalogModel?.name ?? activeModelId}</option></optgroup>
-          ) : null}
-          {matchingModels.map((model) => (
-            <option key={model.id} value={model.id}>{model.name}</option>
-          ))}
-        </select>
-        {modelSearch.trim() ? (
-          <p className="supporting-copy model-search-status" role="status">
-            {matchingModels.length ? `${matchingModels.length} matching ${matchingModels.length === 1 ? 'model' : 'models'}.` : 'No models match. Your selected model is unchanged.'}
-          </p>
-        ) : null}
+          loading={modelCatalog.state === 'loading'}
+          error={modelCatalog.error}
+        />
         <p id="model-caption" className="supporting-copy model-caption">
           {modelCatalog.state === 'loading'
             ? 'Loading models from On Paper…'
@@ -1329,7 +1383,6 @@ function Workspace({
                   : defaultModelCaption}
           {modelCatalog.autoFallback ? ' Automatic fallback is on in On Paper.' : ''}
         </p>
-        {selectedModel ? <button type="button" className="text-button model-reset" disabled={workflowBusy} onClick={() => handleModelChange()}>Reset to app defaults</button> : null}
         {modelCatalog.error ? (
           <div className="model-load-error">
             <p id="model-error" role="alert">Could not load models: {modelCatalog.error}</p>
@@ -1412,13 +1465,30 @@ function Workspace({
 
           {workflow === 'tailor' ? (
             <div id="tailor-workflow" className="workflow-content">
+              {generatedResume ? <GeneratedResume
+                key={generatedResume.resume.id}
+                resume={generatedResume.resume}
+                preview={resumePreview}
+                previewLoading={previewLoading}
+                previewError={previewError}
+                onRetryPreview={() => void loadResumePreview(generatedResume, ++resumeActionGeneration.current)}
+                onOpenInApp={handleOpenGeneratedResume}
+                opening={openingResume}
+                openError={resumeOpenError}
+                onPrepareAutofill={handleUseGeneratedResume}
+                disabled={workflowBusy}
+              /> : null}
               {workflowControls}
               <section className="panel-section job-actions-section" aria-labelledby="job-actions-heading">
                 <h2 id="job-actions-heading">Prepare for this role</h2>
                 <p className="supporting-copy">
                   Compare your experience with this role, then create a focused resume for it.
                 </p>
-                {jobDraft && !String(jobDraft.description ?? '').trim() ? (
+                <div className="button-row job-source-actions">
+                  <button type="button" className="secondary-button" disabled={workflowBusy} onClick={handleCheckJobPage}>Check web page again</button>
+                  <button type="button" className="text-button" disabled={workflowBusy || manualJobEntry} onClick={handleManualJobEntry}>Manually enter job description</button>
+                </div>
+                {manualJobEntry ? (
                   <>
                     <label htmlFor="manual-job-description">Job description</label>
                     <textarea
@@ -1426,7 +1496,11 @@ function Workspace({
                       value={manualJobDescription}
                       placeholder="Paste the job description"
                       disabled={workflowBusy}
-                      onChange={(event) => setManualJobDescription(event.target.value)}
+                      onChange={(event) => {
+                        setManualJobDescription(event.target.value);
+                        setFitAnalysis(null);
+                        tailoringRequest.current = null;
+                      }}
                     />
                   </>
                 ) : null}
@@ -1455,8 +1529,8 @@ function Workspace({
                 ) : null}
               </section>
 
-              {jobDraft ? <div className="job-results" ref={fitResultRef}>
-                <JobContext job={jobDraft} description={manualJobDescription} />
+              {jobDraft || manualJobEntry || fitAnalysis ? <div className="job-results" ref={fitResultRef}>
+                <JobContext job={jobDraft || {}} description={manualJobDescription} manual={manualJobEntry} />
                 <FitAnalysis analysis={fitAnalysis} />
               </div> : null}
             </div>

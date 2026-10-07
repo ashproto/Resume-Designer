@@ -84,6 +84,8 @@ export function createRuntimeClient(sendMessage = defaultSendMessage, {
     openApp: () => request({ type: 'app.open' }),
     savePairing: (token) => request({ type: 'pairing.save', token }),
     listResumes: () => request({ type: 'resumes.list' }),
+    getResumePreview: (profileContextId, resumeId) => request({ type: 'resume.preview', profileContextId, resumeId }),
+    openResume: (profileContextId, resumeId) => request({ type: 'resume.open', profileContextId, resumeId }),
     getAIModels: async () => {
       try {
         return await request({ type: 'ai.models' });

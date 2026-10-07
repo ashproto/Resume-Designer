@@ -15,6 +15,8 @@ const SUPPORTED_MESSAGES = new Set([
   'app.open',
   'pairing.save',
   'resumes.list',
+  'resume.preview',
+  'resume.open',
   'ai.models',
   'page.scan',
   'mapping.create',
@@ -296,6 +298,30 @@ export function createBackgroundService({
   async function assertProfileContext(expectedContextId, options) {
     const context = await bridge.listResumes(options);
     return assertResponseContext(expectedContextId, context);
+  }
+
+  async function requireResumeCapability(capability) {
+    const health = await bridge.health();
+    if (!health.capabilities.includes(capability)) {
+      throw new BridgeError(
+        capability === 'resume.preview'
+          ? 'Update On Paper to see a resume preview here. Your tailored resume is saved in the app.'
+          : 'Update On Paper to open this resume directly. You can find the saved resume in the app.',
+        { code: 'app_update_required', retryable: false },
+      );
+    }
+  }
+
+  function assertResumePreview(resumeId, response) {
+    if (response?.id !== resumeId || response.mimeType !== 'image/png'
+      || typeof response.imageBase64 !== 'string' || !response.imageBase64
+      || response.imageBase64.length > 900_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(response.imageBase64)
+      || !Number.isInteger(response.width) || response.width < 1 || response.width > 480
+      || !Number.isInteger(response.height) || response.height < 1 || response.height > 720
+      || !Number.isInteger(response.pageCount) || response.pageCount < 1) {
+      throw new BridgeError('On Paper returned an invalid resume preview.', { code: 'invalid_response', retryable: false });
+    }
+    return response;
   }
 
   async function rethrowAfterContextCheck(expectedContextId, error) {
@@ -673,6 +699,28 @@ export function createBackgroundService({
         return savePairing(message.token, ++connectionEpoch);
       case 'resumes.list':
         return bridge.listResumes();
+      case 'resume.preview': {
+        await requireResumeCapability('resume.preview');
+        assertConnectionEpoch(expectedEpoch);
+        const result = await withinProfileContext(message.profileContextId, async () => (
+          assertResumePreview(message.resumeId, assertResponseContext(
+            message.profileContextId, await bridge.getResumePreview(message.resumeId),
+          ))
+        ));
+        assertConnectionEpoch(expectedEpoch);
+        return result;
+      }
+      case 'resume.open':
+        await requireResumeCapability('resume.open');
+        return withinProfileMutation(message.profileContextId, expectedEpoch, async (options) => {
+          const result = assertResponseContext(message.profileContextId, await bridge.openResume(
+            message.resumeId, { profileContextId: message.profileContextId }, options,
+          ));
+          if (result.id !== message.resumeId || result.opened !== true) {
+            throw new BridgeError('On Paper could not open this resume.', { code: 'invalid_response', retryable: false });
+          }
+          return result;
+        });
       case 'ai.models':
         return bridge.getAIModels();
       case 'page.scan':

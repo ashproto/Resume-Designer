@@ -556,3 +556,63 @@ describe('live AI progress', () => {
     await expect(client.complete({})).rejects.toMatchObject({ code: 'ai_failed', message: 'Provider unavailable' });
   });
 });
+
+describe('saved resume preview and open transport', () => {
+  it.each(['getPdf', 'getResumePreview'])('allows a valid slow %s to complete after 30 seconds', async (method) => {
+    vi.useFakeTimers();
+    try {
+      let signal;
+      let settled = false;
+      const response = { profileContextId: 'context', id: 'resume' };
+      const client = makeClient(async (_url, options) => {
+        signal = options.signal;
+        return new Promise((resolve) => setTimeout(() => resolve(jsonResponse(response)), 35_000));
+      });
+      const result = client[method]('resume').then(
+        (value) => { settled = true; return { value }; },
+        (error) => { settled = true; return { error }; },
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      expect(signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await result).toEqual({ value: response });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('still aborts a stalled preview at the bounded PDF deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal;
+      let settled = false;
+      const client = makeClient(async (_url, options) => {
+        signal = options.signal;
+        return new Promise(() => {});
+      });
+      const result = captureError(client.getResumePreview('resume')).then((error) => {
+        settled = true;
+        return error;
+      });
+      await vi.advanceTimersByTimeAsync(184_999);
+      expect(settled).toBe(false);
+      expect(signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await result).toMatchObject({ code: 'app_timeout', retryable: true });
+      expect(signal.aborted).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('uses authenticated exact-variant routes and sends context only with explicit open', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ profileContextId: 'context', id: 'resume' }));
+    const client = makeClient(fetchImpl);
+    await client.getResumePreview('resume');
+    await client.openResume('resume', { profileContextId: 'context' });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([`${BRIDGE_BASE_URL}/resumes/resume/preview`, `${BRIDGE_BASE_URL}/resumes/resume/open`]);
+    expect(fetchImpl.mock.calls[0][1].method).toBe('GET');
+    expect(new Headers(fetchImpl.mock.calls[0][1].headers).get('Authorization')).toBe('Bearer pairing-token');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ profileContextId: 'context' });
+    expect(fetchImpl.mock.calls[1][1].method).toBe('POST');
+    expect(REQUIRED_CAPABILITIES).not.toContain('resume.preview');
+    expect(REQUIRED_CAPABILITIES).not.toContain('resume.open');
+  });
+});

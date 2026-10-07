@@ -276,7 +276,7 @@ export function createBridgeClient({
     const timeoutMs = requestTimeoutMs ?? (
       path === '/health' || path.startsWith('/pairing/') ? 4_000
         : options.payload?.operationId ? 15_000
-        : (path.startsWith('/ai/') && path !== '/ai/models') || path.endsWith('/pdf') ? 185_000 : 30_000
+        : (path.startsWith('/ai/') && path !== '/ai/models') || path.endsWith('/pdf') || path.endsWith('/preview') ? 185_000 : 30_000
     );
     let timer;
     let cancel;
@@ -355,6 +355,8 @@ export function createBridgeClient({
     getAIModels: () => request('/ai/models', { maxResponseBytes: MAX_AI_RESPONSE_BYTES }),
     getResume: (id) => request(resumePath(id)),
     getPdf: (id) => request(`${resumePath(id)}/pdf`),
+    getResumePreview: (id, options = {}) => request(`${resumePath(id)}/preview`, options),
+    openResume: (id, payload, options = {}) => request(`${resumePath(id)}/open`, { ...options, method: 'POST', payload }),
     complete: (payload, options) => aiRequest('/ai/complete', payload, options),
     analyzeJobFit: (payload, options) => aiRequest('/ai/job-fit', payload, options),
     createTailoredResume: (payload, options) => aiRequest('/ai/tailored-resume', payload, options),

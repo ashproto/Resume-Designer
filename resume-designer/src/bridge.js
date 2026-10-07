@@ -192,6 +192,23 @@ export async function initBridge({ profileId = null } = {}) {
     complete: completeForBridge,
     getAiModels: getCompanionModels,
     exportVariantPdf,
+    renderResumeThumbnail: async (pdfBase64) => {
+      const { renderResumeThumbnail } = await import('./resumeThumbnail.js');
+      return renderResumeThumbnail(pdfBase64);
+    },
+    openVariant: async (id, { assertCurrentContext }) => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const appWindow = getCurrentWindow();
+      assertCurrentContext();
+      if (!loadVariant(id)) {
+        throw Object.assign(new Error('The saved resume could not be opened.'), { status: 404, code: 'resume_not_found' });
+      }
+      await appWindow.show();
+      assertCurrentContext();
+      await appWindow.unminimize();
+      assertCurrentContext();
+      await appWindow.setFocus();
+    },
     claimPairing: pairing.claim,
     requestPairing: pairing.request,
     revokePairing: () => revokeBridgePairing(pairing.revokeAll),

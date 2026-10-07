@@ -95,7 +95,7 @@ HTTP 401
   the webview does not answer in time the server returns
   `504 {"error":"the app did not answer in time — is On Paper running and unlocked?"}`.
   Timeouts: **2 s** for `/health`, `/pairing/request`, and `/pairing/claim`, **180 s** for `/ai/*`
-  and any `…/pdf` path (model latency / PDF render), **30 s** for everything
+  and any `…/pdf` or `…/preview` path (model latency / PDF render), **30 s** for everything
   else.
 - If the app window is unavailable to receive the request at all, the server
   returns `502 {"error":"app window unavailable"}`.
@@ -111,7 +111,7 @@ HTTP 401
   switching profiles does not require re-pairing.
 - While saves are suspended for a destructive backup import, every
   profile-sensitive route — `GET /resumes`, `GET /resumes/:id`,
-  `GET /resumes/:id/pdf`, every `POST /ai/*` action, `POST /applications`, and
+  `GET /resumes/:id/pdf`, `GET /resumes/:id/preview`, `POST /resumes/:id/open`, every `POST /ai/*` action, `POST /applications`, and
   `POST /profile/answers` — returns
   `503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
   until the app reloads. The public `GET /health` probe remains available
@@ -165,7 +165,11 @@ available while a destructive backup import suspends profile-sensitive routes.
     "pairing.revoke",
     "profile.context",
     "resume.pdf",
+    "resume.preview",
+    "resume.open",
     "ai.complete",
+    "ai.progress",
+    "ai.profile-source",
     "ai.models",
     "ai.job-fit",
     "ai.tailored-resume",
@@ -179,7 +183,8 @@ available while a destructive backup import suspends profile-sensitive routes.
 Clients must validate `app`, `protocolVersion`, and their required capability
 set before sending a stored bearer token. A different response on the fixed
 port is not On Paper; an older protocol/capability set requires an app
-update.
+update. `resume.preview` and `resume.open` are optional capabilities: their absence
+disables only the thumbnail/direct-open conveniences, not resume generation.
 
 ```bash
 curl -s http://127.0.0.1:17872/health
@@ -389,6 +394,65 @@ fails, including when another export is already running —
 `503 {"error":"a data import is in progress; retry after the app reloads","code":"profile_changed"}`
 while a destructive backup import is waiting for the app reload; `504` if the
 render exceeds 180 s.
+
+---
+
+### `GET /resumes/:id/preview`
+
+Authenticated first-page thumbnail from the saved variant's native PDF export.
+Does not change the active resume. Only one preview runs at a time, and the
+existing global PDF-export guard remains held through export cleanup.
+
+**Response** `200`
+
+```json
+{
+  "profileId": "pmf2k8s9c1abc234",
+  "profileContextId": "c9e8d7a1-92c0-4e95-962e-89d8285dbe3e",
+  "id": "custom-1770251688327",
+  "name": "Backend Engineer - Acme Corp",
+  "updatedAt": "2026-07-15T22:21:02.749Z",
+  "imageBase64": "iVBORw0KGgo…",
+  "mimeType": "image/png",
+  "width": 480,
+  "height": 622,
+  "pageCount": 2
+}
+```
+
+The PNG is bounded to 480 × 720 pixels and 900,000 base64 characters. Worker
+loading, page loading, and rendering are individually bounded and clean up the
+loading task. Authorization, profile context, and import suspension are checked
+again after export and rasterization. Verify `profileContextId` against the
+selected resume's context before displaying the image.
+
+**Errors:** `401`; `404` for an unknown variant; `503 bridge_busy` for another
+preview; `409/503 profile_changed` for a switched/reloaded/importing profile;
+`500` for export/render failure; `504` after the native 180-second deadline.
+Older apps omit `resume.preview`; Companion reports `app_update_required`.
+
+---
+
+### `POST /resumes/:id/open`
+
+Authenticated explicit action to select the exact saved variant and show,
+unminimize, and focus On Paper. Requires the current boot-scoped context:
+
+```json
+{"profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e"}
+```
+
+**Response** `200`
+
+```json
+{"opened":true,"profileId":"pmf2k8s9c1abc234","profileContextId":"c9e8d7a1-92c0-4e95-962e-89d8285dbe3e","id":"custom-1770251688327"}
+```
+
+Authorization and context are checked before selecting and after asynchronous
+window operations. No AI, application scanning, mapping, or filling occurs.
+**Errors:** `401`; `404` for an unknown variant; `409/503 profile_changed` for a
+stale context/import; `500` if opening fails; `504` after 30 seconds. Older apps
+omit `resume.open`; Companion reports `app_update_required`.
 
 ---
 

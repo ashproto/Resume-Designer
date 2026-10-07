@@ -99,3 +99,14 @@ describe('live operation progress', () => {
     expect(onMessage.removeListener).toHaveBeenCalledWith(onMessage.addListener.mock.calls[0][0]);
   });
 });
+
+it('requests preview and explicit app activation separately without scanning or filling a page', async () => {
+  const send = vi.fn(async () => ({ ok: true, data: {} }));
+  const client = createRuntimeClient(send);
+  await client.getResumePreview('context', 'resume');
+  await client.openResume('context', 'resume');
+  expect(send.mock.calls.map(([message]) => message)).toEqual([
+    { type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' },
+    { type: 'resume.open', profileContextId: 'context', resumeId: 'resume' },
+  ]);
+});

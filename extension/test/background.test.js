@@ -1573,3 +1573,54 @@ describe('automatic in-flight connection recovery', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('generated resume preview and explicit opening', () => {
+  const context = { profileId: 'profile', profileContextId: 'context', resumes: [] };
+  const thumbnail = { ...context, id: 'resume', name: 'Tailored resume', imageBase64: 'aW1hZ2U=', mimeType: 'image/png', width: 480, height: 622, pageCount: 2 };
+  const health = { ...HEALTH, capabilities: [...HEALTH.capabilities, 'resume.preview', 'resume.open'] };
+  function setup(route) {
+    const { chromeApi } = createChrome({ token: 'token' });
+    const fetchImpl = vi.fn(async (url, options) => {
+      const path = new URL(url).pathname;
+      if (path === '/health') return jsonResponse(health);
+      if (path === '/resumes') return jsonResponse(context);
+      return route(path, options);
+    });
+    return { chromeApi, fetchImpl, service: createBackgroundService({ chromeApi, fetchImpl }) };
+  }
+  it('returns the saved resume PNG without touching the active page', async () => {
+    const { service, chromeApi, fetchImpl } = setup((path) => {
+      expect(path).toBe('/resumes/resume/preview');
+      return jsonResponse(thumbnail);
+    });
+    expect(await service.handleMessage({ type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' })).toEqual(thumbnail);
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.filter(([url]) => new URL(url).pathname === '/resumes')).toHaveLength(2);
+  });
+  it('posts an explicit, context-bound open action without scanning or filling', async () => {
+    const { service, chromeApi } = setup((path, options) => {
+      expect(path).toBe('/resumes/resume/open');
+      expect(options.method).toBe('POST');
+      expect(JSON.parse(options.body)).toEqual({ profileContextId: 'context' });
+      return jsonResponse({ ...context, id: 'resume', opened: true });
+    });
+    expect(await service.handleMessage({ type: 'resume.open', profileContextId: 'context', resumeId: 'resume' })).toMatchObject({ opened: true, id: 'resume' });
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+  it.each(['resume.preview', 'resume.open'])('explains older desktop support only when %s is requested', async (type) => {
+    const { chromeApi } = createChrome({ token: 'token' });
+    const fetchImpl = vi.fn(async (url) => jsonResponse(new URL(url).pathname === '/health' ? HEALTH : context));
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type, profileContextId: 'context', resumeId: 'resume' })).rejects.toMatchObject({ code: 'app_update_required', retryable: false });
+    expect(fetchImpl.mock.calls.some(([url]) => /\/(preview|open)$/.test(new URL(url).pathname))).toBe(false);
+  });
+  it.each([{ mimeType: 'text/html' }, { id: 'other' }, { width: 10000 }, { imageBase64: '<script>' }])('rejects malformed preview payloads: %j', async (invalid) => {
+    const { service } = setup(() => jsonResponse({ ...thumbnail, ...invalid }));
+    await expect(service.handleMessage({ type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' })).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+  it('rejects a stale profile returned with the preview', async () => {
+    const { service } = setup(() => jsonResponse({ ...thumbnail, profileContextId: 'other' }));
+    await expect(service.handleMessage({ type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' })).rejects.toMatchObject({ code: 'profile_changed' });
+  });
+});

@@ -1,0 +1,95 @@
+.model-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.model-picker__control {
+  display: flex;
+  min-height: 40px;
+  border: 1px solid #c9bfb1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.model-picker__control:focus-within {
+  border-color: #5950d7;
+  box-shadow: 0 0 0 3px #2b2bff14;
+}
+
+.model-picker__control input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 0 10px 11px;
+  border: 0;
+  border-radius: 8px 0 0 8px;
+  color: #0c0a08;
+  background: transparent;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  outline: none;
+}
+
+.model-picker__control input:disabled {
+  color: #756c61;
+  cursor: default;
+}
+
+.model-picker__control input::placeholder { color: #82776a; }
+
+.model-picker__toggle {
+  display: grid;
+  flex: 0 0 36px;
+  place-items: center;
+  min-height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 8px 8px 0;
+  color: #62594e;
+  background: transparent;
+}
+
+.model-picker__toggle:hover { background: #f4efe6; }
+.model-picker__control.is-open .model-picker__toggle svg { transform: rotate(180deg); }
+
+.model-picker__popover {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  overflow: hidden;
+  border: 1px solid #d8cfc2;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 8px 24px #0c0a081f;
+}
+
+.model-picker__results {
+  max-height: min(260px, 45vh);
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.model-picker__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 45px;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: #0c0a08;
+  background: transparent;
+  text-align: left;
+}
+
+.model-picker__option.is-active { background: #f0edff; }
+.model-picker__option-copy { display: grid; gap: 3px; min-width: 0; }
+.model-picker__option strong { font-size: 0.8rem; line-height: 1.3; overflow-wrap: anywhere; }
+.model-picker__option small { color: #756c61; font-size: 0.69rem; line-height: 1.3; overflow-wrap: anywhere; }
+.model-picker__check { margin-left: auto; color: #5950d7; }
+.model-picker__result-count { margin: 0; padding: 8px 11px; border-top: 1px solid #ede7df; color: #756c61; font-size: 0.71rem; line-height: 1.4; }
+.model-picker__status { margin: 6px 0 0; color: #756c61; font-size: 0.73rem; line-height: 1.4; }

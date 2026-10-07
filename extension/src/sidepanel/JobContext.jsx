@@ -12,20 +12,20 @@ function Description({ text }) {
   ))}</div>;
 }
 
-export default function JobContext({ job, description, compact = false }) {
+export default function JobContext({ job, description, compact = false, manual = false }) {
   if (!job) return null;
   const locations = [...new Set((Array.isArray(job.locations) ? job.locations : [job.location])
     .map((location) => String(location ?? '').trim()).filter(Boolean))];
-  const capturedDescription = String(job.description || description || '').trim();
+  const capturedDescription = String((manual ? description : job.description || description) || '').trim();
   return (
     <section className={`captured-job ${compact ? 'captured-job--compact' : ''}`} aria-label="Captured job details">
-      <p className="eyebrow">Captured from this page</p>
-      <h3>{job.title || 'Job title not found'}</h3>
-      <p className="job-company">{job.company || 'Company not found'}</p>
-      <p className="job-location">{locations.length ? locations.join(' · ') : 'Location not listed'}</p>
+      <p className="eyebrow">{manual ? 'Entered manually' : 'Captured from this page'}</p>
+      <h3>{job.title || (manual ? 'Job description' : 'Job title not found')}</h3>
+      {!manual || job.company ? <p className="job-company">{job.company || 'Company not found'}</p> : null}
+      {!manual || locations.length ? <p className="job-location">{locations.length ? locations.join(' · ') : 'Location not listed'}</p> : null}
       {!compact && capturedDescription ? (
         <details className="captured-description">
-          <summary>Review captured job description</summary>
+          <summary>{manual ? 'Review job description' : 'Review captured job description'}</summary>
           <Description text={capturedDescription} />
         </details>
       ) : null}
