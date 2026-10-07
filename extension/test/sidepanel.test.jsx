@@ -1655,6 +1655,40 @@ describe('focused application workspace', () => {
 
 
 describe('connection recovery and review polish', () => {
+  it.each(['open', 'check'])('explains an unsupported extension identity after %s without suggesting another app launch', async (attempt) => {
+    const rejectedIdentity = new RuntimeMessageError({
+      message: 'pairing requires a trusted Companion JSON request',
+      code: 'untrusted_pairing_client',
+      status: 403,
+      retryable: false,
+    });
+    const client = makeClient({
+      checkConnection: vi.fn()
+        .mockResolvedValueOnce({ connected: false, resumes: [] })
+        .mockRejectedValue(rejectedIdentity),
+      openApp: vi.fn().mockRejectedValue(rejectedIdentity),
+    });
+    await renderApp(client);
+    await click(button(attempt === 'open' ? 'Open and connect' : 'Check connection again'));
+
+    expect(container.querySelector('#pairing-heading').textContent).toBe('Update Companion');
+    expect(container.textContent).toContain('Restarting the app won’t fix this.');
+    expect(container.textContent).toContain('reload the current trusted build');
+    expect(container.textContent).not.toContain('On Paper may still be starting');
+    expect(container.textContent).not.toContain('Try opening again');
+    const install = [...container.querySelectorAll('a')].find((link) => link.textContent === 'Get official Companion');
+    expect(install?.href).toBe('https://chromewebstore.google.com/detail/on-paper-companion/keggfbelidgpjiapcbgkjidenhdjmega');
+    expect(install?.target).toBe('_blank');
+    expect(client.openApp).toHaveBeenCalledTimes(attempt === 'open' ? 1 : 0);
+    expect(client.savePairing).not.toHaveBeenCalled();
+
+    await change(labelled('Pairing token'), 'explicit-manual-token');
+    await click(button('Pair with token'));
+    expect(client.savePairing).toHaveBeenCalledWith('explicit-manual-token');
+    expect(container.querySelector('.pairing-section')).toBeNull();
+    expect(labelled('Resume').value).toBe('resume-1');
+  });
+
   it('checks the connection again without launching the app', async () => {
     const client = makeClient({
       checkConnection: vi.fn()

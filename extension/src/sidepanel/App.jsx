@@ -56,7 +56,8 @@ function connectedState(data) {
 
 function stateForError(error, previous = {}) {
   let kind = 'launch_failed';
-  if (error?.code === 'profile_changed') kind = 'reconnecting';
+  if (error?.code === 'untrusted_pairing_client') kind = 'unsupported_extension';
+  else if (error?.code === 'profile_changed') kind = 'reconnecting';
   else if (PAIRING_ERROR_CODES.has(error?.code)) kind = 'needs_pairing';
   else if (INCOMPATIBLE_ERROR_CODES.has(error?.code)) kind = 'incompatible';
   else if (RUNNING_APP_ERROR_CODES.has(error?.code) || error?.status === 504) kind = 'unreachable';
@@ -1253,7 +1254,7 @@ function Workspace({
           ? 'Reconnecting…'
           : 'Not connected';
   const pairingState = [
-    'needs_pairing', 'unreachable', 'launch_failed', 'incompatible', 'opening', 'checking', 'reconnecting',
+    'needs_pairing', 'unreachable', 'launch_failed', 'incompatible', 'unsupported_extension', 'opening', 'checking', 'reconnecting',
   ].includes(connection.kind)
     ? connection.kind
     : null;

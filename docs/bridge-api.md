@@ -196,7 +196,9 @@ charset is allowed) and the exact production `Origin`
 match that origin. The fixed loopback Host check also applies. Other extension
 IDs, ordinary web origins, absent/null origins, simple form/text posts, and
 preflights are rejected with `403`; no CORS access is enabled. Local processes can forge HTTP headers, so these checks do
-not replace native approval or the verifier proof.
+not replace native approval or the verifier proof. Companion packages from 0.1.9
+include the Store public identity key, so loading them unpacked retains this
+same production origin; the accepted-origin list does not change.
 
 **Request**
 

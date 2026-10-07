@@ -320,6 +320,18 @@ describe('createBridgeClient', () => {
     await expect(operation).rejects.toMatchObject({ status, code, retryable });
   });
 
+  it('preserves a rejected Companion identity as a non-retryable pairing error', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      error: 'pairing requires a trusted Companion JSON request',
+      code: 'untrusted_pairing_client',
+    }, { status: 403 }));
+    const client = makeClient(fetchImpl);
+
+    await expect(client.claimPairing({ requestId: 'request-id', verifier: 'verifier' }))
+      .rejects.toMatchObject({ status: 403, code: 'untrusted_pairing_client', retryable: false });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it('classifies an in-progress PDF export as retryable', async () => {
     const message = 'another PDF export is in progress — try again in a moment';
     const fetchImpl = vi.fn(async () => jsonResponse({ error: message }, { status: 500 }));

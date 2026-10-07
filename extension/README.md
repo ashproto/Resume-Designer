@@ -51,7 +51,15 @@ Then load the generated extension:
 2. Enable **Developer mode**.
 3. Choose **Load unpacked**.
 4. Select the generated `extension/dist` directory, not the source `extension` directory.
-5. Keep the extension available in the toolbar. After rebuilding, use **Reload** on its `chrome://extensions` card.
+5. Confirm the ID shown on the extension card is `keggfbelidgpjiapcbgkjidenhdjmega`.
+6. Keep the extension available in the toolbar. After rebuilding, use **Reload** on its `chrome://extensions` card.
+
+Version 0.1.9 and later include the published extension's **public** identity key,
+so an unpacked build keeps the same ID regardless of its folder. If you loaded
+an earlier ZIP and its card shows a different ID, remove that old unpacked copy
+and load the newly extracted folder. Removing the extension does not remove
+resumes or profile data from On Paper. Approve the normal connection prompt in
+the desktop app after loading the new build.
 
 The manifest intentionally requests only `sidePanel`, `storage`, `activeTab`, and `scripting`, plus access to the loopback bridge at `http://127.0.0.1:17872/*`. It does not request `<all_urls>`.
 
@@ -102,10 +110,14 @@ without manual copying.
 
 Production automatic pairing accepts only the Chrome Web Store extension ID
 `keggfbelidgpjiapcbgkjidenhdjmega`. The app binds the request and claim to that
-browser origin. Normal frontend/native development builds additionally allow
-this workspace’s unpacked ID, `jejabnlfgdapamjoechlgmgpmldekffo`; other unpacked
-IDs use explicit manual pairing. A native debug build with a production-built
-frontend does not enable the frontend development allowlist.
+browser origin. Source and packaged builds retain that ID through the public
+`key` in `manifest.json`; packaging rejects a missing, malformed, or mismatched
+key. This follows [Chrome's consistent-ID guidance](https://developer.chrome.com/docs/extensions/reference/manifest/key).
+Native approval and verifier proof remain required. Legacy frontend/native
+development builds additionally allow this workspace’s historical unpacked ID,
+`jejabnlfgdapamjoechlgmgpmldekffo`; other unpacked IDs require explicit manual
+pairing. A native debug build with a production-built frontend does not enable
+the frontend development allowlist.
 
 Disconnect aborts active extension mutation requests and prevents queued writes
 from starting after revocation. A save already flushing may still complete in
@@ -183,6 +195,7 @@ selection. Hidden fields and autocomplete search helpers are never filled.
 - **Disconnected startup:** the panel does not launch anything by itself. It shows an explicit open/connect action plus a download path for users who have not installed the app.
 - **Wrong process on the fixed port:** a health response with the wrong identity is shown as a port conflict and no bearer token is sent.
 - **Incompatible app:** an old protocol or missing required capability is shown as **Update On Paper** rather than as connected.
+- **Unrecognized extension ID:** install the official Companion or load a current build that retains its published ID. Reopening the desktop app cannot correct an old unpacked ID; explicit manual pairing remains available for development.
 - **Ambiguous write failure:** retries of the same application log reuse its request identity so a late save cannot create a duplicate. Pending identity survives panel reopening within the browser session. If reopened details differ from an uncertain earlier log, check On Paper and restore those details to retry, or choose **Start over** to begin another application. Answer saving remains an explicit action.
 - **Restricted browser page:** move to an HTTPS application page; Chrome does
   not allow injection into pages such as `chrome://extensions`, and the

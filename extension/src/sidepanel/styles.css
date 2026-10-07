@@ -242,7 +242,8 @@ button:disabled {
   gap: 8px;
 }
 
-button {
+button,
+a.primary-button {
   min-height: 40px;
   padding: 8px 13px;
   border: 1px solid transparent;
@@ -250,6 +251,11 @@ button {
   font-size: 0.85rem;
   font-weight: 750;
   cursor: pointer;
+}
+
+a.primary-button {
+  text-align: center;
+  text-decoration: none;
 }
 
 .primary-button {

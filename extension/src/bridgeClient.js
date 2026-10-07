@@ -36,6 +36,7 @@ function classifyHttpError(status, message, data) {
       pairing_busy: true,
       invalid_model: false,
       pairing_rejected: false,
+      untrusted_pairing_client: false,
       pairing_not_found: false,
       pairing_unavailable: true,
       storage_full: false,
