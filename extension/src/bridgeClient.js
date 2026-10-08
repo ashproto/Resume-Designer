@@ -18,6 +18,8 @@ export const REQUIRED_CAPABILITIES = Object.freeze([
 
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const MAX_AI_RESPONSE_BYTES = 1024 * 1024;
+// Let the desktop's 15-minute AI deadline return its terminal result first.
+const AI_OPERATION_POLL_TIMEOUT_MS = 16 * 60_000;
 
 export class BridgeError extends Error {
   constructor(message, { status = null, code = 'bridge_error', retryable = false } = {}) {
@@ -311,7 +313,7 @@ export function createBridgeClient({
     let response = await request(path, {
       ...options, method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
     });
-    const deadline = Date.now() + 10 * 60_000;
+    const deadline = Date.now() + AI_OPERATION_POLL_TIMEOUT_MS;
     let lastProgress = '';
     while (response?.operationId && ['running', 'complete'].includes(response.state)) {
       const serialized = JSON.stringify(response.progress);
@@ -331,7 +333,7 @@ export function createBridgeClient({
         return result.body;
       }
       if (options.signal?.aborted) throw new BridgeError('Request cancelled', { code: 'request_cancelled' });
-      if (Date.now() >= deadline) throw new BridgeError('This request is taking longer than expected. Retry to reconnect to it.', { code: 'app_timeout', retryable: true });
+      if (Date.now() >= deadline) throw new BridgeError('The AI request took too long. Start a new request to try again.', { code: 'ai_operation_timeout', retryable: true });
       await new Promise((resolve) => setTimeout(resolve, progressPollIntervalMs));
       response = await request('/ai/progress', {
         method: 'POST', payload: { operationId: response.operationId, profileContextId: payload.profileContextId },

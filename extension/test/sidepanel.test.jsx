@@ -2417,6 +2417,85 @@ describe('idempotent application logging', () => {
   });
 });
 
+describe('AI failures and connection recovery', () => {
+  const page = { company: 'Acme', title: 'Product engineer', description: 'Build accessible products.', url: 'https://jobs.test/engineer', fingerprint: 'job-engineer' };
+  const actions = [
+    ['Analyze fit', 'analyzeJobFit', '82% match'],
+    ['Create tailored resume', 'createTailoredResume', 'Your resume is ready'],
+    ['Prepare autofill review', 'createMapping', 'Review ready'],
+  ];
+
+  it.each(actions.flatMap(([action, method, result]) => [
+    { action, method, result, code: 'ai_failed', status: 504 },
+    { action, method, result, code: 'ai_operation_timeout', status: null },
+  ]))('keeps $action connected after $code and lets the user retry the same work', async ({ action, method, result, code, status }) => {
+    const client = makeClient({ scanPage: vi.fn(async () => ({ descriptors: [descriptor('name')], page })) });
+    client[method].mockRejectedValueOnce(new RuntimeMessageError({
+      message: 'The AI request took too long. Try again.', code, status, retryable: true,
+    }));
+    await renderApp(client, { heartbeatMs: 0 });
+    if (method !== 'createMapping') await click(button('Tailor resume'));
+
+    await click(button(action));
+
+    expect(container.querySelector('[role="alert"]').textContent).toBe('The AI request took too long. Try again.');
+    expect(container.querySelector('.connection-status').textContent).toBe('Connected');
+    expect(container.querySelector('.pairing-section')).toBeNull();
+    const retry = button(method === 'createMapping' ? 'Retry preparing review' : action);
+    expect(retry.disabled).toBe(false);
+    await click(retry);
+
+    expect(container.textContent).toContain(result);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('.connection-status').textContent).toBe('Connected');
+    expect(client.openApp).not.toHaveBeenCalled();
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client[method]).toHaveBeenCalledTimes(2);
+    if (method === 'createTailoredResume') {
+      expect(client.createTailoredResume.mock.calls[1][0].requestId).toBe(client.createTailoredResume.mock.calls[0][0].requestId);
+    }
+  });
+
+  it.each(actions.flatMap(([action, method, result]) => [
+    { action, method, result, code: 'app_timeout' },
+    { action, method, result, code: 'runtime_error' },
+  ]))('recovers the connection before retrying $action after a transport 504 with $code', async ({ action, method, result, code }) => {
+    const client = makeClient({ scanPage: vi.fn(async () => ({ descriptors: [descriptor('name')], page })) });
+    client[method].mockRejectedValueOnce(new RuntimeMessageError({
+      message: 'The app bridge did not respond.', status: 504, code, retryable: true,
+    }));
+    await renderApp(client, { heartbeatMs: 0 });
+    if (method !== 'createMapping') await click(button('Tailor resume'));
+
+    await click(button(action));
+
+    expect(container.querySelector('[role="alert"]').textContent).toContain('Is On Paper running?');
+    expect(container.querySelector('.connection-status').textContent).toBe('Not connected');
+    expect(container.querySelector('.pairing-section').textContent).toContain('Open On Paper');
+    await click(button(method === 'createMapping' ? 'Retry preparing review' : action));
+
+    expect(container.textContent).toContain(result);
+    expect(container.querySelector('.connection-status').textContent).toBe('Connected');
+    expect(container.querySelector('.pairing-section')).toBeNull();
+    expect(client.openApp).toHaveBeenCalledOnce();
+  });
+
+  it('shows connection recovery when the initial bridge check returns an unclassified 504', async () => {
+    const failure = new Error('The app bridge did not respond.');
+    failure.status = 504;
+    const client = makeClient({ checkConnection: vi.fn().mockRejectedValueOnce(failure).mockResolvedValue({
+      connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [],
+    }) });
+    await renderApp(client, { heartbeatMs: 0 });
+
+    expect(container.querySelector('.connection-status').textContent).toBe('Not connected');
+    expect(container.querySelector('[role="alert"]').textContent).toContain('Is On Paper running?');
+    await click(button('Check connection again'));
+    expect(container.querySelector('.connection-status').textContent).toBe('Connected');
+    expect(container.querySelector('.pairing-section')).toBeNull();
+  });
+});
+
 describe('transparent AI workspace', () => {
   const page = { title: 'Product engineer', company: 'Acme', locations: ['San Diego, CA', 'Remote'], description: 'About the role\nBuild useful products.\n\nResponsibilities\n- Design accessible interfaces\n- Collaborate with designers', url: 'https://jobs.test/engineer', fingerprint: 'job-role' };
 

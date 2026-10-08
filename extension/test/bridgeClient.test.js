@@ -537,6 +537,77 @@ it('requires durable application idempotency before connecting', async () => {
 });
 
 describe('live AI progress', () => {
+  it('lets a healthy operation finish after ten minutes without losing its identity', async () => {
+    vi.useFakeTimers();
+    try {
+      const startedAt = Date.now();
+      const operationId = '550e8400-e29b-41d4-a716-446655440000';
+      const fetchImpl = vi.fn(async (url, options) => {
+        expect(JSON.parse(options.body)).toMatchObject({ operationId, profileContextId: 'context' });
+        if (url.endsWith('/ai/progress') && Date.now() - startedAt >= 12 * 60_000) {
+          return jsonResponse({ operationId, state: 'complete', result: { status: 200, body: { text: 'Finished' } } });
+        }
+        return jsonResponse({ operationId, state: 'running' }, { status: 202 });
+      });
+      const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 60_000 });
+      let settled = false;
+      const outcome = client.complete({ operationId, profileContextId: 'context', messages: [] }).then(
+        (value) => { settled = true; return { value }; },
+        (error) => { settled = true; return { error }; },
+      );
+      await vi.advanceTimersByTimeAsync(11 * 60_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await outcome).toEqual({ value: { text: 'Finished' } });
+      expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/ai/complete'))).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('receives the bridge terminal AI failure at its fifteen-minute deadline', async () => {
+    const { createBridgeProgress } = await import('../../resume-designer/src/bridgeProgress.js');
+    vi.useFakeTimers();
+    try {
+      const operationId = '550e8400-e29b-41d4-a716-446655440000';
+      const progress = createBridgeProgress();
+      let signal;
+      const fetchImpl = vi.fn(async (url) => {
+        const response = url.endsWith('/ai/progress')
+          ? progress.read(operationId, 'owner')
+          : progress.start(operationId, 'owner', 'input', (hooks) => {
+            signal = hooks.signal;
+            return new Promise(() => {});
+          });
+        return jsonResponse(response.body, { status: response.status });
+      });
+      const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 60_000 });
+      const outcome = captureError(client.complete({ operationId, profileContextId: 'context', messages: [] }));
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      expect(await outcome).toMatchObject({ status: 504, code: 'ai_failed', retryable: true });
+      expect(signal.aborted).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('ends an operation that outlives the bridge deadline without blaming the connection', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => jsonResponse({ operationId: 'operation', state: 'running' }, { status: 202 }));
+      const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 60_000 });
+      let settled = false;
+      const outcome = captureError(client.complete({ operationId: 'operation', profileContextId: 'context', messages: [] })).then((error) => {
+        settled = true;
+        return error;
+      });
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const error = await outcome;
+      expect(error).toMatchObject({ code: 'ai_operation_timeout', retryable: true });
+      expect(error.message).toMatch(/AI.*too long/i);
+      expect(error.message).toMatch(/new request/i);
+      expect(error.message).not.toMatch(/connect/i);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('polls a running operation, reports reasoning, and returns the original result', async () => {
     const operationId = '550e8400-e29b-41d4-a716-446655440000';
     const onProgress = vi.fn();

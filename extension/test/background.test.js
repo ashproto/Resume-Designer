@@ -1531,6 +1531,35 @@ it('retains an application request committed before disconnect so re-pairing can
 
 describe('automatic in-flight connection recovery', () => {
   const operationId = '550e8400-e29b-41d4-a716-446655440000';
+  it('does not launch or replay a healthy operation that exceeds the AI watchdog', async () => {
+    vi.useFakeTimers();
+    try {
+      const startedAt = Date.now();
+      const { chromeApi } = createChrome({ token: 'paired' });
+      chromeApi.runtime.sendMessage = vi.fn(async () => {});
+      const context = { profileId: 'profile-1', profileContextId: 'context-1', resumes: [] };
+      const fetchImpl = vi.fn(async (url) => {
+        if (url.endsWith('/resumes')) return jsonResponse(context);
+        if (url.endsWith('/health')) return jsonResponse(HEALTH);
+        if (url.endsWith('/ai/progress')) vi.setSystemTime(startedAt + 16 * 60_000);
+        if (url.endsWith('/ai/job-fit') || url.endsWith('/ai/progress')) {
+          return jsonResponse({ operationId, state: 'running' }, { status: 202 });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      });
+      const service = createBackgroundService({ chromeApi, fetchImpl });
+      const outcome = service.handleMessage({ type: 'job.fit.analyze', operationId,
+        profileContextId: 'context-1', job: { description: 'Build useful software' } }).catch((error) => error);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(chromeApi.tabs.create).not.toHaveBeenCalled();
+      expect(await outcome).toMatchObject({ code: 'ai_operation_timeout', retryable: true });
+      expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/ai/job-fit'))).toHaveLength(1);
+      expect(chromeApi.runtime.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+        progress: expect.objectContaining({ stage: 'reconnecting' }),
+      }));
+    } finally { vi.useRealTimers(); }
+  });
+
   it('wakes the already-paired app and rejoins the same operation without re-pairing', async () => {
     const { chromeApi } = createChrome({ token: 'paired' });
     chromeApi.runtime.sendMessage = vi.fn(async () => {});

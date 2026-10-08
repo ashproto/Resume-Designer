@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkrf4I18e+WPn/7VJMrwsuwz2g83wTjuYaDp52y/6QuqHFmXJ9puRSPn9w1h8vxI7B8nXuWOVsftWiy85cl9MMU38pI4zBI9WZ1DIzr1WPVd0gXR+wrKPuRa+8yMLzheSsZ72AtON4IHSPAe1UuQ6+6N8EZLAkbWNTE1qdQP0TKCsYz0nQYjG0ggvtsXLLhzQmgQxA1RAZ3OZaqwBj7nd+g+HjlTqHrhwMeiQvPO7SDUl1l7YRuYKwgA8MkkdbFLE9MErvylDaQZ6aQEff2xFiVGXejAX4mJYy4h6L1tQ+GlaD2e+GsO+5/xmSKIxuh3eL8RuC6Nf0uyzvmofNRvNsQIDAQAB",
   "name": "On Paper Companion",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Review and fill job applications with On Paper. Requires On Paper for macOS and your own OpenRouter key for AI.",
   "minimum_chrome_version": "116",
   "icons": {

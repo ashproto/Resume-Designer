@@ -30,11 +30,20 @@ const DEFAULT_HEARTBEAT_MS = 5_000;
 const APPLICATION_REQUEST_KEY_PREFIX = 'pendingApplicationRequest:';
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function isAppConnectionError(error) {
+  // A specific response code, such as ai_failed, takes precedence over the
+  // HTTP status. Only unclassified 504s imply a lost app connection.
+  return RUNNING_APP_ERROR_CODES.has(error?.code) || (
+    error?.status === 504
+    && (!error?.code || error.code === 'http_error' || error.code === 'runtime_error')
+  );
+}
+
 function visibleError(error) {
   const message = error instanceof Error && error.message
     ? error.message
     : 'An unexpected extension error occurred.';
-  const asksAboutApp = RUNNING_APP_ERROR_CODES.has(error?.code) || error?.status === 504;
+  const asksAboutApp = isAppConnectionError(error);
 
   if (asksAboutApp && !/is On Paper running\?/i.test(message)) {
     return `${message} Is On Paper running?`;
@@ -62,7 +71,7 @@ function stateForError(error, previous = {}) {
   else if (error?.code === 'profile_changed') kind = 'reconnecting';
   else if (PAIRING_ERROR_CODES.has(error?.code)) kind = 'needs_pairing';
   else if (INCOMPATIBLE_ERROR_CODES.has(error?.code)) kind = 'incompatible';
-  else if (RUNNING_APP_ERROR_CODES.has(error?.code) || error?.status === 504) kind = 'unreachable';
+  else if (isAppConnectionError(error)) kind = 'unreachable';
   else if (LAUNCH_ERROR_CODES.has(error?.code)) kind = 'launch_failed';
 
   return {
@@ -485,10 +494,9 @@ function Workspace({
       return;
     }
     if (
-      RUNNING_APP_ERROR_CODES.has(error?.code)
+      isAppConnectionError(error)
       || INCOMPATIBLE_ERROR_CODES.has(error?.code)
       || LAUNCH_ERROR_CODES.has(error?.code)
-      || error?.status === 504
     ) {
       setReviewNeedsRefresh(true);
       setConnection((current) => stateForError(error, current));
