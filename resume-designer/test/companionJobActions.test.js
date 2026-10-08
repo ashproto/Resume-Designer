@@ -113,6 +113,102 @@ function makeDeps(overrides = {}) {
   };
 }
 
+describe('companion operation cancellation', () => {
+  it('forwards the signal to analysis and rejects a late successful analysis after cancellation', async () => {
+    const pending = deferred();
+    const controller = new AbortController();
+    const deps = makeDeps({ analyzeResumeDataAgainstJobs: vi.fn(() => pending.promise) });
+    const operation = createCompanionJobActions(deps).analyzeJobFit({ resumeId: 'resume-1', job: JOB, signal: controller.signal });
+    expect(deps.analyzeResumeDataAgainstJobs.mock.calls[0][3].signal).toBe(controller.signal);
+    controller.abort();
+    pending.resolve(analysis());
+    await expect(operation).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+  });
+
+  it.each(['resume', 'profile'])('forwards the signal and prevents a late %s generation from saving after cancellation', async (source) => {
+    const pending = deferred();
+    const controller = new AbortController();
+    const generate = vi.fn(() => pending.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate, generateResumeFromProfileForJob: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { ...(source === 'resume' ? { resumeId: 'resume-1' } : {}), requestId: REQUEST_ID, job: JOB, signal: controller.signal };
+    const operation = actions.createTailoredResume(request);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    expect(generate.mock.calls[0].at(-1).signal).toBe(controller.signal);
+    controller.abort();
+    const retry = actions.createTailoredResume(request);
+    // Replaying the same cancelled execution cannot dispatch more paid work.
+    await expect(retry).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+    const rejected = expect(operation).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+    pending.resolve(source === 'resume'
+      ? { changes: { summary: 'Must not be saved' } }
+      : { resume: { name: 'Ash', email: 'ash@example.com', summary: 'Must not be saved', experience: [], education: [], skills: [] } });
+    await rejected;
+    expect(generate).toHaveBeenCalledOnce();
+    expect(deps.saveVariant).not.toHaveBeenCalled();
+    expect(deps.loadVariant).not.toHaveBeenCalled();
+    expect(deps.flush).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit retry replace aborted work and prevents its late output from replacing the new save', async () => {
+    const oldGeneration = deferred();
+    const newGeneration = deferred();
+    const controller = new AbortController();
+    const generate = vi.fn().mockImplementationOnce(() => oldGeneration.promise)
+      .mockImplementationOnce(() => newGeneration.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const oldOperation = actions.createTailoredResume({ ...request, signal: controller.signal });
+    const oldResult = oldOperation.catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    controller.abort();
+    const newOperation = actions.createTailoredResume({ ...request, signal: new AbortController().signal });
+    const newResult = newOperation.catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    newGeneration.resolve({ changes: { summary: 'The explicitly retried resume' } });
+    expect(await newResult).toMatchObject({ created: true });
+    oldGeneration.resolve({ changes: { summary: 'Expired provider output' } });
+    expect(await oldResult).toMatchObject({ status: 504, code: 'ai_failed' });
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+    expect(deps.saveVariant.mock.calls[0][2].summary).toBe('The explicitly retried resume');
+    expect(await actions.createTailoredResume(request)).toMatchObject({ created: false });
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('replays an already saved resume after abort during durability without generating or saving again', async () => {
+    const durability = deferred();
+    const controller = new AbortController();
+    const deps = makeDeps({ flush: vi.fn(() => durability.promise) });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const operation = actions.createTailoredResume({ ...request, signal: controller.signal });
+    await vi.waitFor(() => expect(deps.saveVariant).toHaveBeenCalledOnce());
+    controller.abort();
+    const retry = actions.createTailoredResume({ ...request, signal: new AbortController().signal });
+    durability.resolve(true);
+    expect(await operation).toMatchObject({ created: true });
+    expect(await retry).toMatchObject({ created: false });
+    expect(deps.generateResumeChangesForData).toHaveBeenCalledOnce();
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+  });
+
+  it('rejects cancellation during fingerprinting before dispatching generation', async () => {
+    const fingerprint = deferred();
+    const controller = new AbortController();
+    const deps = makeDeps();
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(() => fingerprint.promise);
+    try {
+      const operation = createCompanionJobActions(deps).createTailoredResume({ resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB, signal: controller.signal });
+      controller.abort();
+      fingerprint.resolve(new ArrayBuffer(32));
+      await expect(operation).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+      expect(deps.generateResumeChangesForData).not.toHaveBeenCalled();
+      expect(deps.saveVariant).not.toHaveBeenCalled();
+    } finally { digest.mockRestore(); }
+  });
+});
+
 describe('createCompanionJobActions analyzeJobFit', () => {
   it('analyzes the explicitly selected resume with app-owned model settings and normalized job text', async () => {
     const deps = makeDeps();

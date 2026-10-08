@@ -318,7 +318,7 @@ export function createBridgeRouter(deps) {
             ...modelOptions,
             systemPrompt: parsed.systemPrompt,
             reasoningEffort: parsed.reasoningEffort,
-            ...(hooks ? { hooks } : {}),
+            ...(hooks ? { hooks, signal: hooks.signal } : {}),
           });
           if (deps.writesSuspended?.()) return importInProgress();
           return json(200, { text });
@@ -335,7 +335,7 @@ export function createBridgeRouter(deps) {
           ...modelOptions,
           resumeId: parsed.resumeId,
           job: parsed.job,
-          ...(hooks ? { hooks } : {}),
+          ...(hooks ? { hooks, signal: hooks.signal } : {}),
         });
         if (deps.writesSuspended?.()) return importInProgress();
         return json(200, {
@@ -355,7 +355,7 @@ export function createBridgeRouter(deps) {
           resumeId: parsed.resumeId,
           requestId: parsed.requestId,
           job: parsed.job,
-          ...(hooks ? { hooks } : {}),
+          ...(hooks ? { hooks, signal: hooks.signal } : {}),
         }, { assertAuthorized });
         if (deps.writesSuspended?.()) return importInProgress();
         return json(result.created ? 201 : 200, {
