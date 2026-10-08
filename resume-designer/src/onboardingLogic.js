@@ -14,6 +14,7 @@ import { parseResumeText } from './resumeParser.js';
 import { addJobDescription } from './jobDescriptions.js';
 import { loadVariant } from './variantManager.js';
 import { assertResumeData } from './resumeValidation.js';
+import { DEFAULT_MODEL_ID } from './modelDefaults.js';
 
 // Interview questions for the AI-guided "Start Fresh" flow.
 export const INTERVIEW_QUESTIONS = [
@@ -148,7 +149,7 @@ export async function extractFileText(file) {
  * Improve a single interview answer with AI. Returns the improved text.
  */
 export async function improveInterviewAnswer(questionText, value, modelId) {
-  const model = modelId || 'anthropic/claude-sonnet-4.5';
+  const model = modelId || DEFAULT_MODEL_ID;
   const response = await chat(model, [{
     role: 'user',
     content: `I'm writing my resume. Here's my answer to "${questionText}": "${value}". Please improve this to be more professional and impactful for a resume. Return only the improved text, no explanation.`,

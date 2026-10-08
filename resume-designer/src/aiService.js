@@ -12,6 +12,7 @@ import { trackUsage } from './tokenTrackingService.js';
 import { createStreamAccumulator } from './aiStream.js';
 import { appStorage } from './appStorage.js';
 import { assertAIConsent, requestAIConsent } from './aiConsent.js';
+import { DEFAULT_MODEL_ID } from './modelDefaults.js';
 import {
   toCatalogEntry, CATALOG_SCHEMA_VERSION, deriveFeatured, stripGroupPrefix, CATALOG_SOFT_TTL_MS,
   canOutputText,
@@ -47,11 +48,13 @@ export const GROUNDING_RULES = GROUNDING_RULES_TEXT;
 // Slugs verified against GET https://openrouter.ai/api/v1/models (catalog
 // drifts; re-verify when refreshing this list).
 // This built-in shortlist is the "featured" set shown grouped in the picker. It
-// is best-effort current (verified against GET .../v1/models on 2026-05-31; the
-// catalog drifts — re-verify when refreshing). The live cached catalog
+// is best-effort current (the older entries were verified against GET
+// .../v1/models on 2026-05-31; Opus 5.5 on 2026-10-08). Re-verify when
+// refreshing: the catalog drifts. The live cached catalog
 // (fetchModelCatalog) is the runtime source of truth for reasoning support, and
 // users can pick any other slug via the custom-model field.
 const MODELS = {
+  'anthropic/claude-opus-5.5':     { label: 'Claude Opus 5.5',    group: 'Anthropic', maxTokens: 8192 },
   'anthropic/claude-opus-4.8':     { label: 'Claude Opus 4.8',    group: 'Anthropic', maxTokens: 8192 },
   'anthropic/claude-sonnet-4.6':   { label: 'Claude Sonnet 4.6',  group: 'Anthropic', maxTokens: 8192 },
   'anthropic/claude-haiku-4.5':    { label: 'Claude Haiku 4.5',   group: 'Anthropic', maxTokens: 4096 },
@@ -65,9 +68,6 @@ const MODELS = {
   'deepseek/deepseek-v4-pro':      { label: 'DeepSeek V4 Pro',    group: 'DeepSeek',  maxTokens: 8192 },
   'mistralai/mistral-medium-3-5':  { label: 'Mistral Medium 3.5', group: 'Mistral',  maxTokens: 8192 }
 };
-
-// Default model used when nothing valid is selected.
-const DEFAULT_MODEL_ID = 'anthropic/claude-sonnet-4.6';
 
 // Cross-provider fallback chain for OpenRouter's `models` array (used only when
 // the autoFallback setting is on). Cross-provider on purpose: if one provider

@@ -7,6 +7,7 @@ import {
   profileInterviewChat, extractProfileFromInterview, saveExtractedProfile,
 } from '../../aiService.js';
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from '../../persistence.js';
+import { DEFAULT_MODEL_ID } from '../../modelDefaults.js';
 import { store } from '../../store.js';
 import { createChangeSet } from '../../diffEngine.js';
 import { showDiffView } from '../../diffView.js';
@@ -28,8 +29,6 @@ export function getAIModels() {
     options: models.map((m) => ({ value: m.id, label: m.label })),
   }));
 }
-
-const FALLBACK_MODEL = 'anthropic/claude-sonnet-4.6';
 
 // Keywords that mark a message as a change request (→ diff flow) vs. a question.
 const CHANGE_KEYWORDS = [
@@ -69,7 +68,7 @@ export function getModelLabel(value) {
 function getInitialModel() {
   const settings = getSettings();
   if (settings.defaultModel) return validateModelId(settings.defaultModel);
-  return getDefaultModelId() || FALLBACK_MODEL;
+  return getDefaultModelId() || DEFAULT_MODEL_ID;
 }
 
 function isChangeRequest(message) {
@@ -1022,7 +1021,7 @@ Let's begin!`);
     // Fall back to the built-in default, NOT getInitialModel(): settings still
     // points at the just-removed (valid) slug, so getInitialModel() would
     // re-select what we just removed.
-    if (slug === modelRef.current) selectModel(getDefaultModelId() || FALLBACK_MODEL);
+    if (slug === modelRef.current) selectModel(getDefaultModelId() || DEFAULT_MODEL_ID);
     refreshCustomModels();
   };
   const setReasoning = (level) => { setReasoningEffortState(level); saveSettings({ chatReasoningEffort: level }); };
