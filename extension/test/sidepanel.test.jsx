@@ -151,6 +151,8 @@ function labelled(label) {
 }
 
 async function click(control) {
+  const collapsedSettings = control.closest('.settings-fields[hidden]');
+  if (collapsedSettings) await click(container.querySelector(`[aria-controls="${collapsedSettings.id}"]`));
   await act(async () => {
     control.click();
   });
@@ -158,6 +160,8 @@ async function click(control) {
 }
 
 async function change(control, value) {
+  const collapsedSettings = control.closest('.settings-fields[hidden]');
+  if (collapsedSettings) await click(container.querySelector(`[aria-controls="${collapsedSettings.id}"]`));
   await act(async () => {
     const prototype = control instanceof HTMLSelectElement
       ? HTMLSelectElement.prototype
@@ -1310,8 +1314,8 @@ describe('App explicit workflow', () => {
       resumeId: 'resume-1',
       onProgress: expect.any(Function),
       job: {
-        company: 'Acme',
-        title: 'Staff Product Engineer',
+        company: '',
+        title: '',
         description: 'Lead accessible product development.',
       },
       model: 'provider/test-model',
@@ -1392,7 +1396,7 @@ describe('App explicit workflow', () => {
     expect(container.textContent).toContain('Your resume is ready');
     expect(container.textContent).toContain('Staff Product Engineer — Acme');
     expect(client.createMapping).toHaveBeenCalledOnce();
-    expect(client.scanPage).toHaveBeenCalledTimes(3);
+    expect(client.scanPage).toHaveBeenCalledTimes(2);
     expect(client.getResumePreview).toHaveBeenCalledWith('context-1', tailoredId);
   });
 
@@ -1597,7 +1601,7 @@ describe('focused application workspace', () => {
     expect(button('Prepare autofill review')).toBeTruthy();
   });
 
-  it('does not reuse a manual job description after the application page changes', async () => {
+  it('keeps a manual tailoring source separate from a different application page', async () => {
     const firstPage = { company: 'First', title: 'Designer', description: '', url: 'https://jobs.test/one', fingerprint: 'first' };
     const nextPage = { company: 'Second', title: 'Engineer', description: '', url: 'https://jobs.test/two', fingerprint: 'second' };
     const client = makeClient({
@@ -1617,9 +1621,9 @@ describe('focused application workspace', () => {
       onProgress: expect.any(Function),
     });
     await click(button('Tailor resume'));
-    expect(container.querySelector('#manual-job-description')).toBeNull();
-    await click(button('Manually enter job description'));
-    expect(labelled('Job description').value).toBe('');
+    expect(labelled('Job description').value).toBe('A description only for the first role.');
+    await click(button('Analyze fit'));
+    expect(client.analyzeJobFit.mock.calls[0][0].job).toEqual({ company: '', title: '', description: 'A description only for the first role.' });
   });
 
   it('shows the selected default model and preserves task defaults until explicitly changed', async () => {
@@ -1812,6 +1816,150 @@ describe('connection recovery and review polish', () => {
   });
 });
 
+
+describe('contextual tailoring sources and collapsible settings', () => {
+  const page = { title: 'Product Designer', company: 'Acme', location: 'Remote', description: 'Design accessible products.', url: 'https://jobs.test/designer', fingerprint: 'designer' };
+
+  it('keeps fresh tailoring free of recovery choices and unrelated autofill context', async () => {
+    const client = makeClient({ scanPage: vi.fn(async () => ({ descriptors: [descriptor('name')], page: { company: 'Other company', title: 'Application form' } })) });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Prepare autofill review'));
+    await click(button('Tailor resume'));
+    expect(container.querySelector('.job-source-actions')).toBeNull();
+    expect(container.querySelector('.job-results')).toBeNull();
+    expect(button('Analyze fit').disabled).toBe(false);
+    expect(button('Create tailored resume').disabled).toBe(false);
+    expect(client.scanPage).toHaveBeenCalledOnce();
+  });
+
+  it.each(['Analyze fit', 'Create tailored resume'])('reveals recovery after %s cannot capture a description, then hides it after rescan', async (action) => {
+    const client = makeClient({ scanPage: vi.fn().mockResolvedValueOnce({ descriptors: [], page: {} }).mockResolvedValue({ descriptors: [], page }) });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Tailor resume'));
+    expect(container.querySelector('.job-source-actions')).toBeNull();
+    await click(button(action));
+    expect(button('Check web page again')).toBeTruthy();
+    expect(button('Manually enter job description')).toBeTruthy();
+    expect(container.querySelector('#manual-job-description')).toBeNull();
+    expect(container.querySelector('.job-results')).toBeNull();
+    expect(client.analyzeJobFit).not.toHaveBeenCalled();
+    expect(client.createTailoredResume).not.toHaveBeenCalled();
+    await click(button('Check web page again'));
+    expect(container.querySelector('.job-source-actions')).toBeNull();
+    expect(container.querySelector('.captured-job')?.textContent).toContain('Product Designer');
+    expect(client.analyzeJobFit).not.toHaveBeenCalled();
+    expect(client.createTailoredResume).not.toHaveBeenCalled();
+    await click(button('Analyze fit'));
+    expect(client.scanPage).toHaveBeenCalledTimes(2);
+    expect(client.analyzeJobFit.mock.calls[0][0].job.description).toBe('Design accessible products.');
+  });
+
+  it('makes capture exceptions recoverable with manual entry and cancellation', async () => {
+    const client = makeClient({ scanPage: vi.fn().mockRejectedValue(new Error('Page cannot be read')) });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Tailor resume'));
+    await click(button('Analyze fit'));
+    await click(button('Manually enter job description'));
+    expect([...container.querySelectorAll('button')].some((item) => item.textContent === 'Manually enter job description')).toBe(false);
+    expect(button('Analyze fit').disabled).toBe(true);
+    await change(labelled('Job description'), 'A manually selected role.');
+    await click(button('Cancel manual entry'));
+    expect(container.querySelector('#manual-job-description')).toBeNull();
+    expect(button('Check web page again')).toBeTruthy();
+    await click(button('Manually enter job description'));
+    expect(labelled('Job description').value).toBe('');
+    await change(labelled('Job description'), 'A manually selected role.');
+    await click(button('Analyze fit'));
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(client.analyzeJobFit.mock.calls[0][0].job).toEqual({ company: '', title: '', description: 'A manually selected role.' });
+    expect(container.querySelector('.fit-overview')?.textContent).toContain('82% match');
+  });
+
+  it('keeps provider errors distinct from capture recovery', async () => {
+    const client = makeClient({ scanPage: vi.fn(async () => ({ descriptors: [], page })), analyzeJobFit: vi.fn().mockRejectedValue(new Error('Provider unavailable')) });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Tailor resume'));
+    await click(button('Analyze fit'));
+    expect(container.querySelector('.job-source-actions')).toBeNull();
+    expect(container.querySelector('.captured-job')?.textContent).toContain('Product Designer');
+    expect(button('Change job description')).toBeTruthy();
+    expect(container.textContent).toContain('Provider unavailable');
+  });
+
+  it('changes sources only on demand and restores the captured job when manual entry is cancelled', async () => {
+    const client = makeClient({ scanPage: vi.fn(async () => ({ descriptors: [], page })) });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Tailor resume'));
+    await click(button('Create tailored resume'));
+    expect(container.querySelector('.job-source-actions')).toBeNull();
+    expect(container.querySelector('.generated-resume')).toBeTruthy();
+    await click(button('Change job description'));
+    await click(button('Manually enter job description'));
+    expect(container.querySelector('.generated-resume')).toBeNull();
+    await change(labelled('Job description'), 'An entirely different employer.');
+    await click(button('Cancel manual entry'));
+    expect(container.querySelector('#manual-job-description')).toBeNull();
+    expect(container.querySelector('.captured-job')?.textContent).toContain('Product Designer');
+    expect(container.querySelector('.job-source-actions')).toBeNull();
+    await click(button('Change job description'));
+    await click(button('Manually enter job description'));
+    await change(labelled('Job description'), 'An entirely different employer.');
+    await click(button('Analyze fit'));
+    expect(client.analyzeJobFit.mock.calls[0][0].job).toEqual({ company: '', title: '', description: 'An entirely different employer.' });
+    expect(container.querySelector('.captured-job')?.textContent).not.toContain('Acme');
+  });
+
+  it('collapses settings per workflow while keeping current selections visible', async () => {
+    const client = makeClient();
+    await renderApp(client, { heartbeatMs: 0 });
+    let toggle = container.querySelector('.settings-toggle');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(toggle.getAttribute('aria-controls')).hidden).toBe(true);
+    expect(toggle.textContent).toContain('Backend résumé');
+    expect(toggle.textContent).toContain('Test model');
+    await click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    await chooseModel('provider/test-model');
+    await click(button('Tailor resume'));
+    toggle = container.querySelector('.settings-toggle');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.textContent).toContain('My full profile');
+    await click(toggle);
+    await change(labelled('Source'), 'resume-1');
+    await click(toggle);
+    expect(toggle.textContent).toContain('Backend résumé');
+    await click(button('Autofill'));
+    expect(container.querySelector('.settings-toggle').getAttribute('aria-expanded')).toBe('true');
+    expect(labelled('AI model').value).toBe('Test model');
+  });
+
+  it.each([
+    ['Analyze fit', 'captured'], ['Create tailored resume', 'captured'],
+    ['Analyze fit', 'manual'], ['Create tailored resume', 'manual'],
+  ])('stops %s with a %s source when reconnecting refreshes the profile context', async (action, source) => {
+    const failure = new RuntimeMessageError({ code: 'app_timeout', message: 'Connection interrupted', retryable: true });
+    const client = makeClient({
+      scanPage: vi.fn(async () => ({ descriptors: [], page: source === 'manual' ? {} : page })),
+      analyzeJobFit: vi.fn().mockRejectedValueOnce(failure).mockResolvedValue({ analysis: { matchScore: 82 } }),
+      createTailoredResume: vi.fn().mockRejectedValueOnce(failure).mockResolvedValue({ created: true, resume: { id: 'new-context-resume', name: 'New resume' } }),
+    });
+    await renderApp(client, { heartbeatMs: 0 });
+    await click(button('Tailor resume'));
+    if (source === 'manual') {
+      await click(button(action));
+      await click(button('Manually enter job description'));
+      await change(labelled('Job description'), 'The first profile’s chosen job.');
+    }
+    await click(button(action));
+    client.checkConnection.mockResolvedValueOnce({ connected: true, profileId: 'profile-2', profileContextId: 'context-2', resumes: [{ id: 'resume-1', name: 'Other profile resume' }] });
+    await click(button(action));
+    expect(action === 'Analyze fit' ? client.analyzeJobFit : client.createTailoredResume).toHaveBeenCalledOnce();
+    expect(client.scanPage).toHaveBeenCalledOnce();
+    expect(container.querySelector('.captured-job')).toBeNull();
+    expect(container.querySelector('.generated-resume')).toBeNull();
+    expect(container.querySelector('.job-source-actions')).toBeNull();
+  });
+});
 
 describe('review page binding', () => {
   it('uses the original immutable scan context after edits and a later job scan', async () => {
@@ -2314,10 +2462,11 @@ describe('transparent AI workspace', () => {
     const client = makeClient({ scanPage: vi.fn(async () => { throw new Error('Page cannot be read'); }) });
     await renderApp(client, { heartbeatMs: 0 });
     await click(button('Tailor resume'));
+    await click(button('Analyze fit'));
     await click(button('Manually enter job description'));
     await change(labelled('Job description'), 'Build accessible tools for customers.');
     await click(button('Analyze fit'));
-    expect(client.scanPage).not.toHaveBeenCalled();
+    expect(client.scanPage).toHaveBeenCalledOnce();
     expect(client.analyzeJobFit.mock.calls[0][0].job).toEqual({ company: '', title: '', description: 'Build accessible tools for customers.' });
     expect(container.querySelector('.fit-overview')?.textContent).toContain('82% match');
     await change(labelled('Job description'), 'A different role.');

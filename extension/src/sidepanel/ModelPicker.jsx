@@ -2,6 +2,43 @@ import { useEffect, useId, useRef, useState } from 'react';
 
 import './ModelPicker.css';
 
+// Match the featured provider names/order used by the desktop catalog. The
+// bridge sends { id, name }, so the canonical slug supplies the provider.
+const FEATURED_PROVIDERS = new Map([
+  ['anthropic', 'Anthropic'],
+  ['openai', 'OpenAI'],
+  ['google', 'Google'],
+  ['x-ai', 'xAI'],
+  ['deepseek', 'DeepSeek'],
+  ['mistralai', 'Mistral'],
+]);
+
+function groupCatalog(models) {
+  const groups = new Map();
+  const featuredOrder = [...FEATURED_PROVIDERS.keys()];
+  for (const model of models) {
+    const providerId = model.id.split('/')[0];
+    const prefix = (model.name || '').split(': ')[0];
+    const normalize = (text) => text.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const label = FEATURED_PROVIDERS.get(providerId)
+      || ((model.name || '').includes(': ') && normalize(prefix) === normalize(providerId) ? prefix : '')
+      || providerId.split(/[-_]/).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    if (!groups.has(providerId)) groups.set(providerId, { id: providerId, label, models: [] });
+    const name = model.name || model.id;
+    groups.get(providerId).models.push({
+      id: model.id,
+      name: name.startsWith(`${label}: `) ? name.slice(label.length + 2) : name,
+      detail: model.id,
+      providerId,
+      providerLabel: label,
+    });
+  }
+  return [...groups.values()].sort((left, right) => {
+    const rank = (id) => featuredOrder.includes(id) ? featuredOrder.indexOf(id) : featuredOrder.length;
+    return rank(left.id) - rank(right.id) || left.label.localeCompare(right.label);
+  });
+}
+
 export default function ModelPicker({
   models = [],
   value = '',
@@ -31,13 +68,19 @@ export default function ModelPicker({
   const selectedLabel = value
     ? selectedModel?.name || value
     : defaultName ? `App default · ${defaultName}` : 'Use app default';
+  const catalogGroups = groupCatalog(catalog);
   const choices = [
     { id: '', name: 'Use app default', detail: defaultName || 'Your AI settings in On Paper' },
     ...(value && !selectedModel ? [{ id: value, name: value, detail: 'Saved selection · not in current catalog' }] : []),
-    ...catalog.map((model) => ({ id: model.id, name: model.name || model.id, detail: model.id })),
+    ...catalogGroups.flatMap((group) => group.models),
   ];
   const normalizedQuery = query.trim().toLowerCase();
-  const matches = choices.filter((model) => `${model.name} ${model.detail}`.toLowerCase().includes(normalizedQuery));
+  const matches = choices.filter((model) => `${model.name} ${model.detail} ${model.providerLabel || ''}`.toLowerCase().includes(normalizedQuery));
+  const matchIndexes = new Map(matches.map((model, index) => [model.id, index]));
+  const visibleGroups = catalogGroups.map((group) => ({
+    ...group,
+    models: group.models.filter((model) => matchIndexes.has(model.id)),
+  })).filter((group) => group.models.length);
   const activeChoice = matches[activeIndex];
   const activeId = expanded && activeChoice ? `${listId}-${activeIndex}` : undefined;
 
@@ -56,7 +99,7 @@ export default function ModelPicker({
 
   useEffect(() => {
     if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' });
-  }, [activeId]);
+  }, [activeId, query]);
 
   function reveal() {
     if (unavailable || expanded) return;
@@ -105,6 +148,30 @@ export default function ModelPicker({
       if (expanded) choose(activeChoice);
       else reveal();
     }
+  }
+
+  function renderOption(model) {
+    const index = matchIndexes.get(model.id);
+    return (
+      <button
+        type="button"
+        role="option"
+        id={`${listId}-${index}`}
+        key={model.id}
+        tabIndex={-1}
+        aria-selected={model.id === value}
+        className={`model-picker__option${index === activeIndex ? ' is-active' : ''}`}
+        onMouseDown={(event) => event.preventDefault()}
+        onPointerMove={() => setActiveIndex(index)}
+        onClick={() => choose(model)}
+      >
+        <span className="model-picker__option-copy">
+          <strong>{model.name}</strong>
+          <small>{model.detail}</small>
+        </span>
+        {model.id === value ? <span className="model-picker__check" aria-hidden="true">✓</span> : null}
+      </button>
+    );
   }
 
   return (
@@ -169,25 +236,15 @@ export default function ModelPicker({
       {expanded ? (
         <div className="model-picker__popover">
           <div className="model-picker__results" role="listbox" id={listId} aria-label="AI models">
-            {matches.map((model, index) => (
-              <button
-                type="button"
-                role="option"
-                id={`${listId}-${index}`}
-                key={model.id}
-                tabIndex={-1}
-                aria-selected={model.id === value}
-                className={`model-picker__option${index === activeIndex ? ' is-active' : ''}`}
-                onMouseDown={(event) => event.preventDefault()}
-                onPointerMove={() => setActiveIndex(index)}
-                onClick={() => choose(model)}
-              >
-                <span className="model-picker__option-copy">
-                  <strong>{model.name}</strong>
-                  <small>{model.detail}</small>
-                </span>
-                {model.id === value ? <span className="model-picker__check" aria-hidden="true">✓</span> : null}
-              </button>
+            {matches.filter((model) => !model.providerId).map(renderOption)}
+            {visibleGroups.map((group) => (
+              <div key={group.id} role="group" aria-label={group.label} className="model-picker__group">
+                <div className="model-picker__group-heading" aria-hidden="true">
+                  <span>{group.label}</span>
+                  <span className="model-picker__group-count">{group.models.length}</span>
+                </div>
+                {group.models.map(renderOption)}
+              </div>
             ))}
           </div>
           <p className="model-picker__result-count" role="status" aria-live="polite">

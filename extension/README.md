@@ -135,7 +135,7 @@ Chrome clearing its session storage remove the pending identity.
 
 ## Review and fill an application
 
-1. Choose **Autofill**, then choose **Resume to fill from** and **AI model** within that workflow. The integrated model picker initially shows the app default. Click it and type a model name or provider to see live results; choose **Use app default** to return to your settings in On Paper. Choosing a different model applies to this companion session without changing app defaults. The API key stays in On Paper. If automatic fallback is enabled there, it still applies. A failed model-list request shows its cause and a retry action.
+1. Choose **Autofill**. The collapsed **Resume and model** section shows the current selections; expand it to change **Resume to fill from** or **AI model**. Each tab remembers its own expanded state. The integrated model picker initially shows the app default. Models are grouped by provider with headings and filtered counts. Type a model name or provider to see live results; choose **Use app default** to return to your settings in On Paper. Choosing a different model applies to this companion session without changing app defaults. The API key stays in On Paper. If automatic fallback is enabled there, it still applies. A failed model-list request shows its cause and a retry action, with a notice in the collapsed summary.
 2. In **Autofill**, click **Prepare autofill review**. The extension first scans the application for compact field descriptors and page context without sending raw HTML or the raw DOM. On Paper then uses the selected resume, active profile data, learned answers, and extracted job context to prepare suggestions. It drafts open-ended motivation and experience answers from those facts; unknown factual answers and sensitive questions remain manual. The button reports **Scanning application form…** and **Preparing field suggestions…**, then announces when the review is ready, including separate counts for on-page manual fields and unanswered editable fields.
 3. Review every item in descriptor order:
    - Edit text values inline; narrative answers have multiline editors.
@@ -152,11 +152,11 @@ Chrome clearing its session storage remove the pending identity.
 
 ## Analyze fit and create a tailored resume
 
-Switch to **Tailor resume**, then choose a **Source** and **AI model**. **My full profile** is the default: you can analyze fit and create a new resume before saving any other resume. Choose an existing resume as the source when you want to tailor that version. Fit results and saved resumes stay in this view until you choose a next step.
+Switch to **Tailor resume**. Expand **Resume and model** to change **Source** or **AI model**. **My full profile** is the default: you can analyze fit and create a new resume before saving any other resume. Choose an existing resume as the source when you want to tailor that version. The fresh tab shows **Analyze fit** and **Create tailored resume**; choosing either reads the current job page before running AI.
 
 The scan also extracts conservative job context: structured `JobPosting`
 metadata or a known job-description container, never arbitrary page-body text.
-When a description cannot be found, open the job posting and choose **Check web page again**, or choose **Manually enter job description**. Checking again updates the captured details without running AI. Manual entry also works on pages that Chrome cannot read.
+Only when capture fails or finds no description does the panel reveal **Check web page again** and **Manually enter job description**. Checking again captures the current page without running AI. A successful capture hides those recovery choices and shows the selected job details. Further Analyze/Create actions use that selected description; **Change job description** reveals source choices when you want another role. Manual entry works even when Chrome cannot read the page, starts without inferred company or role metadata, and offers **Cancel manual entry** to restore the previous source. Autofill scans do not overwrite the tailoring source. Changing the source clears old fit results and the previous saved-resume card; saved files remain in On Paper. Reconnecting to a different profile stops the pending action and asks for a fresh choice.
 
 - **Analyze fit** sends the selected source and job context to On Paper,
   which uses the selected model (or the app's analysis default) and its saved key. The panel shows the

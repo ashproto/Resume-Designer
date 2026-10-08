@@ -73,18 +73,11 @@ function stateForError(error, previous = {}) {
   };
 }
 
-function samePage(left, right) {
-  return Boolean(left?.url)
-    && left.url === right?.url
-    && Boolean(left?.fingerprint)
-    && left.fingerprint === right?.fingerprint;
-}
-
-function jobFromPage(page, manualDescription = '') {
+function jobFromPage(page) {
   return {
     company: String(page?.company ?? ''),
     title: String(page?.title ?? ''),
-    description: String(page?.description || manualDescription).trim(),
+    description: String(page?.description ?? '').trim(),
   };
 }
 
@@ -164,6 +157,7 @@ function Workspace({
   const [modelCatalog, setModelCatalog] = useState({ state: 'loading', models: [], defaults: {}, autoFallback: false, error: '' });
   const [modelLoadAttempt, setModelLoadAttempt] = useState(0);
   const [workflow, setWorkflow] = useState('autofill');
+  const [settingsExpanded, setSettingsExpanded] = useState({ autofill: false, tailor: false });
   const [pairingBusy, setPairingBusy] = useState(false);
   const [pairingAction, setPairingAction] = useState('idle');
   const [scanBusy, setScanBusy] = useState(false);
@@ -189,7 +183,10 @@ function Workspace({
   const [fillAnnouncement, setFillAnnouncement] = useState('');
   const [jobDraft, setJobDraft] = useState(null);
   const [manualJobDescription, setManualJobDescription] = useState('');
-  const [manualJobEntry, setManualJobEntry] = useState(false);
+  const [tailorJobSource, setTailorJobSource] = useState({ kind: 'idle', page: null });
+  const [showJobSourceChoices, setShowJobSourceChoices] = useState(false);
+  const manualJobEntry = tailorJobSource.kind === 'manual';
+  const manualSourceBeforeEdit = useRef(null);
   const [generatedResume, setGeneratedResume] = useState(null);
   const [resumePreview, setResumePreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -311,7 +308,9 @@ function Workspace({
     setTitle('');
     setJobDraft(null);
     setManualJobDescription('');
-    setManualJobEntry(false);
+    setTailorJobSource({ kind: 'idle', page: null });
+    setShowJobSourceChoices(false);
+    manualSourceBeforeEdit.current = null;
     resumeActionGeneration.current += 1;
     setGeneratedResume(null);
     setResumePreview(null);
@@ -768,13 +767,8 @@ function Workspace({
           && pendingLog.pageTitle === String(page.title ?? '');
         setCompany(samePendingApplication ? pendingLog.company : String(page.company ?? ''));
         setTitle(samePendingApplication ? pendingLog.title : String(page.title ?? ''));
-        const matchesJobDraft = samePage(page, jobDraft);
-        const job = jobFromPage(page, matchesJobDraft ? manualJobDescription : '');
+        const job = jobFromPage(page);
         setJobDraft(page);
-        if (page.description || !matchesJobDraft) {
-          setManualJobDescription('');
-          setManualJobEntry(false);
-        }
         setScanBusy(false);
 
         if (descriptors.length === 0) {
@@ -1073,40 +1067,54 @@ function Workspace({
   }
 
   async function scanJobForAction({ forcePage = false } = {}) {
-    // Manual entry is an explicit source choice and works even on pages that
-    // cannot be scraped. It is cleared when a different application is scanned.
     if (manualJobEntry && !forcePage) {
       const description = manualJobDescription.trim();
       if (!description) {
         setJobActionStatus('Enter a job description to continue.');
-        return { page: jobDraft || {}, job: null };
+        return { page: {}, job: null };
       }
-      return { page: jobDraft || {}, job: { ...jobFromPage(jobDraft), description } };
+      return { page: {}, job: jobFromPage({ description }) };
+    }
+    if (tailorJobSource.kind === 'captured' && !forcePage) {
+      return { page: tailorJobSource.page, job: jobFromPage(tailorJobSource.page) };
     }
     setScanBusy(true);
+    setShowJobSourceChoices(false);
     try {
       const result = await client.scanPage();
       const page = result?.page && typeof result.page === 'object' ? result.page : {};
-      setJobDraft(page);
       setManualJobDescription('');
-      setManualJobEntry(false);
-      setCompany(String(page.company ?? ''));
-      setTitle(String(page.title ?? ''));
+      manualSourceBeforeEdit.current = null;
       if (!String(page.description ?? '').trim()) {
+        setTailorJobSource({ kind: 'missing', page: null });
         setJobActionStatus('No job description found. Open the job posting and check again, or enter it manually.');
         return { page, job: null };
       }
+      setTailorJobSource({ kind: 'captured', page });
       return { page, job: jobFromPage(page) };
+    } catch (error) {
+      setTailorJobSource({ kind: 'failed', page: null });
+      throw error;
     } finally {
       setScanBusy(false);
     }
   }
 
+  function clearTailoringResults() {
+    setFitAnalysis(null);
+    tailoringRequest.current = null;
+    resumeActionGeneration.current += 1;
+    setGeneratedResume(null);
+    setResumePreview(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+    setResumeOpenError(null);
+  }
+
   async function handleCheckJobPage() {
     if (!beginOperation('check-job-page')) return;
-    setFitAnalysis(null);
+    clearTailoringResults();
     setRuntimeError(null);
-    tailoringRequest.current = null;
     try {
       const scanned = await scanJobForAction({ forcePage: true });
       if (scanned.job) setJobActionStatus('Job description captured. Review it below, then choose your next step.');
@@ -1120,10 +1128,24 @@ function Workspace({
 
   function handleManualJobEntry() {
     if (hasPendingInteraction()) return;
-    setManualJobEntry(true);
-    setFitAnalysis(null);
+    manualSourceBeforeEdit.current = tailorJobSource;
+    setTailorJobSource({ kind: 'manual', page: null });
+    setManualJobDescription('');
+    setShowJobSourceChoices(false);
+    setRuntimeError(null);
+    clearTailoringResults();
     setJobActionStatus('Enter the job description, then choose Analyze fit or Create tailored resume.');
-    tailoringRequest.current = null;
+  }
+
+  function handleCancelManualEntry() {
+    if (hasPendingInteraction()) return;
+    setTailorJobSource(manualSourceBeforeEdit.current || { kind: 'idle', page: null });
+    manualSourceBeforeEdit.current = null;
+    setManualJobDescription('');
+    setJobActionStatus('');
+    setRuntimeError(null);
+    setShowJobSourceChoices(false);
+    clearTailoringResults();
   }
 
   async function loadResumePreview(saved, generation) {
@@ -1186,6 +1208,10 @@ function Workspace({
     try {
       const ready = await connectionForAction();
       if (!ready) return;
+      if (ready.contextChanged) {
+        setJobActionStatus('Your profile changed. Review the current settings, then choose your next step.');
+        return;
+      }
       const resumeId = ready.connection.resumes.some((resume) => resume.id === tailoringSourceId) ? tailoringSourceId : '';
       const scanned = await scanJobForAction();
       if (!scanned.job) return;
@@ -1215,6 +1241,10 @@ function Workspace({
     try {
       const ready = await connectionForAction();
       if (!ready) return;
+      if (ready.contextChanged) {
+        setJobActionStatus('Your profile changed. Review the current settings, then choose your next step.');
+        return;
+      }
       const baseResumeId = ready.connection.resumes.some((resume) => resume.id === tailoringSourceId) ? tailoringSourceId : '';
       const scanned = await scanJobForAction();
       if (!scanned.job) return;
@@ -1340,9 +1370,36 @@ function Workspace({
       : pendingReview
         ? 'Retry preparing review'
         : 'Prepare autofill review';
+  const needsJobSource = ['missing', 'failed'].includes(tailorJobSource.kind);
+  const settingsOpen = settingsExpanded[workflow];
+  const selectedSource = connection.resumes.find((resume) => resume.id === (workflow === 'tailor' ? tailoringSourceId : selectedResumeId));
+  const sourceSummary = selectedSource?.name || (workflow === 'tailor' ? 'My full profile' : 'Choose a resume');
+  const modelSummary = selectedModel
+    ? modelCatalog.models.find((model) => model.id === selectedModel)?.name || selectedModel
+    : `App default${defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring') ? ` · ${defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring')}` : ''}`;
 
   const workflowControls = (
     <section className="panel-section controls-section" aria-label={workflow === 'tailor' ? 'Tailoring settings' : 'Autofill settings'}>
+      <button
+        type="button"
+        className="settings-toggle"
+        aria-label={workflow === 'tailor' ? 'Tailoring settings' : 'Autofill settings'}
+        aria-expanded={settingsOpen}
+        aria-controls={`${workflow}-settings-fields`}
+        aria-describedby={`${workflow}-settings-summary`}
+        disabled={workflowBusy}
+        onClick={() => setSettingsExpanded((current) => ({ ...current, [workflow]: !current[workflow] }))}
+      >
+        <span className="settings-summary" id={`${workflow}-settings-summary`}>
+          <strong>Resume and model</strong>
+          <span className="settings-choice">{sourceSummary}</span>
+          <span className="settings-choice">{modelSummary}</span>
+          {modelCatalog.state === 'unavailable' ? <span className="settings-notice">Models unavailable · expand to retry</span> : null}
+          {modelCatalog.state === 'loading' ? <span className="settings-notice">Loading models…</span> : null}
+        </span>
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="m5 7 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      <div id={`${workflow}-settings-fields`} className="settings-fields" hidden={!settingsOpen}>
       <div className="picker-field">
         <label htmlFor="resume-picker">{workflow === 'tailor' ? 'Source' : 'Resume to fill from'}</label>
         <select
@@ -1390,12 +1447,13 @@ function Workspace({
           </div>
         ) : null}
       </div>
+      </div>
     </section>
   );
 
   return (
     <>
-    {processing ? <ProcessingView heading={processingHeading} message={processingMessage} reasoning={progressNotes} fields={discoveredFields} job={scanBusy ? null : jobDraft} step={scanBusy ? 'scanning' : progress?.stage} /> : null}
+    {processing ? <ProcessingView heading={processingHeading} message={processingMessage} reasoning={progressNotes} fields={discoveredFields} job={scanBusy ? null : workflow === 'tailor' ? tailorJobSource.page : jobDraft} step={scanBusy ? 'scanning' : progress?.stage} /> : null}
     <main className="panel-shell" hidden={processing}>
       <header className="panel-header">
         <div className="brand-lockup">
@@ -1480,57 +1538,79 @@ function Workspace({
               /> : null}
               {workflowControls}
               <section className="panel-section job-actions-section" aria-labelledby="job-actions-heading">
-                <h2 id="job-actions-heading">Prepare for this role</h2>
+                <h2 id="job-actions-heading">{needsJobSource ? 'Job description needed' : 'Prepare for this role'}</h2>
                 <p className="supporting-copy">
-                  Compare your experience with this role, then create a focused resume for it.
+                  {needsJobSource
+                    ? tailorJobSource.kind === 'missing'
+                      ? 'No job description was found. Open the job posting and check again, or enter it manually.'
+                      : 'The job page couldn’t be read. Check it again, or enter the description manually.'
+                    : manualJobEntry
+                      ? 'Use the description you enter below to analyze your fit or create a focused resume.'
+                      : tailorJobSource.kind === 'captured'
+                        ? 'Use the captured job description below to analyze your fit or create a focused resume.'
+                        : 'Read the job description on this page to analyze your fit or create a focused resume.'}
                 </p>
-                <div className="button-row job-source-actions">
+                {tailorJobSource.kind === 'captured' ? <button
+                  type="button"
+                  className="text-button job-source-toggle"
+                  disabled={workflowBusy}
+                  aria-expanded={showJobSourceChoices}
+                  aria-controls="job-source-choices"
+                  onClick={() => setShowJobSourceChoices((current) => !current)}
+                >{showJobSourceChoices ? 'Keep current job' : 'Change job description'}</button> : null}
+                {needsJobSource || showJobSourceChoices ? <div id="job-source-choices" className="button-row job-source-actions">
                   <button type="button" className="secondary-button" disabled={workflowBusy} onClick={handleCheckJobPage}>Check web page again</button>
-                  <button type="button" className="text-button" disabled={workflowBusy || manualJobEntry} onClick={handleManualJobEntry}>Manually enter job description</button>
-                </div>
+                  <button type="button" className="secondary-button" disabled={workflowBusy} onClick={handleManualJobEntry}>Manually enter job description</button>
+                </div> : null}
                 {manualJobEntry ? (
-                  <>
+                  <div className="manual-job-entry">
                     <label htmlFor="manual-job-description">Job description</label>
                     <textarea
                       id="manual-job-description"
                       value={manualJobDescription}
                       placeholder="Paste the job description"
+                      autoFocus
                       disabled={workflowBusy}
                       onChange={(event) => {
                         setManualJobDescription(event.target.value);
-                        setFitAnalysis(null);
-                        tailoringRequest.current = null;
+                        clearTailoringResults();
+                        setJobActionStatus('');
+                        setRuntimeError(null);
                       }}
                     />
-                  </>
+                    <div className="button-row manual-source-actions">
+                      <button type="button" className="text-button" disabled={workflowBusy} onClick={handleCancelManualEntry}>Cancel manual entry</button>
+                      <button type="button" className="text-button" disabled={workflowBusy} onClick={handleCheckJobPage}>Check web page again</button>
+                    </div>
+                  </div>
                 ) : null}
-                <div className="button-row">
+                {!needsJobSource && !showJobSourceChoices ? <div className="button-row">
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={workflowBusy}
+                    disabled={workflowBusy || (manualJobEntry && !manualJobDescription.trim())}
                     onClick={handleAnalyzeFit}
                   >
                     {jobAction === 'analyzing' ? 'Analyzing fit…' : 'Analyze fit'}
                   </button>
                   <button
                     type="button"
-                    className="secondary-button"
-                    disabled={workflowBusy}
+                    className="primary-button"
+                    disabled={workflowBusy || (manualJobEntry && !manualJobDescription.trim())}
                     onClick={handleCreateTailoredResume}
                   >
                     {jobAction === 'tailoring' ? 'Creating tailored resume…' : 'Create tailored resume'}
                   </button>
-                </div>
-                {jobActionStatus ? (
+                </div> : null}
+                {jobActionStatus && !needsJobSource ? (
                   <p className="supporting-copy job-action-status" role="status" aria-live="polite">
                     {jobActionStatus}
                   </p>
                 ) : null}
               </section>
 
-              {jobDraft || manualJobEntry || fitAnalysis ? <div className="job-results" ref={fitResultRef}>
-                <JobContext job={jobDraft || {}} description={manualJobDescription} manual={manualJobEntry} />
+              {tailorJobSource.kind === 'captured' || (manualJobEntry && manualJobDescription.trim()) || fitAnalysis ? <div className="job-results" ref={fitResultRef}>
+                <JobContext job={tailorJobSource.page || {}} description={manualJobDescription} manual={manualJobEntry} />
                 <FitAnalysis analysis={fitAnalysis} />
               </div> : null}
             </div>

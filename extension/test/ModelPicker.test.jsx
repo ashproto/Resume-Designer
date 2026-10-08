@@ -84,9 +84,90 @@ describe('ModelPicker', () => {
     expect(document.getElementById(firstActive)?.getAttribute('aria-selected')).toBe('true');
     await key('ArrowDown');
     const secondActive = input().getAttribute('aria-activedescendant');
-    expect(document.getElementById(secondActive)?.textContent).toContain('Claude Sonnet');
+    expect(document.getElementById(secondActive)?.textContent).toContain('Gemini');
     await key('Enter');
-    expect(onChange).toHaveBeenCalledWith('anthropic/claude-sonnet');
+    expect(onChange).toHaveBeenCalledWith('google/gemini');
+  });
+
+  it('groups interleaved catalog models by accessible provider headings with visible counts', async () => {
+    await render({ models: [
+      { id: 'openai/gpt-5', name: 'GPT-5' },
+      { id: 'acme-labs/example', name: 'Example model' },
+      { id: 'anthropic/claude-sonnet', name: 'Claude Sonnet' },
+      { id: 'openai/gpt-mini', name: 'GPT Mini' },
+      { id: 'google/gemini', name: 'Gemini' },
+      { id: 'moonshotai/kimi', name: 'MoonshotAI: Kimi' },
+    ] });
+    await click(input());
+    const groups = [...container.querySelectorAll('[role="group"]')];
+    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['Anthropic', 'OpenAI', 'Google', 'Acme Labs', 'MoonshotAI']);
+    expect(groups[1].querySelector('.model-picker__group-count').textContent).toBe('2');
+    expect([...groups[1].querySelectorAll('[role="option"]')].map((option) => option.querySelector('strong').textContent))
+      .toEqual(['GPT-5', 'GPT Mini']);
+    expect(groups[4].querySelector('strong').textContent).toBe('Kimi');
+    expect(options()[0].textContent).toContain('Use app default');
+    expect(options()[0].closest('[role="group"]')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('filters by friendly provider names and keeps only the matching provider groups and counts', async () => {
+    await render({ models: [
+      { id: 'x-ai/grok', name: 'Grok' },
+      { id: 'mistralai/medium', name: 'Medium' },
+      { id: 'mistralai/small', name: 'Small' },
+      { id: 'openai/gpt-5', name: 'GPT-5' },
+    ] });
+    await click(input());
+    await type('xAI');
+    expect(options()).toHaveLength(1);
+    expect(options()[0].textContent).toContain('Grok');
+    expect(container.querySelector('[role="group"]').getAttribute('aria-label')).toBe('xAI');
+    await type('Mistral');
+    expect(options()).toHaveLength(2);
+    expect(container.querySelectorAll('[role="group"]')).toHaveLength(1);
+    expect(container.querySelector('.model-picker__group-count').textContent).toBe('2');
+    await type('Medium');
+    expect(options()).toHaveLength(1);
+    expect(container.querySelector('.model-picker__group-count').textContent).toBe('1');
+    expect(input().getAttribute('aria-activedescendant')).toBe(options()[0].id);
+    await key('Enter');
+    expect(onChange).toHaveBeenCalledWith('mistralai/medium');
+  });
+
+  it('navigates across provider boundaries without making group headings selectable', async () => {
+    await render({ value: 'anthropic/sonnet', models: [
+      { id: 'openai/gpt-5', name: 'GPT-5' },
+      { id: 'anthropic/sonnet', name: 'Sonnet' },
+      { id: 'anthropic/opus', name: 'Opus' },
+    ] });
+    await key('ArrowDown');
+    await key('ArrowDown');
+    expect(document.getElementById(input().getAttribute('aria-activedescendant')).textContent).toContain('Opus');
+    await key('ArrowDown');
+    const active = document.getElementById(input().getAttribute('aria-activedescendant'));
+    expect(active.textContent).toContain('GPT-5');
+    expect(active.closest('[role="group"]').getAttribute('aria-label')).toBe('OpenAI');
+    await key('ArrowUp');
+    await key('Enter');
+    expect(onChange).toHaveBeenCalledWith('anthropic/opus');
+  });
+
+  it('keeps hundreds of models in provider groups while preserving a missing saved selection first', async () => {
+    const largeCatalog = Array.from({ length: 300 }, (_, index) => ({
+      id: `${['google', 'openai', 'anthropic'][index % 3]}/model-${index}`,
+      name: `Model ${index}`,
+    }));
+    await render({ value: 'legacy/saved-model', models: largeCatalog });
+    await click(input());
+    expect(container.querySelectorAll('[role="group"]')).toHaveLength(3);
+    expect([...container.querySelectorAll('.model-picker__group-count')].map((count) => count.textContent)).toEqual(['100', '100', '100']);
+    expect(options()).toHaveLength(302);
+    expect(options()[0].textContent).toContain('Use app default');
+    expect(options()[1].getAttribute('aria-selected')).toBe('true');
+    expect(options()[1].textContent).toContain('Saved selection');
+    await key('End');
+    await key('Enter');
+    expect(onChange).toHaveBeenCalledWith('google/model-297');
   });
 
   it('can return to the app default and identifies its model', async () => {

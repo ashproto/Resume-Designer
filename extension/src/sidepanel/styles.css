@@ -140,6 +140,16 @@ h3 {
 }
 
 .controls-section { gap: 14px; }
+.settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 0; color: #0c0a08; background: transparent; text-align: left; }
+.settings-toggle:hover { background: transparent; }
+.settings-toggle > svg { flex-shrink: 0; color: #62594e; transition: transform 150ms ease; }
+.settings-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.settings-summary { display: grid; gap: 4px; min-width: 0; }
+.settings-summary strong { margin-bottom: 2px; font-size: 0.83rem; }
+.settings-choice { overflow: hidden; color: #62594e; font-size: 0.75rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.settings-notice { color: #943125; font-size: 0.73rem; line-height: 1.4; }
+.settings-fields { display: grid; gap: 14px; padding-top: 14px; border-top: 1px solid #ede7df; }
+.settings-fields[hidden] { display: none; }
 .picker-field { display: grid; gap: 6px; min-width: 0; }
 .model-caption,
 .model-search-status { font-size: 0.75rem; }
@@ -178,6 +188,12 @@ h3 {
 .autofill-heading > .text-button { flex-shrink: 0; }
 .review-actions { display: grid; gap: 8px; }
 .job-actions-section h2 { margin-bottom: 0; }
+.job-source-toggle { justify-self: start; min-height: 32px; padding: 0; font-size: 0.78rem; }
+.job-source-actions { padding-top: 4px; }
+.job-source-actions > button { flex: 1 1 190px; }
+.manual-job-entry { display: grid; gap: 8px; }
+.manual-source-actions { gap: 6px 12px; }
+.manual-source-actions > button { min-height: 32px; padding: 0; font-size: 0.75rem; }
 
 .job-action-status,
 .fill-announcement {

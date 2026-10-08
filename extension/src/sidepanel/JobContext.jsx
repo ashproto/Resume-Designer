@@ -19,7 +19,7 @@ export default function JobContext({ job, description, compact = false, manual =
   const capturedDescription = String((manual ? description : job.description || description) || '').trim();
   return (
     <section className={`captured-job ${compact ? 'captured-job--compact' : ''}`} aria-label="Captured job details">
-      <p className="eyebrow">{manual ? 'Entered manually' : 'Captured from this page'}</p>
+      <p className="eyebrow">{manual ? 'Entered manually' : 'Captured job description'}</p>
       <h3>{job.title || (manual ? 'Job description' : 'Job title not found')}</h3>
       {!manual || job.company ? <p className="job-company">{job.company || 'Company not found'}</p> : null}
       {!manual || locations.length ? <p className="job-location">{locations.length ? locations.join(' · ') : 'Location not listed'}</p> : null}
