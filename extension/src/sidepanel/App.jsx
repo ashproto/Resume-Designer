@@ -1376,7 +1376,9 @@ function Workspace({
   const sourceSummary = selectedSource?.name || (workflow === 'tailor' ? 'My full profile' : 'Choose a resume');
   const modelSummary = selectedModel
     ? modelCatalog.models.find((model) => model.id === selectedModel)?.name || selectedModel
-    : `App default${defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring') ? ` · ${defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring')}` : ''}`;
+    : workflow === 'tailor' && modelCatalog.defaults.analysis !== modelCatalog.defaults.tailoring
+      ? 'App defaults for each task'
+      : `App default${defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring') ? ` · ${defaultModelName(workflow === 'autofill' ? 'mapping' : 'tailoring')}` : ''}`;
 
   const workflowControls = (
     <section className="panel-section controls-section" aria-label={workflow === 'tailor' ? 'Tailoring settings' : 'Autofill settings'}>

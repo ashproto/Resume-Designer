@@ -1641,6 +1641,8 @@ describe('focused application workspace', () => {
     expect(client.createMapping.mock.calls[0][3]).not.toHaveProperty('model');
     await click(button('Tailor resume'));
     expect(labelled('AI model').value).toBe('App default · Tailoring model');
+    expect(container.querySelector('.settings-toggle').getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('.settings-summary').textContent).toContain('App defaults for each task');
     await click(button('Analyze fit'));
     expect(client.analyzeJobFit.mock.calls[0][0]).not.toHaveProperty('model');
   });
