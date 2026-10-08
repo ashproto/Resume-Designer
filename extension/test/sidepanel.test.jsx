@@ -180,7 +180,7 @@ async function change(control, value) {
 async function chooseModel(id) {
   await click(labelled('AI model'));
   await change(labelled('AI model'), id);
-  const option = [...container.querySelectorAll('[role="option"]')]
+  const option = [...container.querySelectorAll('[role="treeitem"][aria-selected]')]
     .find((item) => item.querySelector('small')?.textContent === id);
   if (!option) throw new Error(`Model option not found: ${id}`);
   await click(option);
@@ -1596,7 +1596,7 @@ describe('focused application workspace', () => {
     await click(button('Fill reviewed fields'));
     expect(client.fillPage).toHaveBeenCalledWith('context-1', 'resume-1', [{ field_id: 'interest', value: 'Reviewed motivation answer.' }], expect.any(Object));
     await click(labelled('AI model'));
-    await click([...container.querySelectorAll('[role="option"]')].find((item) => item.textContent.includes('Use app default')));
+    await click([...container.querySelectorAll('[role="treeitem"][aria-selected]')].find((item) => item.textContent.includes('Use app default')));
     expect(container.querySelector('.review-list')).toBeNull();
     expect(button('Prepare autofill review')).toBeTruthy();
   });
@@ -1686,7 +1686,7 @@ describe('focused application workspace', () => {
     await waitFor(() => expect(container.textContent).toContain('Model catalog unavailable'));
     expect(labelled('AI model').disabled).toBe(false);
     await click(labelled('AI model'));
-    await click([...container.querySelectorAll('[role="option"]')].find((item) => item.textContent.includes('Use app default')));
+    await click([...container.querySelectorAll('[role="treeitem"][aria-selected]')].find((item) => item.textContent.includes('Use app default')));
     expect(container.textContent).not.toContain('Selected model: provider/test-model');
     await click(button('Prepare autofill review'));
     expect(client.createMapping.mock.calls.at(-1)[3]).not.toHaveProperty('model');
@@ -1788,13 +1788,13 @@ describe('connection recovery and review polish', () => {
     await renderApp(client);
     await click(labelled('AI model'));
     await change(labelled('AI model'), 'other/');
-    expect([...container.querySelectorAll('[role="option"] small')].map((item) => item.textContent)).toEqual(['other/standout']);
+    expect([...container.querySelectorAll('[role="treeitem"][aria-selected] small')].map((item) => item.textContent)).toEqual(['other/standout']);
     await change(labelled('AI model'), 'no such model');
     expect(container.textContent).toContain('No models match. Try a name or provider.');
     await change(labelled('AI model'), 'Distinctive');
-    await click(container.querySelector('[role="option"]'));
+    await click(container.querySelector('[role="treeitem"][aria-selected]'));
     expect(labelled('AI model').value).toBe('Distinctive choice');
-    expect(container.querySelector('[role="listbox"]')).toBeNull();
+    expect(container.querySelector('[role="tree"]')).toBeNull();
     await click(button('Tailor resume'));
     expect(labelled('AI model').value).toBe('Distinctive choice');
   });

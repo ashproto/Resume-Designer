@@ -23,7 +23,16 @@ function input() {
 }
 
 function options() {
-  return [...container.querySelectorAll('[role="option"]')];
+  return [...container.querySelectorAll('[role="treeitem"][aria-selected]')];
+}
+
+function provider(name) {
+  return [...container.querySelectorAll('[role="treeitem"][aria-expanded]')]
+    .find((item) => item.getAttribute('aria-label') === name);
+}
+
+async function toggleProvider(name) {
+  await click(provider(name).querySelector('.model-picker__group-heading'));
 }
 
 async function render(props = {}) {
@@ -61,6 +70,83 @@ afterEach(async () => {
 });
 
 describe('ModelPicker', () => {
+  it('opens only the selected provider and switches providers without changing the model', async () => {
+    await render();
+    await click(input());
+    expect(input().getAttribute('aria-haspopup')).toBe('tree');
+    expect(provider('OpenAI').getAttribute('aria-expanded')).toBe('true');
+    expect(provider('Google').getAttribute('aria-expanded')).toBe('false');
+    expect(options().map((item) => item.querySelector('strong').textContent)).toEqual(['Use app default', 'GPT-5']);
+    await toggleProvider('Google');
+    expect(provider('OpenAI').getAttribute('aria-expanded')).toBe('false');
+    expect(provider('Google').getAttribute('aria-expanded')).toBe('true');
+    expect(options().map((item) => item.querySelector('strong').textContent)).toEqual(['Use app default', 'Gemini']);
+    expect(input().getAttribute('aria-activedescendant')).toBe(provider('Google').id);
+    expect(provider('Google').hasAttribute('aria-selected')).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    await toggleProvider('Google');
+    expect(options()).toHaveLength(1);
+    expect(document.getElementById(input().getAttribute('aria-activedescendant'))).toBe(provider('Google'));
+  });
+
+  it('reveals search matches and restores the browsing provider on clearing search', async () => {
+    await render({ models: [...models, { id: 'openai/shared', name: 'Shared model' }, { id: 'google/shared', name: 'Shared model' }] });
+    await click(input());
+    await toggleProvider('Google');
+    await type('Shared');
+    expect(provider('OpenAI').getAttribute('aria-expanded')).toBe('true');
+    expect(provider('Google').getAttribute('aria-expanded')).toBe('true');
+    expect(options()).toHaveLength(2);
+    await toggleProvider('OpenAI');
+    expect(options()).toHaveLength(1);
+    await type('shared model');
+    expect(options()).toHaveLength(2);
+    await type('');
+    expect(provider('Google').getAttribute('aria-expanded')).toBe('true');
+    expect(provider('OpenAI').getAttribute('aria-expanded')).toBe('false');
+    expect(options()).toHaveLength(3);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('opens the effective default provider while leaving app default selected', async () => {
+    await render({ value: '', defaultModelId: 'google/gemini' });
+    await click(input());
+    expect(provider('Google').getAttribute('aria-expanded')).toBe('true');
+    expect(provider('OpenAI').getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(input().getAttribute('aria-activedescendant'))?.getAttribute('aria-selected')).toBe('true');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps text caret arrows available while typing and uses tree arrows after keyboard navigation', async () => {
+    await render();
+    await click(input());
+    await type('claude');
+    const event = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true });
+    await act(async () => input().dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(false);
+    expect(provider('Anthropic').getAttribute('aria-expanded')).toBe('true');
+    await key('ArrowDown');
+    await key('ArrowLeft');
+    expect(input().getAttribute('aria-activedescendant')).toBe(provider('Anthropic').id);
+    await key('ArrowLeft');
+    expect(provider('Anthropic').getAttribute('aria-expanded')).toBe('false');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps the active descendant valid when an open catalog loses the active model', async () => {
+    await render();
+    await click(input());
+    const selectedId = input().getAttribute('aria-activedescendant');
+    await render({ models: models.filter((model) => model.id !== 'openai/gpt-5') });
+    expect(input().getAttribute('aria-activedescendant')).toBe(selectedId);
+    expect(document.getElementById(selectedId)?.textContent).toContain('Saved selection');
+    await type('Gemini');
+    await render({ models: [{ id: 'anthropic/claude-sonnet', name: 'Claude Sonnet' }] });
+    expect(input().hasAttribute('aria-activedescendant')).toBe(false);
+    await key('Enter');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('uses one control to reveal and filter models by provider or name without changing the selection', async () => {
     await render();
     expect(input().value).toBe('GPT-5');
@@ -84,7 +170,10 @@ describe('ModelPicker', () => {
     expect(document.getElementById(firstActive)?.getAttribute('aria-selected')).toBe('true');
     await key('ArrowDown');
     const secondActive = input().getAttribute('aria-activedescendant');
-    expect(document.getElementById(secondActive)?.textContent).toContain('Gemini');
+    expect(document.getElementById(secondActive)?.getAttribute('aria-label')).toBe('Google');
+    await key('ArrowRight');
+    await key('ArrowRight');
+    expect(document.getElementById(input().getAttribute('aria-activedescendant'))?.textContent).toContain('Gemini');
     await key('Enter');
     expect(onChange).toHaveBeenCalledWith('google/gemini');
   });
@@ -99,12 +188,14 @@ describe('ModelPicker', () => {
       { id: 'moonshotai/kimi', name: 'MoonshotAI: Kimi' },
     ] });
     await click(input());
-    const groups = [...container.querySelectorAll('[role="group"]')];
+    const groups = [...container.querySelectorAll('[role="treeitem"][aria-expanded]')];
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['Anthropic', 'OpenAI', 'Google', 'Acme Labs', 'MoonshotAI']);
     expect(groups[1].querySelector('.model-picker__group-count').textContent).toBe('2');
-    expect([...groups[1].querySelectorAll('[role="option"]')].map((option) => option.querySelector('strong').textContent))
+    expect([...groups[1].querySelectorAll('[role="treeitem"][aria-selected]')].map((option) => option.querySelector('strong').textContent))
       .toEqual(['GPT-5', 'GPT Mini']);
-    expect(groups[4].querySelector('strong').textContent).toBe('Kimi');
+    expect(groups[4].getAttribute('aria-expanded')).toBe('false');
+    await toggleProvider('MoonshotAI');
+    expect(provider('MoonshotAI').querySelector('strong').textContent).toBe('Kimi');
     expect(options()[0].textContent).toContain('Use app default');
     expect(options()[0].closest('[role="group"]')).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
@@ -134,7 +225,7 @@ describe('ModelPicker', () => {
     expect(onChange).toHaveBeenCalledWith('mistralai/medium');
   });
 
-  it('navigates across provider boundaries without making group headings selectable', async () => {
+  it('moves to and collapses the parent before opening another provider by keyboard', async () => {
     await render({ value: 'anthropic/sonnet', models: [
       { id: 'openai/gpt-5', name: 'GPT-5' },
       { id: 'anthropic/sonnet', name: 'Sonnet' },
@@ -143,28 +234,38 @@ describe('ModelPicker', () => {
     await key('ArrowDown');
     await key('ArrowDown');
     expect(document.getElementById(input().getAttribute('aria-activedescendant')).textContent).toContain('Opus');
+    await key('ArrowLeft');
+    expect(input().getAttribute('aria-activedescendant')).toBe(provider('Anthropic').id);
+    await key('ArrowLeft');
+    expect(provider('Anthropic').getAttribute('aria-expanded')).toBe('false');
+    expect(options()).toHaveLength(1);
     await key('ArrowDown');
-    const active = document.getElementById(input().getAttribute('aria-activedescendant'));
-    expect(active.textContent).toContain('GPT-5');
-    expect(active.closest('[role="group"]').getAttribute('aria-label')).toBe('OpenAI');
-    await key('ArrowUp');
+    expect(input().getAttribute('aria-activedescendant')).toBe(provider('OpenAI').id);
     await key('Enter');
-    expect(onChange).toHaveBeenCalledWith('anthropic/opus');
+    expect(onChange).not.toHaveBeenCalled();
+    await key('ArrowDown');
+    await key('Enter');
+    expect(onChange).toHaveBeenCalledWith('openai/gpt-5');
   });
 
-  it('keeps hundreds of models in provider groups while preserving a missing saved selection first', async () => {
+  it('hides hundreds of unexpanded models while preserving a missing saved selection first', async () => {
     const largeCatalog = Array.from({ length: 300 }, (_, index) => ({
       id: `${['google', 'openai', 'anthropic'][index % 3]}/model-${index}`,
       name: `Model ${index}`,
     }));
     await render({ value: 'legacy/saved-model', models: largeCatalog });
     await click(input());
-    expect(container.querySelectorAll('[role="group"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[role="treeitem"][aria-expanded]')).toHaveLength(3);
     expect([...container.querySelectorAll('.model-picker__group-count')].map((count) => count.textContent)).toEqual(['100', '100', '100']);
-    expect(options()).toHaveLength(302);
+    expect(options()).toHaveLength(2);
+    expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(5);
     expect(options()[0].textContent).toContain('Use app default');
     expect(options()[1].getAttribute('aria-selected')).toBe('true');
     expect(options()[1].textContent).toContain('Saved selection');
+    await key('End');
+    await key('Enter');
+    expect(onChange).not.toHaveBeenCalled();
+    expect(options()).toHaveLength(102);
     await key('End');
     await key('Enter');
     expect(onChange).toHaveBeenCalledWith('google/model-297');
@@ -216,7 +317,7 @@ describe('ModelPicker', () => {
     expect(input().value).toBe('GPT-5');
     await click(input());
     expect(input().value).toBe('');
-    expect(options()).toHaveLength(4);
+    expect(options()).toHaveLength(2);
   });
 
   it('disables interaction while loading and retains selection during catalog errors', async () => {

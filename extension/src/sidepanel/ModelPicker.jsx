@@ -57,7 +57,10 @@ export default function ModelPicker({
   const inputRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeKey, setActiveKey] = useState('model:');
+  const [expandedProviderId, setExpandedProviderId] = useState('');
+  const [collapsedSearchProviders, setCollapsedSearchProviders] = useState([]);
+  const [keyboardBrowsing, setKeyboardBrowsing] = useState(false);
   const unavailable = disabled || loading;
   const expanded = open && !unavailable;
   const catalog = models.filter((model) => model?.id);
@@ -76,13 +79,22 @@ export default function ModelPicker({
   ];
   const normalizedQuery = query.trim().toLowerCase();
   const matches = choices.filter((model) => `${model.name} ${model.detail} ${model.providerLabel || ''}`.toLowerCase().includes(normalizedQuery));
-  const matchIndexes = new Map(matches.map((model, index) => [model.id, index]));
+  const matchIds = new Set(matches.map((model) => model.id));
   const visibleGroups = catalogGroups.map((group) => ({
     ...group,
-    models: group.models.filter((model) => matchIndexes.has(model.id)),
+    models: group.models.filter((model) => matchIds.has(model.id)),
+    expanded: normalizedQuery ? !collapsedSearchProviders.includes(group.id) : expandedProviderId === group.id,
   })).filter((group) => group.models.length);
-  const activeChoice = matches[activeIndex];
-  const activeId = expanded && activeChoice ? `${listId}-${activeIndex}` : undefined;
+  const rows = [
+    ...matches.filter((model) => !model.providerId).map((model) => ({ ...model, key: `model:${model.id}` })),
+    ...visibleGroups.flatMap((group) => [
+      { ...group, key: `provider:${group.id}`, isProvider: true },
+      ...(group.expanded ? group.models.map((model) => ({ ...model, key: `model:${model.id}` })) : []),
+    ]),
+  ];
+  const activeRow = rows.find((row) => row.key === activeKey) || rows[0];
+  const rowId = (key) => `${listId}-${encodeURIComponent(key)}`;
+  const activeId = expanded && activeRow ? rowId(activeRow.key) : undefined;
 
   useEffect(() => {
     if (unavailable) setOpen(false);
@@ -98,14 +110,32 @@ export default function ModelPicker({
   }, [expanded]);
 
   useEffect(() => {
-    if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' });
-  }, [activeId, query]);
+    const node = activeId && document.getElementById(activeId);
+    // Scroll the heading, not the parent treeitem's entire expanded subtree.
+    (node?.querySelector('.model-picker__group-heading') || node)?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeId, query, expandedProviderId, collapsedSearchProviders]);
 
   function reveal() {
     if (unavailable || expanded) return;
     setQuery('');
-    setActiveIndex(Math.max(0, choices.findIndex((model) => model.id === value)));
+    const effectiveModelId = value || defaultModelId;
+    setExpandedProviderId(catalog.find((model) => model.id === effectiveModelId)?.id.split('/')[0] || '');
+    setCollapsedSearchProviders([]);
+    setActiveKey(`model:${value}`);
+    setKeyboardBrowsing(false);
     setOpen(true);
+  }
+
+  function toggleProvider(group) {
+    if (normalizedQuery) {
+      setCollapsedSearchProviders((current) => group.expanded
+        ? [...current, group.id]
+        : current.filter((providerId) => providerId !== group.id));
+    } else {
+      setExpandedProviderId(group.expanded ? '' : group.id);
+    }
+    setActiveKey(`provider:${group.id}`);
+    setKeyboardBrowsing(true);
   }
 
   function choose(model) {
@@ -116,7 +146,7 @@ export default function ModelPicker({
   }
 
   function handleKeyDown(event) {
-    if (unavailable) return;
+    if (unavailable || event.nativeEvent.isComposing) return;
     if (event.key === 'Escape') {
       if (expanded) event.preventDefault();
       setOpen(false);
@@ -132,37 +162,55 @@ export default function ModelPicker({
         reveal();
         return;
       }
+      setKeyboardBrowsing(true);
       const direction = event.key === 'ArrowDown' ? 1 : -1;
-      setActiveIndex((current) => matches.length
-        ? (current + direction + matches.length) % matches.length
-        : 0);
+      const index = rows.indexOf(activeRow);
+      setActiveKey(rows[Math.max(0, Math.min(rows.length - 1, index + direction))]?.key || '');
       return;
     }
-    if (expanded && (event.key === 'Home' || event.key === 'End')) {
+    // Preserve browser text editing until the user navigates the result tree.
+    const treeNavigation = expanded && (!normalizedQuery || keyboardBrowsing)
+      && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+    if (treeNavigation && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
       event.preventDefault();
-      setActiveIndex(event.key === 'Home' ? 0 : Math.max(0, matches.length - 1));
+      if (activeRow?.isProvider) {
+        if (event.key === 'ArrowRight') {
+          if (activeRow.expanded) setActiveKey(`model:${activeRow.models[0].id}`);
+          else toggleProvider(activeRow);
+        } else if (activeRow.expanded) toggleProvider(activeRow);
+      } else if (event.key === 'ArrowLeft' && activeRow?.providerId) {
+        setActiveKey(`provider:${activeRow.providerId}`);
+      }
+      return;
+    }
+    if (treeNavigation && (event.key === 'Home' || event.key === 'End')) {
+      event.preventDefault();
+      setActiveKey((event.key === 'Home' ? rows[0] : rows.at(-1))?.key || '');
       return;
     }
     if (event.key === 'Enter') {
       event.preventDefault();
-      if (expanded) choose(activeChoice);
+      if (expanded) {
+        if (activeRow?.isProvider) toggleProvider(activeRow);
+        else choose(activeRow);
+      }
       else reveal();
     }
   }
 
   function renderOption(model) {
-    const index = matchIndexes.get(model.id);
+    const key = `model:${model.id}`;
     return (
       <button
         type="button"
-        role="option"
-        id={`${listId}-${index}`}
+        role="treeitem"
+        id={rowId(key)}
         key={model.id}
         tabIndex={-1}
         aria-selected={model.id === value}
-        className={`model-picker__option${index === activeIndex ? ' is-active' : ''}`}
+        className={`model-picker__option${key === activeRow?.key ? ' is-active' : ''}`}
         onMouseDown={(event) => event.preventDefault()}
-        onPointerMove={() => setActiveIndex(index)}
+        onPointerMove={() => setActiveKey(key)}
         onClick={() => choose(model)}
       >
         <span className="model-picker__option-copy">
@@ -190,6 +238,7 @@ export default function ModelPicker({
           aria-label="AI model"
           aria-expanded={expanded}
           aria-controls={listId}
+          aria-haspopup="tree"
           aria-autocomplete="list"
           aria-activedescendant={activeId}
           aria-busy={loading}
@@ -203,8 +252,12 @@ export default function ModelPicker({
           onClick={reveal}
           onKeyDown={handleKeyDown}
           onChange={(event) => {
-            setQuery(event.target.value);
-            setActiveIndex(0);
+            const text = event.target.value;
+            setQuery(text);
+            setCollapsedSearchProviders([]);
+            setKeyboardBrowsing(false);
+            const firstMatch = choices.find((model) => `${model.name} ${model.detail} ${model.providerLabel || ''}`.toLowerCase().includes(text.trim().toLowerCase()));
+            setActiveKey(`model:${firstMatch?.id || ''}`);
             setOpen(true);
           }}
         />
@@ -235,21 +288,31 @@ export default function ModelPicker({
       ) : null}
       {expanded ? (
         <div className="model-picker__popover">
-          <div className="model-picker__results" role="listbox" id={listId} aria-label="AI models">
+          <div className="model-picker__results" role="tree" id={listId} aria-label="AI models">
             {matches.filter((model) => !model.providerId).map(renderOption)}
             {visibleGroups.map((group) => (
-              <div key={group.id} role="group" aria-label={group.label} className="model-picker__group">
-                <div className="model-picker__group-heading" aria-hidden="true">
-                  <span>{group.label}</span>
+              <div key={group.id} role="treeitem" id={rowId(`provider:${group.id}`)} aria-label={group.label} aria-expanded={group.expanded} tabIndex={-1} className="model-picker__group">
+                <div
+                  className={`model-picker__group-heading${activeRow?.key === `provider:${group.id}` ? ' is-active' : ''}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onPointerMove={() => setActiveKey(`provider:${group.id}`)}
+                  onClick={() => toggleProvider(group)}
+                >
+                  <svg className={`model-picker__provider-chevron${group.expanded ? ' is-expanded' : ''}`} width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="m6 4 4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="model-picker__provider-name">{group.label}</span>
                   <span className="model-picker__group-count">{group.models.length}</span>
                 </div>
-                {group.models.map(renderOption)}
+                {group.expanded ? <div role="group" aria-label={group.label}>{group.models.map(renderOption)}</div> : null}
               </div>
             ))}
           </div>
           <p className="model-picker__result-count" role="status" aria-live="polite">
             {matches.length
-              ? `${matches.length} ${matches.length === 1 ? 'choice' : 'choices'}`
+              ? normalizedQuery
+                ? `${matches.length} matching ${matches.length === 1 ? 'choice' : 'choices'}`
+                : `${catalog.length} models · ${catalogGroups.length} providers`
               : 'No models match. Try a name or provider.'}
           </p>
         </div>

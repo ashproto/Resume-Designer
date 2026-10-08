@@ -82,7 +82,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 8px;
+  min-height: 36px;
+  padding: 8px;
   border-radius: 4px;
   color: #62594e;
   background: #f4efe6;
@@ -90,9 +91,16 @@
   font-weight: 600;
   line-height: 1.3;
   overflow-wrap: anywhere;
+  cursor: pointer;
 }
 
-.model-picker__group-heading > span:first-child {
+.model-picker__group-heading:hover { background: #ede7dc; }
+.model-picker__group-heading.is-active { background: #e8e3ff; color: #4439b5; }
+.model-picker__provider-chevron { flex: 0 0 14px; }
+.model-picker__provider-chevron.is-expanded { transform: rotate(90deg); }
+
+.model-picker__provider-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -124,6 +132,8 @@
   text-align: left;
   scroll-margin-top: 34px;
 }
+
+.model-picker__group .model-picker__option { padding-left: 20px; }
 
 .model-picker__option.is-active { background: #f0edff; }
 .model-picker__option-copy { display: grid; gap: 3px; min-width: 0; }
