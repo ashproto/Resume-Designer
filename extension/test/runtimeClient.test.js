@@ -69,3 +69,44 @@ it('forwards the application request identity without extra fields', async () =>
   await client.logApplication({ ...payload, ignored: 'private extra' });
   expect(send).toHaveBeenCalledWith({ type: 'application.log', ...payload });
 });
+
+describe('live operation progress', () => {
+  it('routes only matching progress and releases its listener after completion', async () => {
+    const listeners = new Set();
+    const onMessage = { addListener: vi.fn((listener) => listeners.add(listener)), removeListener: vi.fn((listener) => listeners.delete(listener)) };
+    let complete;
+    const send = vi.fn(() => new Promise((resolve) => { complete = resolve; }));
+    const client = createRuntimeClient(send, { onMessage, createOperationId: () => 'operation-one' });
+    const onProgress = vi.fn();
+    const pending = client.analyzeJobFit({ profileContextId: 'context', job: { description: 'Build tools.' }, onProgress });
+    expect(send).toHaveBeenCalledWith({ type: 'job.fit.analyze', profileContextId: 'context', job: { description: 'Build tools.' }, operationId: 'operation-one' });
+    for (const listener of listeners) {
+      listener({ type: 'operation.progress', operationId: 'other', progress: { message: 'Other panel' } });
+      listener({ type: 'operation.progress', operationId: 'operation-one', progress: { stage: 'analyzing', message: 'Comparing relevant experience.' } });
+    }
+    expect(onProgress).toHaveBeenCalledExactlyOnceWith({ stage: 'analyzing', message: 'Comparing relevant experience.' });
+    complete({ ok: true, data: { analysis: {} } });
+    await pending;
+    expect(listeners.size).toBe(0);
+  });
+
+  it('cleans up progress after failure and omits an absent base resume', async () => {
+    const onMessage = { addListener: vi.fn(), removeListener: vi.fn() };
+    const send = vi.fn(async () => ({ ok: false, error: { code: 'ai_failed', message: 'Try again.' } }));
+    const client = createRuntimeClient(send, { onMessage, createOperationId: () => 'operation-two' });
+    await expect(client.createTailoredResume({ profileContextId: 'context', requestId: 'request', job: {}, onProgress: vi.fn() })).rejects.toThrow('Try again.');
+    expect(send.mock.calls[0][0]).not.toHaveProperty('resumeId');
+    expect(onMessage.removeListener).toHaveBeenCalledWith(onMessage.addListener.mock.calls[0][0]);
+  });
+});
+
+it('requests preview and explicit app activation separately without scanning or filling a page', async () => {
+  const send = vi.fn(async () => ({ ok: true, data: {} }));
+  const client = createRuntimeClient(send);
+  await client.getResumePreview('context', 'resume');
+  await client.openResume('context', 'resume');
+  expect(send.mock.calls.map(([message]) => message)).toEqual([
+    { type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' },
+    { type: 'resume.open', profileContextId: 'context', resumeId: 'resume' },
+  ]);
+});

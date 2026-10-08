@@ -333,8 +333,9 @@ describe('scrapePageContext', () => {
     expect(scrapePageContext(document, fixtureUrls.greenhouse)).toEqual({
       company: 'Example Greenhouse Company',
       title: 'Staff Product Engineer',
+      locations: [],
       url: fixtureUrls.greenhouse,
-      description: 'Lead the product platform. Ship accessible tools.',
+      description: 'Lead the product platform.\n\nShip accessible tools.',
       fingerprint: expect.any(String),
     });
     expect(scrapePageContext(document, fixtureUrls.greenhouse).description)
@@ -351,6 +352,7 @@ describe('scrapePageContext', () => {
     expect(scrapePageContext(document, fixtureUrls.lever)).toEqual({
       company: 'jobs.lever.co',
       title: 'Platform Engineer',
+      locations: [],
       url: fixtureUrls.lever,
       description: '',
       fingerprint: expect.any(String),
@@ -387,7 +389,7 @@ describe('scrapePageContext', () => {
 
     const page = scrapePageContext(document, fixtureUrls.ashby);
 
-    expect(page.description).toBe('About the role Build thoughtful interfaces.');
+    expect(page.description).toBe('About the role\n\nBuild thoughtful interfaces.');
     expect(page.description).not.toContain('private');
     expect(page.fingerprint).toMatch(/^job-/);
   });

@@ -23,14 +23,17 @@ import { addApplication, getCompanionApplication } from './applications.js';
 import { getAllLearnedAnswers, saveLearnedAnswer } from './learnedAnswers.js';
 import {
   analyzeResumeDataAgainstJobs,
+  checkProfileHasData,
   completeForBridge,
   generateResumeChangesForData,
+  generateResumeFromProfileForJob,
   getDefaultModelId,
 } from './aiService.js';
 import { getCompanionModels } from './companionModels.js';
 import { createCompanionJobActions } from './companionJobActions.js';
 import { createCompanionPairing } from './companionPairing.js';
 import { loadVariant } from './variantManager.js';
+import { buildResumeData } from './onboardingLogic.js';
 
 const TOKEN_KEY = 'resume-designer-bridge-token';
 
@@ -149,6 +152,10 @@ export async function initBridge({ profileId = null } = {}) {
     getDefaultModelId,
     analyzeResumeDataAgainstJobs,
     generateResumeChangesForData,
+    generateResumeFromProfileForJob,
+    getUserProfile,
+    buildResumeData,
+    hasProfileData: checkProfileHasData,
     generateUniqueVariantName,
     saveVariant,
     loadVariant,
@@ -185,6 +192,23 @@ export async function initBridge({ profileId = null } = {}) {
     complete: completeForBridge,
     getAiModels: getCompanionModels,
     exportVariantPdf,
+    renderResumeThumbnail: async (pdfBase64) => {
+      const { renderResumeThumbnail } = await import('./resumeThumbnail.js');
+      return renderResumeThumbnail(pdfBase64);
+    },
+    openVariant: async (id, { assertCurrentContext }) => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const appWindow = getCurrentWindow();
+      assertCurrentContext();
+      if (!loadVariant(id)) {
+        throw Object.assign(new Error('The saved resume could not be opened.'), { status: 404, code: 'resume_not_found' });
+      }
+      await appWindow.show();
+      assertCurrentContext();
+      await appWindow.unminimize();
+      assertCurrentContext();
+      await appWindow.setFocus();
+    },
     claimPairing: pairing.claim,
     requestPairing: pairing.request,
     revokePairing: () => revokeBridgePairing(pairing.revokeAll),

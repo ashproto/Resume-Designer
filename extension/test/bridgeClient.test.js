@@ -320,6 +320,18 @@ describe('createBridgeClient', () => {
     await expect(operation).rejects.toMatchObject({ status, code, retryable });
   });
 
+  it('preserves a rejected Companion identity as a non-retryable pairing error', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      error: 'pairing requires a trusted Companion JSON request',
+      code: 'untrusted_pairing_client',
+    }, { status: 403 }));
+    const client = makeClient(fetchImpl);
+
+    await expect(client.claimPairing({ requestId: 'request-id', verifier: 'verifier' }))
+      .rejects.toMatchObject({ status: 403, code: 'untrusted_pairing_client', retryable: false });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it('classifies an in-progress PDF export as retryable', async () => {
     const message = 'another PDF export is in progress — try again in a moment';
     const fetchImpl = vi.fn(async () => jsonResponse({ error: message }, { status: 500 }));
@@ -522,4 +534,156 @@ describe('mutation cancellation while reading the session token', () => {
 it('requires durable application idempotency before connecting', async () => {
   const client = createBridgeClient({ fetchImpl: async () => jsonResponse({ ok: true, app: 'resume-designer', protocolVersion: 2, capabilities: REQUIRED_CAPABILITIES.filter((capability) => capability !== 'applications.idempotent') }) });
   await expect(client.health()).rejects.toMatchObject({ code: 'app_update_required' });
+});
+
+describe('live AI progress', () => {
+  it('lets a healthy operation finish after ten minutes without losing its identity', async () => {
+    vi.useFakeTimers();
+    try {
+      const startedAt = Date.now();
+      const operationId = '550e8400-e29b-41d4-a716-446655440000';
+      const fetchImpl = vi.fn(async (url, options) => {
+        expect(JSON.parse(options.body)).toMatchObject({ operationId, profileContextId: 'context' });
+        if (url.endsWith('/ai/progress') && Date.now() - startedAt >= 12 * 60_000) {
+          return jsonResponse({ operationId, state: 'complete', result: { status: 200, body: { text: 'Finished' } } });
+        }
+        return jsonResponse({ operationId, state: 'running' }, { status: 202 });
+      });
+      const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 60_000 });
+      let settled = false;
+      const outcome = client.complete({ operationId, profileContextId: 'context', messages: [] }).then(
+        (value) => { settled = true; return { value }; },
+        (error) => { settled = true; return { error }; },
+      );
+      await vi.advanceTimersByTimeAsync(11 * 60_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await outcome).toEqual({ value: { text: 'Finished' } });
+      expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/ai/complete'))).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('receives the bridge terminal AI failure at its fifteen-minute deadline', async () => {
+    const { createBridgeProgress } = await import('../../resume-designer/src/bridgeProgress.js');
+    vi.useFakeTimers();
+    try {
+      const operationId = '550e8400-e29b-41d4-a716-446655440000';
+      const progress = createBridgeProgress();
+      let signal;
+      const fetchImpl = vi.fn(async (url) => {
+        const response = url.endsWith('/ai/progress')
+          ? progress.read(operationId, 'owner')
+          : progress.start(operationId, 'owner', 'input', (hooks) => {
+            signal = hooks.signal;
+            return new Promise(() => {});
+          });
+        return jsonResponse(response.body, { status: response.status });
+      });
+      const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 60_000 });
+      const outcome = captureError(client.complete({ operationId, profileContextId: 'context', messages: [] }));
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      expect(await outcome).toMatchObject({ status: 504, code: 'ai_failed', retryable: true });
+      expect(signal.aborted).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('ends an operation that outlives the bridge deadline without blaming the connection', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => jsonResponse({ operationId: 'operation', state: 'running' }, { status: 202 }));
+      const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 60_000 });
+      let settled = false;
+      const outcome = captureError(client.complete({ operationId: 'operation', profileContextId: 'context', messages: [] })).then((error) => {
+        settled = true;
+        return error;
+      });
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const error = await outcome;
+      expect(error).toMatchObject({ code: 'ai_operation_timeout', retryable: true });
+      expect(error.message).toMatch(/AI.*too long/i);
+      expect(error.message).toMatch(/new request/i);
+      expect(error.message).not.toMatch(/connect/i);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('polls a running operation, reports reasoning, and returns the original result', async () => {
+    const operationId = '550e8400-e29b-41d4-a716-446655440000';
+    const onProgress = vi.fn();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ operationId, state: 'running', progress: { stage: 'thinking', kind: 'reasoning', message: 'Comparing experience' } }, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse({ operationId, state: 'complete', result: { status: 200, body: { text: 'Done' } } }));
+    const client = createBridgeClient({ fetchImpl, getToken: async () => 'token', progressPollIntervalMs: 0 });
+    await expect(client.complete({ operationId, profileContextId: 'context', messages: [] }, { onProgress })).resolves.toEqual({ text: 'Done' });
+    expect(onProgress).toHaveBeenCalledWith({ stage: 'thinking', kind: 'reasoning', message: 'Comparing experience' });
+    expect(fetchImpl.mock.calls[1][0]).toBe(`${BRIDGE_BASE_URL}/ai/progress`);
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ operationId, profileContextId: 'context' });
+  });
+
+  it('keeps AI failures distinct from connection failures when delivered through polling', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ operationId: 'operation', state: 'complete', result: { status: 502, body: { code: 'ai_failed', error: 'Provider unavailable' } } }));
+    const client = createBridgeClient({ fetchImpl, getToken: async () => 'token' });
+    await expect(client.complete({})).rejects.toMatchObject({ code: 'ai_failed', message: 'Provider unavailable' });
+  });
+});
+
+describe('saved resume preview and open transport', () => {
+  it.each(['getPdf', 'getResumePreview'])('allows a valid slow %s to complete after 30 seconds', async (method) => {
+    vi.useFakeTimers();
+    try {
+      let signal;
+      let settled = false;
+      const response = { profileContextId: 'context', id: 'resume' };
+      const client = makeClient(async (_url, options) => {
+        signal = options.signal;
+        return new Promise((resolve) => setTimeout(() => resolve(jsonResponse(response)), 35_000));
+      });
+      const result = client[method]('resume').then(
+        (value) => { settled = true; return { value }; },
+        (error) => { settled = true; return { error }; },
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      expect(signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await result).toEqual({ value: response });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('still aborts a stalled preview at the bounded PDF deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal;
+      let settled = false;
+      const client = makeClient(async (_url, options) => {
+        signal = options.signal;
+        return new Promise(() => {});
+      });
+      const result = captureError(client.getResumePreview('resume')).then((error) => {
+        settled = true;
+        return error;
+      });
+      await vi.advanceTimersByTimeAsync(184_999);
+      expect(settled).toBe(false);
+      expect(signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await result).toMatchObject({ code: 'app_timeout', retryable: true });
+      expect(signal.aborted).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('uses authenticated exact-variant routes and sends context only with explicit open', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ profileContextId: 'context', id: 'resume' }));
+    const client = makeClient(fetchImpl);
+    await client.getResumePreview('resume');
+    await client.openResume('resume', { profileContextId: 'context' });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([`${BRIDGE_BASE_URL}/resumes/resume/preview`, `${BRIDGE_BASE_URL}/resumes/resume/open`]);
+    expect(fetchImpl.mock.calls[0][1].method).toBe('GET');
+    expect(new Headers(fetchImpl.mock.calls[0][1].headers).get('Authorization')).toBe('Bearer pairing-token');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ profileContextId: 'context' });
+    expect(fetchImpl.mock.calls[1][1].method).toBe('POST');
+    expect(REQUIRED_CAPABILITIES).not.toContain('resume.preview');
+    expect(REQUIRED_CAPABILITIES).not.toContain('resume.open');
+  });
 });

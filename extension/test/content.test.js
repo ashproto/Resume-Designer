@@ -106,6 +106,7 @@ describe('content relay', () => {
       ],
       page: {
         company: 'jobs.example.com',
+        locations: [],
         title: 'Platform Engineer',
         url: 'https://jobs.example.com/platform-engineer',
         description: 'Build reliable local-first software.',

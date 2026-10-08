@@ -1528,3 +1528,128 @@ it('retains an application request committed before disconnect so re-pairing can
   expect(saved.size).toBe(1);
   expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/applications')).map(([, options]) => JSON.parse(options.body).requestId)).toEqual([pending.requestId, pending.requestId]);
 });
+
+describe('automatic in-flight connection recovery', () => {
+  const operationId = '550e8400-e29b-41d4-a716-446655440000';
+  it('does not launch or replay a healthy operation that exceeds the AI watchdog', async () => {
+    vi.useFakeTimers();
+    try {
+      const startedAt = Date.now();
+      const { chromeApi } = createChrome({ token: 'paired' });
+      chromeApi.runtime.sendMessage = vi.fn(async () => {});
+      const context = { profileId: 'profile-1', profileContextId: 'context-1', resumes: [] };
+      const fetchImpl = vi.fn(async (url) => {
+        if (url.endsWith('/resumes')) return jsonResponse(context);
+        if (url.endsWith('/health')) return jsonResponse(HEALTH);
+        if (url.endsWith('/ai/progress')) vi.setSystemTime(startedAt + 16 * 60_000);
+        if (url.endsWith('/ai/job-fit') || url.endsWith('/ai/progress')) {
+          return jsonResponse({ operationId, state: 'running' }, { status: 202 });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      });
+      const service = createBackgroundService({ chromeApi, fetchImpl });
+      const outcome = service.handleMessage({ type: 'job.fit.analyze', operationId,
+        profileContextId: 'context-1', job: { description: 'Build useful software' } }).catch((error) => error);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(chromeApi.tabs.create).not.toHaveBeenCalled();
+      expect(await outcome).toMatchObject({ code: 'ai_operation_timeout', retryable: true });
+      expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/ai/job-fit'))).toHaveLength(1);
+      expect(chromeApi.runtime.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+        progress: expect.objectContaining({ stage: 'reconnecting' }),
+      }));
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('wakes the already-paired app and rejoins the same operation without re-pairing', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    chromeApi.runtime.sendMessage = vi.fn(async () => {});
+    const context = { profileId: 'profile-1', profileContextId: 'context-1', resumes: [] };
+    let attempts = 0;
+    const bodies = [];
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url.endsWith('/resumes')) return jsonResponse(context);
+      if (url.endsWith('/health')) return jsonResponse(HEALTH);
+      if (url.endsWith('/ai/tailored-resume')) {
+        bodies.push(JSON.parse(options.body));
+        if (++attempts === 1) throw new Error('Connection dropped');
+        return jsonResponse({ ...context, resume: { id: 'companion-same' } });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type: 'resume.tailor', operationId, requestId: operationId,
+      profileContextId: 'context-1', job: { description: 'Build useful software' } })).resolves.toMatchObject({ resume: { id: 'companion-same' } });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(chromeApi.tabs.create).toHaveBeenCalledWith({ url: 'resume-designer://companion/open?protocolVersion=2', active: true });
+    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'operation.progress', operationId,
+      progress: expect.objectContaining({ stage: 'reconnecting' }) }));
+    expect(chromeApi.storage.session.set).not.toHaveBeenCalled();
+  });
+
+  it('does not resume AI after recovery reveals a different profile context', async () => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    let woke = false;
+    let calls = 0;
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/resumes')) return jsonResponse({ profileId: 'profile-1', profileContextId: woke ? 'context-2' : 'context-1', resumes: [] });
+      if (url.endsWith('/health')) { woke = true; return jsonResponse(HEALTH); }
+      if (url.endsWith('/ai/job-fit')) { calls++; throw new Error('Connection dropped'); }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type: 'job.fit.analyze', operationId, profileContextId: 'context-1', job: { description: 'Build software' } })).rejects.toMatchObject({ code: 'profile_changed' });
+    expect(calls).toBe(1);
+  });
+});
+
+describe('generated resume preview and explicit opening', () => {
+  const context = { profileId: 'profile', profileContextId: 'context', resumes: [] };
+  const thumbnail = { ...context, id: 'resume', name: 'Tailored resume', imageBase64: 'aW1hZ2U=', mimeType: 'image/png', width: 480, height: 622, pageCount: 2 };
+  const health = { ...HEALTH, capabilities: [...HEALTH.capabilities, 'resume.preview', 'resume.open'] };
+  function setup(route) {
+    const { chromeApi } = createChrome({ token: 'token' });
+    const fetchImpl = vi.fn(async (url, options) => {
+      const path = new URL(url).pathname;
+      if (path === '/health') return jsonResponse(health);
+      if (path === '/resumes') return jsonResponse(context);
+      return route(path, options);
+    });
+    return { chromeApi, fetchImpl, service: createBackgroundService({ chromeApi, fetchImpl }) };
+  }
+  it('returns the saved resume PNG without touching the active page', async () => {
+    const { service, chromeApi, fetchImpl } = setup((path) => {
+      expect(path).toBe('/resumes/resume/preview');
+      return jsonResponse(thumbnail);
+    });
+    expect(await service.handleMessage({ type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' })).toEqual(thumbnail);
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.filter(([url]) => new URL(url).pathname === '/resumes')).toHaveLength(2);
+  });
+  it('posts an explicit, context-bound open action without scanning or filling', async () => {
+    const { service, chromeApi } = setup((path, options) => {
+      expect(path).toBe('/resumes/resume/open');
+      expect(options.method).toBe('POST');
+      expect(JSON.parse(options.body)).toEqual({ profileContextId: 'context' });
+      return jsonResponse({ ...context, id: 'resume', opened: true });
+    });
+    expect(await service.handleMessage({ type: 'resume.open', profileContextId: 'context', resumeId: 'resume' })).toMatchObject({ opened: true, id: 'resume' });
+    expect(chromeApi.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+  it.each(['resume.preview', 'resume.open'])('explains older desktop support only when %s is requested', async (type) => {
+    const { chromeApi } = createChrome({ token: 'token' });
+    const fetchImpl = vi.fn(async (url) => jsonResponse(new URL(url).pathname === '/health' ? HEALTH : context));
+    const service = createBackgroundService({ chromeApi, fetchImpl });
+    await expect(service.handleMessage({ type, profileContextId: 'context', resumeId: 'resume' })).rejects.toMatchObject({ code: 'app_update_required', retryable: false });
+    expect(fetchImpl.mock.calls.some(([url]) => /\/(preview|open)$/.test(new URL(url).pathname))).toBe(false);
+  });
+  it.each([{ mimeType: 'text/html' }, { id: 'other' }, { width: 10000 }, { imageBase64: '<script>' }])('rejects malformed preview payloads: %j', async (invalid) => {
+    const { service } = setup(() => jsonResponse({ ...thumbnail, ...invalid }));
+    await expect(service.handleMessage({ type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' })).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+  it('rejects a stale profile returned with the preview', async () => {
+    const { service } = setup(() => jsonResponse({ ...thumbnail, profileContextId: 'other' }));
+    await expect(service.handleMessage({ type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' })).rejects.toMatchObject({ code: 'profile_changed' });
+  });
+});

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -16,6 +16,7 @@ import {
   extractFileText,
   improveInterviewAnswer,
   buildResumeFromInterview,
+  buildResumeData,
   generateResumeForJob,
   tailorResume,
   saveOnboardingResume,
@@ -75,6 +76,7 @@ export default function OnboardingWizard() {
   const [parsedResume, setParsedResume] = useState(null);
   const [jobDescriptions, setJobDescriptions] = useState([]);
   const [targetJob, setTargetJob] = useState(null);
+  const [previousDraft, setPreviousDraft] = useState(null);
   // The workspace this wizard is running in was deleted on another device.
   // Nothing here can be saved to it, so Create is refused rather than writing a
   // résumé into a namespace nothing reads — see the handler in main.js, which
@@ -110,6 +112,9 @@ export default function OnboardingWizard() {
   // What the web keeps inside JobInputStep's own state. The native step has no
   // component to hold it, so it lives here and rides the projection.
   const [nativeGen, setNativeGen] = useState(null);
+  const [nativeRevision, setNativeRevision] = useState(null);
+  const [draftRevision, setDraftRevision] = useState(0);
+  const [revisionCompletions, setRevisionCompletions] = useState(0);
   const [improved, setImproved] = useState(null);
   const [busy, setBusy] = useState('');
   // The same fact, readable from inside an async closure that captured the
@@ -120,11 +125,13 @@ export default function OnboardingWizard() {
   // The variant was created. Only its durability is outstanding, so a retry
   // re-flushes instead of minting a second résumé.
   const savedRef = useRef(false);
+  const [draftLocked, setDraftLocked] = useState(false);
   const [notice, setNotice] = useState(null);
   // Bumped once per COMPLETED key-save attempt. The native step has no other
   // reliable signal that one finished — see `nativeSaveKey`.
   const [keySaves, setKeySaves] = useState(0);
   const genAbortRef = useRef(null);
+  const revisionAbortRef = useRef(null);
   const improveTokenRef = useRef(0);
 
   // Jobs already persisted this session, tracked by object identity. Reaching
@@ -134,6 +141,15 @@ export default function OnboardingWizard() {
   const committedJobsRef = useRef(new Set());
 
   const doOpen = useCallback((options = {}) => {
+    genAbortRef.current?.abort();
+    revisionAbortRef.current?.abort();
+    genAbortRef.current = null;
+    revisionAbortRef.current = null;
+    setNativeGen(null);
+    setNativeRevision(null);
+    setDraftRevision(0);
+    setRevisionCompletions(0);
+    setNotice(null);
     // New-resume mode (the header "+") always skips the API-key step, even with no
     // key configured. Step 0 has no cancel/skip affordance and ApiKeyStep won't
     // advance without a key, so gating the skip on a configured key would strand a
@@ -157,6 +173,7 @@ export default function OnboardingWizard() {
     setParsedResume(null);
     setJobDescriptions([]);
     setTargetJob(null);
+    setPreviousDraft(null);
     setJobGaps([]);
     setAnswers({});
     setQuestion(0);
@@ -168,6 +185,7 @@ export default function OnboardingWizard() {
     // saveOnboardingResume entirely: the wizard flushed, showed the success
     // screen, and created nothing. Reset with the rest of the run's state.
     savedRef.current = false;
+    setDraftLocked(false);
 
     if (closeTimerRef.current) {
       clearTimeout(closeTimerRef.current);
@@ -178,6 +196,10 @@ export default function OnboardingWizard() {
   }, []);
 
   const doClose = useCallback(() => {
+    genAbortRef.current?.abort();
+    revisionAbortRef.current?.abort();
+    genAbortRef.current = null;
+    revisionAbortRef.current = null;
     setEntered(false);
     document.body.style.overflow = '';
     refreshChatPanel();
@@ -244,7 +266,9 @@ export default function OnboardingWizard() {
 
   // --- flow handlers ------------------------------------------------------
 
-  const goTo = useCallback((s) => setStep(s), []);
+  const goTo = useCallback((s) => {
+    if (!savedRef.current) setStep(s);
+  }, []);
 
   const validateKey = useCallback(async (key) => {
     // Persist immediately so every AI entry point can use it, then validate.
@@ -318,6 +342,7 @@ export default function OnboardingWizard() {
   }, [validateKey]);
 
   const chooseMode = useCallback((m) => {
+    if (savedRef.current) return;
     setMode(m);
     setStep(2);
   }, []);
@@ -358,19 +383,50 @@ export default function OnboardingWizard() {
     else setQuestion(question - 1);
   }, [question]);
 
-  const generateForJob = useCallback(async ({ title, company, description, model, reasoning, hooks, signal }) => {
-    const job = { title: title || 'Target Role', company: company || 'Company', description };
-    setTargetJob(job);
-    setJobDescriptions([job]);
+  const generateForJob = useCallback(async ({ title, company, description, model, reasoning, hooks, signal, jobDescriptions: targetJobs, prompt = '', targetPages = 1, inputMode = 'jobs' }) => {
+    if (savedRef.current) return;
+    const jobs = (targetJobs || [{ title, company, description }]).filter((job) => job.description?.trim());
+    const job = jobs[0] || null;
+    setTargetJob({ ...job, jobDescriptions: jobs, prompt, targetPages, inputMode });
+    setJobDescriptions(jobs);
     jobGenModelRef.current = model;
     jobGenReasoningRef.current = reasoning;
     saveSettings({ onboardingModel: model, onboardingReasoning: reasoning });
     // No setStep here: JobInputStep settles into its own 'done' screen (reasoning +
     // token usage) and advances to review only when the user clicks through.
-    const { resume, gaps } = await generateResumeForJob(model, job, reasoning, { hooks, signal });
+    const { resume, gaps } = await generateResumeForJob(model, job, reasoning, { hooks, signal, jobDescriptions: jobs, prompt, targetPages });
+    if (signal?.aborted) return;
     setParsedResume(resume);
     setJobGaps(gaps);
+    setPreviousDraft(null);
+    setDraftRevision((value) => value + 1);
   }, []);
+
+  const reviseGeneratedResume = useCallback(async ({ revisionInstruction, targetPages, hooks, signal }) => {
+    if (savedRef.current) return;
+    const result = await generateResumeForJob(
+      jobGenModelRef.current || getSettings().defaultModel || getDefaultModelId(),
+      jobDescriptions[0] || null,
+      jobGenReasoningRef.current,
+      { prompt: targetJob?.prompt || '', jobDescriptions, targetPages, previousResume: parsedResume, revisionInstruction, hooks, signal },
+    );
+    if (signal?.aborted) return;
+    setPreviousDraft({ resume: parsedResume, gaps: jobGaps, targetPages: targetJob?.targetPages || 1 });
+    setParsedResume(result.resume);
+    setJobGaps(result.gaps);
+    setTargetJob((current) => ({ ...current, targetPages }));
+    setDraftRevision((value) => value + 1);
+    setRevisionCompletions((value) => value + 1);
+  }, [jobDescriptions, targetJob, parsedResume, jobGaps]);
+
+  const undoRevision = useCallback(() => {
+    if (savedRef.current || !previousDraft) return;
+    setParsedResume(previousDraft.resume);
+    setJobGaps(previousDraft.gaps);
+    setTargetJob((current) => ({ ...current, targetPages: previousDraft.targetPages }));
+    setPreviousDraft(null);
+    setDraftRevision((value) => value + 1);
+  }, [previousDraft]);
 
   const addJob = useCallback((jd) => setJobDescriptions((prev) => [...prev, jd]), []);
   const removeJob = useCallback((i) => setJobDescriptions((prev) => prev.filter((_, idx) => idx !== i)), []);
@@ -400,7 +456,9 @@ export default function OnboardingWizard() {
     setStep(2);
   }, [mode]);
 
-  const reviewBack = useCallback(() => setStep(mode === 'job' ? 2 : 3), [mode]);
+  const reviewBack = useCallback(() => {
+    if (!savedRef.current) setStep(mode === 'job' ? 2 : 3);
+  }, [mode]);
 
   useEffect(() => {
     const onGone = () => {
@@ -427,7 +485,7 @@ export default function OnboardingWizard() {
     // tap while the flush is pending would run `saveOnboardingResume` again —
     // minting a second résumé id, and in job mode committing the job
     // descriptions a second time as well.
-    if (savingRef.current) return;
+    if (savingRef.current || genAbortRef.current || revisionAbortRef.current) return;
     if (workspaceGone) return;
     savingRef.current = true;
     setBusy('save');
@@ -448,6 +506,9 @@ export default function OnboardingWizard() {
           return;
         }
         savedRef.current = true;
+        // A retry only flushes this exact document. Keep the review draft fixed
+        // until that succeeds, or new revisions would be shown but never saved.
+        setDraftLocked(true);
       }
     // …and the OTHER half of that same sentence, which the throw above does not
     // cover. On a device the write goes into `appStorage`'s cache and the disk
@@ -461,7 +522,7 @@ export default function OnboardingWizard() {
       // function was true when it ran and says nothing about now.
       if (workspaceGoneRef.current) return;
       if (!(await appStorage.flush())) {
-        const text = 'Your resume could not be saved to disk. Free up space and try again.';
+        const text = 'Your resume could not be saved to disk. Retry Create resume after freeing up space. This draft is locked until it saves; you can edit it afterward.';
         toast.error(text);
         // The toast renders in the canvas, behind the native wizard. This is
         // what the iOS side reads.
@@ -521,6 +582,16 @@ export default function OnboardingWizard() {
   }, [question, improveText]);
 
   const nativeGenerate = useCallback(async (opts) => {
+    if (savedRef.current || genAbortRef.current || revisionAbortRef.current || savingRef.current) return;
+    if (!checkProfileHasData()) {
+      setNotice({ kind: 'error', text: 'Add your experience and skills to your profile before generating a resume.' });
+      return;
+    }
+    if (opts.inputMode === 'prompt') opts = { ...opts, jobDescriptions: [] };
+    if (!(opts.prompt?.trim() || opts.description?.trim() || opts.jobDescriptions?.some((job) => job.description?.trim()))) {
+      setNotice({ kind: 'error', text: 'Add a prompt or at least one job description.' });
+      return;
+    }
     const controller = new AbortController();
     genAbortRef.current = controller;
     setNotice(null);
@@ -530,15 +601,20 @@ export default function OnboardingWizard() {
         ...opts,
         signal: controller.signal,
         hooks: {
-          onReasoning: (_delta, full) => setNativeGen(
-            (g) => ({ ...g, phase: 'generating', reasoning: full, done: false }),
-          ),
+          onReasoning: (_delta, full) => {
+            if (genAbortRef.current === controller && !controller.signal.aborted) {
+              setNativeGen({ phase: 'generating', reasoning: full, done: false });
+            }
+          },
         },
       });
       // Settle into the done screen rather than advancing, which is what the
       // web does too — the user reads the reasoning and clicks through.
-      setNativeGen((g) => ({ phase: 'done', reasoning: g?.reasoning || '', done: true }));
+      if (genAbortRef.current === controller && !controller.signal.aborted) {
+        setNativeGen((g) => ({ phase: 'done', reasoning: g?.reasoning || '', done: true }));
+      }
     } catch (err) {
+      if (genAbortRef.current !== controller) return;
       setNativeGen(null);
       // A user Cancel aborts the request; returning to the form silently is the
       // whole feedback, the same as on the web.
@@ -546,9 +622,42 @@ export default function OnboardingWizard() {
         setNotice({ kind: 'error', text: `Failed to generate resume: ${err.message}` });
       }
     } finally {
-      genAbortRef.current = null;
+      if (genAbortRef.current === controller) genAbortRef.current = null;
     }
   }, [generateForJob]);
+
+  const nativeRevise = useCallback(async (opts) => {
+    if (savedRef.current || step !== 4 || mode !== 'job' || !parsedResume || !opts.revisionInstruction.trim()
+      || genAbortRef.current || revisionAbortRef.current || savingRef.current) return;
+    const controller = new AbortController();
+    revisionAbortRef.current = controller;
+    setNotice(null);
+    setNativeRevision({ phase: 'revising', reasoning: '', done: false });
+    try {
+      await reviseGeneratedResume({
+        ...opts, signal: controller.signal,
+        hooks: { onReasoning: (_delta, full) => {
+          if (revisionAbortRef.current === controller && !controller.signal.aborted) {
+            setNativeRevision({ phase: 'revising', reasoning: full, done: false });
+          }
+        } },
+      });
+    } catch (err) {
+      if (revisionAbortRef.current === controller && !controller.signal.aborted) {
+        setNotice({ kind: 'error', text: `Could not revise your resume: ${err.message}` });
+      }
+    } finally {
+      if (revisionAbortRef.current === controller) {
+        revisionAbortRef.current = null;
+        setNativeRevision(null);
+      }
+    }
+  }, [step, mode, parsedResume, reviseGeneratedResume]);
+
+  // The preview must use the same normalization as Create: the AI returns flat
+  // contact fields and structured education, while the editor uses another shape.
+  // Memoizing keeps generated section/experience IDs stable during streaming.
+  const nativeResume = useMemo(() => parsedResume ? buildResumeData(parsedResume) : null, [parsedResume]);
 
   // Long AI calls that the web runs behind a step's own spinner. Named in
   // `busy` so the native side can say which one is running.
@@ -589,7 +698,10 @@ export default function OnboardingWizard() {
     if (step === 0) { goTo(1); return; }
     // The job path skips the step-3 collector: it gathered its job description
     // on the way in, and asking again is the bug that reads as a loop.
-    if (step === 2 && mode === 'job') { goTo(4); return; }
+    if (step === 2 && mode === 'job') {
+      if (parsedResume && nativeGen?.done) goTo(4);
+      return;
+    }
     if (step !== 3) return;
     setBusy('tailor');
     try {
@@ -597,9 +709,10 @@ export default function OnboardingWizard() {
     } finally {
       setBusy('');
     }
-  }, [step, mode, goTo, commitJobsAndTailor]);
+  }, [step, mode, goTo, commitJobsAndTailor, parsedResume, nativeGen]);
 
   const nativeBack = useCallback((draft) => {
+    if (savedRef.current || genAbortRef.current || revisionAbortRef.current || savingRef.current) return;
     switch (step) {
       case 1:
         // Nothing behind it in new-résumé mode — the key step is not just
@@ -646,7 +759,13 @@ export default function OnboardingWizard() {
           model: jobGenModelRef.current || getSettings().defaultModel || getDefaultModelId(),
           reasoning: jobGenReasoningRef.current,
           generating: nativeGen,
-          resume: parsedResume,
+          hasProfileData: checkProfileHasData(),
+          revision: nativeRevision,
+          canRevise: !draftLocked && mode === 'job' && !!parsedResume,
+          canUndoRevision: !draftLocked && !!previousDraft,
+          draftRevision,
+          revisionCompletions,
+          resume: nativeResume,
           busy,
           notice,
         }
@@ -661,7 +780,23 @@ export default function OnboardingWizard() {
         interviewBack,
         improve: nativeImprove,
         generateForJob: nativeGenerate,
-        cancelGenerate: () => genAbortRef.current?.abort(),
+        cancelGenerate: () => {
+          genAbortRef.current?.abort();
+          genAbortRef.current = null;
+          setNativeGen(null);
+        },
+        editBrief: () => {
+          if (!savedRef.current && !genAbortRef.current) setNativeGen(null);
+        },
+        revise: nativeRevise,
+        cancelRevision: () => {
+          revisionAbortRef.current?.abort();
+          revisionAbortRef.current = null;
+          setNativeRevision(null);
+        },
+        undoRevision: () => {
+          if (!revisionAbortRef.current && !savingRef.current) undoRevision();
+        },
         addJob,
         removeJob,
         next: nativeNext,
@@ -766,6 +901,9 @@ export default function OnboardingWizard() {
             onBack={reviewBack}
             onCreate={saveResume}
             saving={busy === 'save' || workspaceGone}
+            onRevise={mode === 'job' && !workspaceGone && !draftLocked ? reviseGeneratedResume : undefined}
+            targetPages={targetJob?.targetPages || 1}
+            onUndoRevision={!draftLocked && previousDraft ? undoRevision : undefined}
           />
         );
       case 5:
@@ -824,6 +962,9 @@ export default function OnboardingWizard() {
             )}
           </div>
         </div>
+        {draftLocked && step === 4 && notice && (
+          <p role="alert" className="border-b px-6 py-3 text-sm text-destructive">{notice.text}</p>
+        )}
         {renderStep()}
       </div>
     </div>

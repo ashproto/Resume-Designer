@@ -756,6 +756,8 @@ function handleClick(e) {
   
   const editable = e.target.closest('[data-editable]');
   if (!editable) return;
+  // Contact links remain live in exports; inside the editor a click edits text.
+  if (e.target.closest('a[href]')) e.preventDefault();
 
   // Don't start editing if already editing
   if (editable.isContentEditable) return;

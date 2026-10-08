@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 export const DOWNLOAD_URL = 'https://github.com/ashproto/Resume-Designer/releases/latest';
+const COMPANION_STORE_URL = 'https://chromewebstore.google.com/detail/on-paper-companion/keggfbelidgpjiapcbgkjidenhdjmega';
 
 const COPY = {
   needs_pairing: {
@@ -17,6 +18,11 @@ const COPY = {
     heading: 'We couldn’t connect',
     body: 'On Paper may still be starting. Check the connection or use the manual pairing steps below.',
     action: 'Try opening again',
+  },
+  unsupported_extension: {
+    heading: 'Update Companion',
+    body: 'This copy of Companion has an extension ID that On Paper does not recognize. Restarting the app won’t fix this. Install the official extension, or reload the current trusted build if you installed it manually.',
+    action: 'Get official Companion',
   },
   incompatible: {
     heading: 'Update On Paper',
@@ -63,18 +69,24 @@ export default function PairingView({
     <section className="panel-section pairing-section" aria-labelledby="pairing-heading">
       <h2 id="pairing-heading">{copy.heading}</h2>
       <p className="supporting-copy">{copy.body}</p>
-      <button
-        type="button"
-        className="primary-button"
-        disabled={busy}
-        onClick={primaryAction}
-      >
-        {operation === 'cancelling'
-          ? 'Cancelling…'
-          : operation === 'checking' ? 'Checking connection…'
-            : operation === 'opening' ? 'Opening On Paper…'
-              : copy.action}
-      </button>
+      {state === 'unsupported_extension' ? (
+        <a className="primary-button" href={COMPANION_STORE_URL} target="_blank" rel="noreferrer">
+          {copy.action}
+        </a>
+      ) : (
+        <button
+          type="button"
+          className="primary-button"
+          disabled={busy}
+          onClick={primaryAction}
+        >
+          {operation === 'cancelling'
+            ? 'Cancelling…'
+            : operation === 'checking' ? 'Checking connection…'
+              : operation === 'opening' ? 'Opening On Paper…'
+                : copy.action}
+        </button>
+      )}
       {canCancel && onCancel ? (
         <button type="button" className="secondary-button" disabled={operation === 'cancelling'} onClick={cancelAndPairManually}>
           {operation === 'cancelling' ? 'Cancelling connection…' : 'Cancel and pair manually'}

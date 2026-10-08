@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Slider } from '@/components/ui/slider';
 import { Segmented, SegmentedItem } from '@/components/ui/segmented';
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
@@ -196,8 +197,8 @@ const PATH_OPTIONS = [
     id: 'option-job',
     mode: 'job',
     Icon: Target,
-    title: 'Create for job',
-    description: 'Generate a resume from your profile, tailored to a specific job posting',
+    title: 'Create from your profile',
+    description: 'Describe what you need, or tailor a resume to one or more job descriptions',
     featured: true,
   },
 ];
@@ -554,10 +555,24 @@ const REASONING_OPTIONS = [
 ];
 
 const JOB_INPUT_BENEFITS = [
-  'AI extracts key requirements and skills',
-  'Resume tailored with matching keywords',
-  'Experience prioritized for this role',
+  'Grounded in the experience saved in your profile',
+  'Concise wording, with the most relevant details first',
+  'Review and revise the whole draft before saving',
 ];
+
+function ResumeLengthControl({ value, onChange, disabled = false, id = 'resume-length' }) {
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <Label id={`${id}-label`}>Target length</Label>
+        <span className="text-sm font-medium">{value} page{value === 1 ? '' : 's'}</span>
+      </div>
+      <Slider thumbProps={{ 'aria-labelledby': `${id}-label`, 'aria-valuetext': `${value} page${value === 1 ? '' : 's'}` }} min={1} max={3} step={1} value={[value]} onValueChange={([pages]) => onChange(pages)} disabled={disabled} />
+      <div className="flex justify-between text-xs text-muted-foreground"><span>Concise</span><span>More detail</span></div>
+      <p className="text-xs text-muted-foreground">A writing target. Final page count depends on your layout and font size.</p>
+    </div>
+  );
+}
 
 // One token-usage stat (muted label + big number) for the completion strip.
 function GenStat({ label, value }) {
@@ -585,8 +600,8 @@ export function JobGeneratingView({ job, modelLabel, reasoningLabel, reasoning, 
         <StepHeader
           title={done ? 'Resume ready' : 'Generating your resume'}
           description={done
-            ? 'Tailored to the role below — review and fine-tune it next.'
-            : 'Tailoring your profile to this role. This usually takes 20–40 seconds.'}
+            ? 'Your draft is ready. Review it and request any changes before saving.'
+            : 'Choosing relevant details from your profile and writing a concise draft.'}
         />
 
         {/* Read-only representation of the target job + the model/reasoning used. */}
@@ -663,9 +678,11 @@ export function JobInputStep({
   onBack,
   onOpenProfile,
 }) {
-  const [title, setTitle] = useState(targetJob?.title || '');
-  const [company, setCompany] = useState(targetJob?.company || '');
-  const [description, setDescription] = useState(targetJob?.description || '');
+  const [jobs, setJobs] = useState(() => targetJob?.jobDescriptions?.length
+    ? targetJob.jobDescriptions : [{ title: targetJob?.title || '', company: targetJob?.company || '', description: targetJob?.description || '' }]);
+  const [inputMode, setInputMode] = useState(targetJob?.inputMode || 'jobs');
+  const [prompt, setPrompt] = useState(targetJob?.prompt || '');
+  const [targetPages, setTargetPages] = useState(targetJob?.targetPages || 1);
   const [model, setModel] = useState(defaultModel);
   const [reasoning, setReasoning] = useState(defaultReasoning);
   // Generation lifecycle: 'form' (inputs) → 'generating' (live screen) → 'done'
@@ -685,6 +702,8 @@ export function JobInputStep({
     fetchModelCatalog().then(() => setTick((t) => t + 1)).catch(() => {});
   }, [fetchModelCatalog]);
 
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   // Elapsed-time ticker — runs only while generating; its value freezes on done.
   useEffect(() => {
     if (phase !== 'generating') return undefined;
@@ -699,7 +718,7 @@ export function JobInputStep({
         <StepBody>
           <StepHeader
             title="Profile needed"
-            description="To create a tailored resume from a job description, we need your background information. Please fill out your profile first with your work experience, skills, and education."
+            description="Add your work experience, skills, and education to your profile. Then use a prompt or job descriptions to create a resume from those details."
           />
 
           <div className="flex items-start gap-2 rounded-md border bg-muted/50 p-3 text-sm">
@@ -734,10 +753,13 @@ export function JobInputStep({
     );
   }
 
-  const handlePaste = async () => {
+  const updateJob = (index, field, value) => setJobs((current) => current.map((job, i) => i === index ? { ...job, [field]: value } : job));
+  const draft = () => ({ ...jobs[0], jobDescriptions: jobs, prompt, targetPages, inputMode });
+
+  const handlePaste = async (index) => {
     try {
       const t = await navigator.clipboard.readText();
-      if (t) setDescription(t);
+      if (t) updateJob(index, 'description', t);
     } catch (err) {
       console.error('Failed to read clipboard:', err);
       toast.error('Unable to access clipboard. Please paste manually using Ctrl+V / Cmd+V.');
@@ -745,9 +767,13 @@ export function JobInputStep({
   };
 
   const handleGenerate = async () => {
-    const d = description.trim();
-    if (!d) {
-      toast.error('Please paste a job description');
+    const jobDescriptions = inputMode === 'jobs' ? jobs.filter((job) => job.description.trim()).map((job) => ({ title: job.title.trim(), company: job.company.trim(), description: job.description.trim() })) : [];
+    if (inputMode === 'jobs' && jobDescriptions.length === 0) {
+      toast.error('Add at least one job description.');
+      return;
+    }
+    if (inputMode === 'prompt' && !prompt.trim()) {
+      toast.error('Describe what you want your resume to focus on.');
       return;
     }
     setLiveReasoning('');
@@ -759,14 +785,14 @@ export function JobInputStep({
       // onGenerate sets the parsed resume in the wizard but does NOT advance — we
       // settle into the 'done' screen here; the user clicks through to review.
       await onGenerate({
-        title: title.trim(), company: company.trim(), description: d, model, reasoning,
+        ...jobDescriptions[0], jobDescriptions, prompt: prompt.trim(), targetPages, inputMode, model, reasoning,
         signal: controller.signal,
         hooks: {
           onReasoning: (_x, full) => setLiveReasoning(full),
           onRun: (r) => setRun(r),
         },
       });
-      setPhase('done');
+      if (!controller.signal.aborted) setPhase('done');
     } catch (e) {
       // A user Cancel aborts the request — return to the form silently; surface
       // anything else as an error toast.
@@ -794,7 +820,7 @@ export function JobInputStep({
       : null;
     return (
       <JobGeneratingView
-        job={{ title: title.trim(), company: company.trim() }}
+        job={inputMode === 'prompt' ? { title: 'Your resume brief', company: prompt.trim() } : { title: jobs.length > 1 ? `${jobs.length} target jobs` : jobs[0].title.trim(), company: jobs.map((job) => job.company.trim()).filter(Boolean).join(' · ') }}
         modelLabel={modelLabel}
         reasoningLabel={reasoningLabel}
         reasoning={liveReasoning}
@@ -813,46 +839,63 @@ export function JobInputStep({
     <div className="flex min-h-0 flex-1 flex-col">
       <StepBody>
         <StepHeader
-          title="Target job details"
-          description="Paste the job description below. AI will read it and draft a resume from your profile for this role."
+          title="Shape your resume"
+          description="Choose a focus and a length. Your profile supplies the facts."
         />
 
+        <Segmented className="flex w-full">
+          <SegmentedItem className="flex-1" active={inputMode === 'jobs'} onClick={() => setInputMode('jobs')}>Target jobs</SegmentedItem>
+          <SegmentedItem className="flex-1" active={inputMode === 'prompt'} onClick={() => setInputMode('prompt')}>Write a prompt</SegmentedItem>
+        </Segmented>
+
+        {inputMode === 'jobs' && jobs.map((job, index) => (
+          <div key={index} className="space-y-3 rounded-md border p-3">
+            {jobs.length > 1 && <div className="flex items-center justify-between"><p className="text-sm font-medium">Job {index + 1}</p><Button type="button" variant="ghost" size="sm" aria-label={`Remove job ${index + 1}`} onClick={() => setJobs((current) => current.filter((_, i) => i !== index))}><X className="size-3.5" /></Button></div>}
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="job-title-input">Job title</Label>
+            <Label htmlFor={`job-title-input-${index}`}>Job title{index > 0 ? ` ${index + 1}` : ''}</Label>
             <Input
               type="text"
-              id="job-title-input"
+              id={`job-title-input-${index}`}
               placeholder="e.g. Senior Software Engineer"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              value={job.title}
+              onChange={(e) => updateJob(index, 'title', e.target.value)}
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="job-company-input">Company</Label>
+            <Label htmlFor={`job-company-input-${index}`}>Company{index > 0 ? ` ${index + 1}` : ''}</Label>
             <Input
               type="text"
-              id="job-company-input"
+              id={`job-company-input-${index}`}
               placeholder="e.g. Google"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
+              value={job.company}
+              onChange={(e) => updateJob(index, 'company', e.target.value)}
             />
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="job-desc-input">Job description</Label>
+          <Label htmlFor={`job-desc-input-${index}`}>Job description{index > 0 ? ` ${index + 1}` : ''}</Label>
           <Textarea
-            id="job-desc-input"
+            id={`job-desc-input-${index}`}
             className="min-h-40"
             placeholder="Paste the full job description here..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            value={job.description}
+            onChange={(e) => updateJob(index, 'description', e.target.value)}
           />
-          <Button type="button" variant="outline" size="sm" id="paste-clipboard-btn" onClick={handlePaste}>
+          <Button type="button" variant="outline" size="sm" onClick={() => handlePaste(index)}>
             <Clipboard className="size-3.5" /> Paste from clipboard
           </Button>
         </div>
+          </div>
+        ))}
+        {inputMode === 'jobs' && <Button type="button" variant="outline" size="sm" onClick={() => setJobs((current) => [...current, { title: '', company: '', description: '' }])}><Plus className="size-3.5" /> Add another job</Button>}
+
+        <div className="space-y-1.5">
+          <Label htmlFor="resume-brief">{inputMode === 'prompt' ? 'What should this resume focus on?' : 'Additional direction (optional)'}</Label>
+          <Textarea id="resume-brief" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="For example: A concise product design resume that emphasizes research and my transition from engineering." className={inputMode === 'prompt' ? 'min-h-32' : 'min-h-20'} />
+        </div>
+        <ResumeLengthControl value={targetPages} onChange={setTargetPages} />
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
@@ -909,7 +952,7 @@ export function JobInputStep({
         <Button
           variant="ghost"
           id="back-btn"
-          onClick={() => onBack({ title: title.trim(), company: company.trim(), description: description.trim() })}
+          onClick={() => onBack(draft())}
         >
           <ArrowLeft className="size-4" /> Back
         </Button>
@@ -1069,7 +1112,33 @@ function ReviewSectionLabel({ children }) {
   return <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{children}</p>;
 }
 
-export function ReviewStep({ resume, isTailored, onBack, onCreate, saving = false }) {
+export function ReviewStep({ resume, isTailored, onBack, onCreate, saving = false, onRevise, targetPages: initialTargetPages = 1, onUndoRevision }) {
+  const [revisionInstruction, setRevisionInstruction] = useState('');
+  const [targetPages, setTargetPages] = useState(initialTargetPages);
+  const [revising, setRevising] = useState(false);
+  const [reasoning, setReasoning] = useState('');
+  const revisionAbortRef = useRef(null);
+  useEffect(() => () => revisionAbortRef.current?.abort(), []);
+  // Undo can restore another draft with the same page target after the user
+  // changed the slider locally (including a cancelled revision).
+  useEffect(() => setTargetPages(initialTargetPages), [initialTargetPages, resume]);
+
+  const revise = async () => {
+    if (!revisionInstruction.trim() || revising) return;
+    const controller = new AbortController();
+    revisionAbortRef.current = controller;
+    setRevising(true);
+    setReasoning('');
+    try {
+      await onRevise({ revisionInstruction: revisionInstruction.trim(), targetPages, signal: controller.signal, hooks: { onReasoning: (_delta, full) => setReasoning(full) } });
+      if (!controller.signal.aborted) setRevisionInstruction('');
+    } catch (error) {
+      if (!controller.signal.aborted) toast.error(`Could not revise your resume: ${error.message}`);
+    } finally {
+      revisionAbortRef.current = null;
+      setRevising(false);
+    }
+  };
   const hasName = resume?.name && resume.name !== 'Not set';
   const hasTagline = resume?.tagline && resume.tagline !== 'Not set';
   const hasSummary = resume?.summary;
@@ -1083,15 +1152,35 @@ export function ReviewStep({ resume, isTailored, onBack, onCreate, saving = fals
       <StepBody>
         <StepHeader
           title={isTailored ? 'Your tailored resume' : 'Review your resume'}
-          description={isTailored
-            ? "AI has customized your resume for your target role. Here's what we created:"
+          description={onRevise
+            ? 'Read the draft below. You can revise the whole resume here before saving it.'
+            : isTailored ? "AI has customized your resume for your target role. Here's what we created:"
             : "Here's what we extracted. You can edit everything in the main app."}
         />
+
+        {onRevise && (
+          <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="resume-revision">Changes to the whole resume</Label>
+              <Textarea id="resume-revision" value={revisionInstruction} onChange={(e) => setRevisionInstruction(e.target.value)} disabled={revising || saving} placeholder="For example: Make every section more concise and put more emphasis on my research experience." />
+            </div>
+            <ResumeLengthControl value={targetPages} onChange={setTargetPages} disabled={revising || saving} id="revision-length" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" size="sm" onClick={revise} disabled={!revisionInstruction.trim() || revising || saving}>
+                {revising ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                {revising ? 'Revising resume…' : 'Revise resume'}
+              </Button>
+              {revising && <Button type="button" variant="ghost" size="sm" onClick={() => revisionAbortRef.current?.abort()}>Cancel revision</Button>}
+              {onUndoRevision && !revising && <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onUndoRevision}>Undo last revision</Button>}
+            </div>
+            {(revising || reasoning) && <LiveReasoning reasoning={reasoning} streaming={revising} defaultOpen />}
+          </div>
+        )}
 
         <div className="space-y-3 rounded-lg border p-4">
           {isTailored && (
             <Badge variant="secondary" className="gap-1">
-              <Sparkles className="size-3" /> Tailored to your target role
+              <Sparkles className="size-3" /> Tailored to your target jobs
             </Badge>
           )}
 
@@ -1154,22 +1243,21 @@ export function ReviewStep({ resume, isTailored, onBack, onCreate, saving = fals
           {hasExperience && (
             <div className="space-y-1.5">
               <ReviewSectionLabel>Experience</ReviewSectionLabel>
-              {resume.experience.slice(0, 3).map((exp, i) => (
+              {resume.experience.map((exp, i) => (
                 <div key={i}>
                   <p className="text-sm font-medium">{exp.title || 'Position'}</p>
                   <p className="text-xs text-muted-foreground">{exp.company || 'Company'}</p>
+                  {exp.dates && <p className="text-xs text-muted-foreground">{exp.dates}</p>}
+                  {exp.bullets?.length > 0 && <ul className="mt-1 list-disc space-y-1 pl-4 text-sm">{exp.bullets.map((bullet, j) => <li key={j}>{bullet}</li>)}</ul>}
                 </div>
               ))}
-              {resume.experience.length > 3 && (
-                <p className="text-xs text-muted-foreground">+{resume.experience.length - 3} more</p>
-              )}
             </div>
           )}
 
           {hasEducation && (
             <div className="space-y-1.5">
               <ReviewSectionLabel>Education</ReviewSectionLabel>
-              {resume.education.slice(0, 2).map((edu, i) => (
+              {resume.education.map((edu, i) => (
                 <div key={i}>
                   <p className="text-sm font-medium">{typeof edu === 'string' ? edu : (edu.degree || 'Degree')}</p>
                   {typeof edu !== 'string' && (
@@ -1179,6 +1267,9 @@ export function ReviewStep({ resume, isTailored, onBack, onCreate, saving = fals
               ))}
             </div>
           )}
+          {resume?.tools?.length > 0 && <div className="space-y-1"><ReviewSectionLabel>Tools</ReviewSectionLabel><p className="text-sm">{Array.isArray(resume.tools) ? resume.tools.join(' · ') : resume.tools}</p></div>}
+          {resume?.certifications?.length > 0 && <div className="space-y-1"><ReviewSectionLabel>Certifications</ReviewSectionLabel><ul className="list-disc space-y-1 pl-4 text-sm">{resume.certifications.map((cert, i) => <li key={i}>{typeof cert === 'string' ? cert : cert.name}</li>)}</ul></div>}
+          {resume?.sections?.map((section, i) => <div key={i} className="space-y-1"><ReviewSectionLabel>{section.title}</ReviewSectionLabel>{Array.isArray(section.content) ? <ul className="list-disc space-y-1 pl-4 text-sm">{section.content.map((line, j) => <li key={j}>{line}</li>)}</ul> : <p className="text-sm">{section.content}</p>}</div>)}
         </div>
 
         {!hasSummary && !hasHighlights && (
@@ -1189,13 +1280,13 @@ export function ReviewStep({ resume, isTailored, onBack, onCreate, saving = fals
         )}
       </StepBody>
       <StepFooter>
-        <Button variant="ghost" id="back-btn" onClick={onBack}>
+        <Button variant="ghost" id="back-btn" onClick={onBack} disabled={revising || saving}>
           <ArrowLeft className="size-4" /> Back
         </Button>
         {/* Disabled while the résumé is being written and waited for. Without
             it a second tap runs the whole save again and mints another résumé
             — the wait for durability is what made that reachable. */}
-        <Button id="next-btn" onClick={onCreate} disabled={saving}>
+        <Button id="next-btn" onClick={onCreate} disabled={saving || revising}>
           {saving ? 'Creating…' : 'Create resume'}
         </Button>
       </StepFooter>

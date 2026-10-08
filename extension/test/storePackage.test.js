@@ -1,3 +1,4 @@
+import { createHash, createPublicKey } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,6 +14,7 @@ import {
 } from '../scripts/store-package.mjs';
 
 const temporaryDirectories = [];
+const COMPANION_PUBLIC_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkrf4I18e+WPn/7VJMrwsuwz2g83wTjuYaDp52y/6QuqHFmXJ9puRSPn9w1h8vxI7B8nXuWOVsftWiy85cl9MMU38pI4zBI9WZ1DIzr1WPVd0gXR+wrKPuRa+8yMLzheSsZ72AtON4IHSPAe1UuQ6+6N8EZLAkbWNTE1qdQP0TKCsYz0nQYjG0ggvtsXLLhzQmgQxA1RAZ3OZaqwBj7nd+g+HjlTqHrhwMeiQvPO7SDUl1l7YRuYKwgA8MkkdbFLE9MErvylDaQZ6aQEff2xFiVGXejAX4mJYy4h6L1tQ+GlaD2e+GsO+5/xmSKIxuh3eL8RuC6Nf0uyzvmofNRvNsQIDAQAB';
 
 const CRC32_TABLE = Array.from({ length: 256 }, (_, value) => {
   let crc = value;
@@ -60,6 +62,7 @@ function icon(size) {
 function validManifest(overrides = {}) {
   return {
     manifest_version: 3,
+    key: COMPANION_PUBLIC_KEY,
     name: 'On Paper Companion',
     version: '0.1.0',
     minimum_chrome_version: '116',
@@ -109,6 +112,32 @@ afterEach(async () => {
 });
 
 describe('validateStoreBuild', () => {
+  it('pins unpacked installs to the native production Companion identity', () => {
+    const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+    expect(manifest.key).toBeTypeOf('string');
+    const publicKeyBytes = Buffer.from(manifest.key, 'base64');
+    expect(createPublicKey({ key: publicKeyBytes, format: 'der', type: 'spki' }).asymmetricKeyType)
+      .toBe('rsa');
+    const extensionId = createHash('sha256').update(publicKeyBytes).digest('hex').slice(0, 32)
+      .replace(/[a-f0-9]/gu, (character) => String.fromCharCode(97 + Number.parseInt(character, 16)));
+    const nativeBridge = readFileSync(new URL('../../resume-designer/src-tauri/src/commands/bridge.rs', import.meta.url), 'utf8');
+    const nativeId = nativeBridge.match(/const COMPANION_EXTENSION_ID: &str = "([a-p]{32})";/u)?.[1];
+    expect(extensionId).toBe('keggfbelidgpjiapcbgkjidenhdjmega');
+    expect(extensionId).toBe(nativeId);
+  });
+
+  it('rejects a missing, malformed, or different Companion public identity key', () => {
+    const otherPublicKey = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtAL5qRyu4QyE+NybF3KYpeAy1dsrWdhJwO++6Gv5+GJSuGo1U2wHizjU/5rdvN35vEgiacwtbKEBYLRR43vRzw==';
+    for (const key of [undefined, null, '', 'not a public key', 'YWJjZA==', `${COMPANION_PUBLIC_KEY}!`, otherPublicKey]) {
+      const manifest = validManifest({ key });
+      if (key === undefined) delete manifest.key;
+      const files = validFiles();
+      files.set('manifest.json', Buffer.from(JSON.stringify(manifest)));
+      expect(() => validateStoreBuild({ files, manifest, lockVersion: '0.1.0', packageVersion: '0.1.0' }))
+        .toThrow(/public key|identity/i);
+    }
+  });
+
   it('accepts the exact least-privilege production artifact', () => {
     const result = validateStoreBuild({
       files: validFiles(),
@@ -474,6 +503,8 @@ describe('createStorePackage', () => {
       'on-paper-companion-0.1.0.zip',
     ));
     expect(result.sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect((await readFile(result.artifactPath)).readUInt32LE(0)).toBe(0x04034b50);
+    const zip = await readFile(result.artifactPath);
+    expect(zip.readUInt32LE(0)).toBe(0x04034b50);
+    expect(zip.includes(Buffer.from(JSON.stringify(validManifest())))).toBe(true);
   });
 });

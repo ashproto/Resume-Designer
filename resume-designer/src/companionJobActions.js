@@ -1,4 +1,5 @@
 import { experienceScalarWrite } from './changeApply.js';
+import { assertResumeData } from './resumeValidation.js';
 
 export const MAX_JOB_DESCRIPTION_BYTES = 64 * 1024;
 
@@ -47,6 +48,10 @@ function actionError(status, code, message) {
 
 function profileChangedError() {
   return actionError(503, 'profile_changed', 'a data import is in progress; retry after the app reloads');
+}
+
+function assertNotAborted(signal) {
+  if (signal?.aborted) throw actionError(504, 'ai_failed', 'The AI request timed out. Start a new request to try again.');
 }
 
 function ownVariant(variants, id) {
@@ -320,9 +325,13 @@ export function createCompanionJobActions(deps) {
     return variant;
   }
 
-  async function analyzeJobFit({ resumeId, job, model: selectedModel }) {
+  async function analyzeJobFit({ resumeId, job, model: selectedModel, hooks, signal }) {
+    assertNotAborted(signal);
     ensureAvailable();
-    const variant = selectedVariant(resumeId);
+    const variant = resumeId ? selectedVariant(resumeId) : null;
+    if (!variant && (!deps.getUserProfile?.() || deps.hasProfileData?.() === false)) {
+      throw actionError(400, 'profile_empty', 'Add your career details to your profile in On Paper first.');
+    }
     const normalizedJob = normalizeJob(job);
     const settings = deps.getSettings();
     const model = selectedModel || modelFor(settings, 'analysisModel', deps.getDefaultModelId());
@@ -330,30 +339,37 @@ export function createCompanionJobActions(deps) {
     try {
       result = await deps.analyzeResumeDataAgainstJobs(
         model,
-        structuredClone(variant.data),
+        structuredClone(variant?.data ?? { profile: deps.getUserProfile() }),
         [normalizedJob],
-        { reasoningEffort: settings?.analysisReasoning || 'medium' },
+        { reasoningEffort: settings?.analysisReasoning || 'medium', concise: true, ...(hooks ? { hooks } : {}), ...(signal ? { signal } : {}) },
       );
     } catch (error) {
       if (error?.code) throw error;
       throw actionError(502, 'ai_failed', error?.message || 'Job-fit analysis failed');
     }
+    assertNotAborted(signal);
     ensureAvailable();
-    return { resumeId: variant.id, analysis: validateAnalysis(result) };
+    return { resumeId: variant?.id ?? null, analysis: validateAnalysis(result) };
   }
 
   async function createTailoredResume(
-    { resumeId, requestId, job, model: selectedModel },
+    { resumeId, requestId, job, model: selectedModel, hooks, signal },
     { assertAuthorized = () => {} } = {},
   ) {
     if (!REQUEST_ID_PATTERN.test(requestId ?? '')) {
       throw actionError(400, 'invalid_request_id', 'requestId must be a UUID');
     }
 
+    const assertActive = () => {
+      assertAuthorized();
+      assertNotAborted(signal);
+    };
+
+    assertNotAborted(signal);
     ensureAvailable();
     const normalizedJob = normalizeJob(job);
     const fingerprint = await requestFingerprint(resumeId, normalizedJob, selectedModel);
-    assertAuthorized();
+    assertActive();
     const variantId = `companion-${requestId}`;
     const existing = ownVariant(deps.getVariants(), variantId);
     if (existing) {
@@ -364,7 +380,7 @@ export function createCompanionJobActions(deps) {
         throw actionError(409, 'idempotency_conflict', 'requestId was already used for different tailoring input');
       }
       ensureAvailable();
-      assertAuthorized();
+      assertActive();
       if (!deps.loadVariant(variantId)) {
         throw actionError(507, 'storage_full', 'Could not load the tailored resume');
       }
@@ -381,41 +397,54 @@ export function createCompanionJobActions(deps) {
         active.assertAuthorized();
         return active.operation;
       } catch (error) {
-        if (error?.status !== 401) throw error;
-        // An explicit request under a new authorization may replace cancelled
-        // work. The old operation still cannot commit, and cleanup is identity-bound.
+        if (error?.status !== 401 && !(error?.status === 504 && active.signal?.aborted)) throw error;
+        // An explicit retry may replace revoked or deadline-aborted work. The
+        // old operation cannot commit, and cleanup remains identity-bound.
       }
     }
 
     const operation = (async () => {
-      const base = selectedVariant(resumeId);
+      const base = resumeId ? selectedVariant(resumeId) : null;
       const settings = deps.getSettings();
       const model = selectedModel || modelFor(settings, 'tailorModel', deps.getDefaultModelId());
       let generated;
       try {
-        generated = await deps.generateResumeChangesForData(
+        generated = base ? await deps.generateResumeChangesForData(
           model,
           structuredClone(base.data),
-          'Tailor this resume for the target job while keeping every claim truthful.',
+          'Tailor this resume for the target job while keeping every claim truthful. Be concise: remove repetition, prefer short specific bullets, and include only relevant details.',
           null,
           { jobDescriptions: [normalizedJob] },
           'tailor',
-          { reasoningEffort: settings?.tailorReasoning || 'medium' },
-        );
+          { reasoningEffort: settings?.tailorReasoning || 'medium', ...(hooks ? { hooks } : {}), ...(signal ? { signal } : {}) },
+        ) : await deps.generateResumeFromProfileForJob(model, normalizedJob, {
+          targetPages: 1, reasoningEffort: settings?.tailorReasoning || 'medium', ...(hooks ? { hooks } : {}), ...(signal ? { signal } : {}),
+        });
       } catch (error) {
         if (error?.code) throw error;
         throw actionError(502, 'ai_failed', error?.message || 'Resume tailoring failed');
       }
 
-      const data = tailoredData(base.data, generated);
+      assertActive();
+      let data;
+      if (!base) {
+        try {
+          validateBoundedAiValue(generated?.resume);
+          if (typeof generated?.resume?.name !== 'string' || !generated.resume.name.trim()) throw new Error('Missing name');
+          data = deps.buildResumeData(generated.resume);
+          assertResumeData(data, { requireIdentity: true });
+        } catch {
+          throw actionError(502, 'invalid_ai_response', 'AI returned an invalid resume. Try again.');
+        }
+      } else data = tailoredData(base.data, generated);
       ensureAvailable();
       const baseName = [normalizedJob.title, normalizedJob.company].filter(Boolean).join(' — ')
-        || `${base.name} — Tailored`;
+        || `${base?.name || 'Profile'} — Tailored`;
       const name = deps.generateUniqueVariantName(baseName, deps.getVariants());
       // No await between this guard and the synchronous save/select block.
       // Once saved, finish durability and report success even if disconnected;
       // replay uses the deterministic variant ID and must never create a copy.
-      assertAuthorized();
+      assertActive();
       if (!deps.saveVariant(variantId, name, data, {
         companionRequest: { requestId, fingerprint },
       })) {
@@ -430,12 +459,15 @@ export function createCompanionJobActions(deps) {
       return { created: true, resume: resumeSummary(saved) };
     })();
 
-    inFlight.set(requestId, { fingerprint, operation, assertAuthorized });
-    void operation.then(() => {
+    inFlight.set(requestId, { fingerprint, operation, assertAuthorized: assertActive, signal });
+    const cleanup = () => {
+      signal?.removeEventListener('abort', cleanup);
       if (inFlight.get(requestId)?.operation === operation) inFlight.delete(requestId);
-    }, () => {
-      if (inFlight.get(requestId)?.operation === operation) inFlight.delete(requestId);
-    });
+    };
+    signal?.addEventListener('abort', cleanup, { once: true });
+    // A provider can abort synchronously during dispatch, before registration.
+    if (signal?.aborted) cleanup();
+    void operation.then(cleanup, cleanup);
     return operation;
   }
 

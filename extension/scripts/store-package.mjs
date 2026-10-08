@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey } from 'node:crypto';
 import {
   mkdir,
   readFile,
@@ -23,6 +23,7 @@ const EXPECTED_HOST_PERMISSIONS = Object.freeze([
   'http://127.0.0.1:17872/*',
 ]);
 const EXPECTED_ACTION_TITLE = 'Open On Paper Companion';
+const EXPECTED_EXTENSION_ID = 'keggfbelidgpjiapcbgkjidenhdjmega';
 const EXPECTED_EXTENSION_CSP = "default-src 'self'; connect-src http://127.0.0.1:17872; img-src 'self' data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
 const EXPECTED_MANIFEST_KEYS = Object.freeze([
   'action',
@@ -31,6 +32,7 @@ const EXPECTED_MANIFEST_KEYS = Object.freeze([
   'description',
   'host_permissions',
   'icons',
+  'key',
   'manifest_version',
   'minimum_chrome_version',
   'name',
@@ -286,8 +288,25 @@ function pngDimensions(data, path, expectedSize) {
   };
 }
 
+function companionExtensionId(key) {
+  assert(typeof key === 'string' && key.length > 0 && /^[A-Za-z0-9+/]+={0,2}$/u.test(key),
+    'Manifest must include the Companion public key');
+  const bytes = Buffer.from(key, 'base64');
+  assert(bytes.toString('base64') === key, 'Companion public key must use canonical base64');
+  try {
+    createPublicKey({ key: bytes, format: 'der', type: 'spki' });
+  } catch {
+    throw new Error('Companion public key must be a valid SPKI public key');
+  }
+  const id = createHash('sha256').update(bytes).digest('hex').slice(0, 32)
+    .replace(/[a-f0-9]/gu, (character) => String.fromCharCode(97 + Number.parseInt(character, 16)));
+  assert(id === EXPECTED_EXTENSION_ID, 'Companion public key does not match the trusted production identity');
+  return id;
+}
+
 export function validateStoreBuild({ files, lockVersion, manifest, packageVersion }) {
   assert(files instanceof Map && files.size > 0, 'Store build contains no files');
+  const extensionId = companionExtensionId(manifest?.key);
   assert(sameStrings(Object.keys(manifest ?? {}), EXPECTED_MANIFEST_KEYS), 'Manifest top-level key allowlist changed');
   assert(manifest?.manifest_version === 3, 'Store package must use Manifest V3');
   assert(manifest.name === 'On Paper Companion', 'Unexpected extension name');
@@ -362,6 +381,7 @@ export function validateStoreBuild({ files, lockVersion, manifest, packageVersio
   assert(JSON.stringify(packagedManifest) === JSON.stringify(manifest), 'Packaged manifest differs from the validated manifest');
 
   return {
+    extensionId,
     fileCount: files.size,
     totalBytes,
     version: manifest.version,
