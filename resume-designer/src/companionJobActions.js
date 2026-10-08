@@ -460,11 +460,14 @@ export function createCompanionJobActions(deps) {
     })();
 
     inFlight.set(requestId, { fingerprint, operation, assertAuthorized: assertActive, signal });
-    void operation.then(() => {
+    const cleanup = () => {
+      signal?.removeEventListener('abort', cleanup);
       if (inFlight.get(requestId)?.operation === operation) inFlight.delete(requestId);
-    }, () => {
-      if (inFlight.get(requestId)?.operation === operation) inFlight.delete(requestId);
-    });
+    };
+    signal?.addEventListener('abort', cleanup, { once: true });
+    // A provider can abort synchronously during dispatch, before registration.
+    if (signal?.aborted) cleanup();
+    void operation.then(cleanup, cleanup);
     return operation;
   }
 

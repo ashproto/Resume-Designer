@@ -176,6 +176,107 @@ describe('companion operation cancellation', () => {
     expect(generate).toHaveBeenCalledTimes(2);
   });
 
+  it('releases a canceled request ID for explicit new input while the old provider remains pending', async () => {
+    const oldGeneration = deferred();
+    const newGeneration = deferred();
+    const controller = new AbortController();
+    const generate = vi.fn().mockImplementationOnce(() => oldGeneration.promise)
+      .mockImplementationOnce(() => newGeneration.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const oldResult = actions.createTailoredResume({ ...request, signal: controller.signal }).catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    controller.abort();
+    const newResult = actions.createTailoredResume({ ...request, job: { ...JOB, description: 'An explicitly chosen new role.' } })
+      .catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    newGeneration.resolve({ changes: { summary: 'The new role' } });
+    expect(await newResult).toMatchObject({ created: true });
+    oldGeneration.resolve({ changes: { summary: 'Canceled old role' } });
+    expect(await oldResult).toMatchObject({ status: 504 });
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+    expect(deps.saveVariant.mock.calls[0][2].summary).toBe('The new role');
+    await expect(actions.createTailoredResume(request)).rejects.toMatchObject({ status: 409, code: 'idempotency_conflict' });
+  });
+
+  it('does not remove a replacement when the old authorization later aborts or settles', async () => {
+    const oldGeneration = deferred();
+    const newGeneration = deferred();
+    const controller = new AbortController();
+    let authorized = true;
+    const generate = vi.fn().mockImplementationOnce(() => oldGeneration.promise)
+      .mockImplementationOnce(() => newGeneration.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const oldResult = actions.createTailoredResume({ ...request, signal: controller.signal }, {
+      assertAuthorized() {
+        if (!authorized) throw Object.assign(new Error('Revoked'), { status: 401 });
+      },
+    }).catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    authorized = false;
+    const newResult = actions.createTailoredResume(request);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    controller.abort();
+    const conflicting = { ...request, job: { ...JOB, description: 'Different pending input.' } };
+    await expect(actions.createTailoredResume(conflicting)).rejects.toMatchObject({ status: 409 });
+    oldGeneration.resolve({ changes: { summary: 'Old revoked output' } });
+    expect(await oldResult).toMatchObject({ status: 401 });
+    await expect(actions.createTailoredResume(conflicting)).rejects.toMatchObject({ status: 409 });
+    newGeneration.resolve({ changes: { summary: 'The replacement' } });
+    expect(await newResult).toMatchObject({ created: true });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+  });
+
+  it('releases the ID when upstream aborts synchronously before its cleanup listener is installed', async () => {
+    const controller = new AbortController();
+    const generate = vi.fn().mockImplementationOnce(() => {
+      controller.abort();
+      return new Promise(() => {});
+    }).mockResolvedValueOnce({ changes: { summary: 'A fresh request' } });
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    void actions.createTailoredResume({ ...request, signal: controller.signal });
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    await expect(actions.createTailoredResume({ ...request, job: { ...JOB, description: 'New input after cancellation.' } }))
+      .resolves.toMatchObject({ created: true });
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])('detaches the abort cleanup listener when generation succeeds=%s', async (succeeds) => {
+    const generation = deferred();
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const listeners = new Set();
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    const addSpy = vi.spyOn(signal, 'addEventListener').mockImplementation((type, listener, options) => {
+      if (type === 'abort') listeners.add(listener);
+      add(type, listener, options);
+    });
+    const removeSpy = vi.spyOn(signal, 'removeEventListener').mockImplementation((type, listener, options) => {
+      if (type === 'abort') listeners.delete(listener);
+      remove(type, listener, options);
+    });
+    try {
+      const deps = makeDeps({ generateResumeChangesForData: vi.fn(() => generation.promise) });
+      const operation = createCompanionJobActions(deps).createTailoredResume({ resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB, signal });
+      const result = operation.catch((error) => error);
+      await vi.waitFor(() => expect(deps.generateResumeChangesForData).toHaveBeenCalledOnce());
+      expect(listeners.size).toBe(1);
+      generation.resolve(succeeds ? { changes: { summary: 'A completed request' } } : {});
+      expect(await result).toMatchObject(succeeds ? { created: true } : { code: 'invalid_ai_response' });
+      expect(listeners.size).toBe(0);
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
+
   it('replays an already saved resume after abort during durability without generating or saving again', async () => {
     const durability = deferred();
     const controller = new AbortController();
