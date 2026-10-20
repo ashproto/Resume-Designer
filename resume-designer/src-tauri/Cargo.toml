@@ -119,7 +119,7 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com"
 # iOS scale each WKWebView page from CSS px to physical size; Windows
 # concatenates per-sheet WebView2 prints that are already physically sized.
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
-lopdf = "0.36"
+lopdf = "0.42"
 
 [profile.release]
 panic = "abort"
