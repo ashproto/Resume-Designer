@@ -50,11 +50,24 @@ impl InFlightLimiter {
     }
 
     fn try_acquire(self: &Arc<Self>) -> Option<InFlightPermit> {
-        self.count
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (current < self.limit).then_some(current + 1)
-            })
-            .ok()?;
+        // The loop `fetch_update` ran, written out: Rust 1.99 deprecates that
+        // method for `try_update`, which older toolchains still reject as
+        // unstable, and there is no toolchain pin to move everyone at once.
+        let mut current = self.count.load(Ordering::Acquire);
+        loop {
+            if current >= self.limit {
+                return None;
+            }
+            match self.count.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
         Some(InFlightPermit {
             limiter: Arc::clone(self),
         })
