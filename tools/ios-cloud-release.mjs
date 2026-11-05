@@ -193,7 +193,7 @@ export function betaState(build, detail) {
   throw new Error(`Unknown internal beta state: ${state}`);
 }
 
-export async function release(supplied, { gh, asc, output = () => {}, log = console.log, sleep = pause, pollAttempts = 180, discoveryAttempts = 20, pollMs = 30_000 }) {
+export async function release(supplied, { gh, asc, output = () => {}, log = console.log, sleep = pause, pollAttempts = 180, discoveryAttempts = 120, pollMs = 30_000 }) {
   const input = validateInput(supplied);
   const { workflowId, tag, sha, appId, groupId } = input;
   const superseded = () => {
@@ -230,8 +230,23 @@ export async function release(supplied, { gh, asc, output = () => {}, log = cons
     return superseded();
   }
   output({ release_tag: tag });
-  const reference = await poll(async () => selectTag(await asc.collection(`/v1/scmRepositories/${repoId}/gitReferences?limit=200`), tag), discoveryAttempts,
-    'Cloud has not discovered the release tag. Reservation retained; reconcile before starting a build manually.');
+  // Apple can take longer than ten minutes to index a newly pushed tag. Keep
+  // this creator's sole start authorization alive while it becomes visible.
+  output({ release_state: 'discovering_tag' });
+  let reference;
+  for (let index = 0; index < discoveryAttempts; index++) {
+    // Do not hold a newer release in the queue while an obsolete tag indexes.
+    // Existing runs can still be monitored after their branch advances.
+    if (reservation.created && index > 0 && await protectedBranchHead(gh, input) !== sha) return superseded();
+    const references = await asc.collection(`/v1/scmRepositories/${repoId}/gitReferences?limit=200`);
+    reference = selectTag(references, tag);
+    if (reference) break;
+    const canonical = references.filter(item => item.attributes?.canonicalName === `refs/tags/${tag}`);
+    // Counts only: do not dump upstream payloads or unrelated reference names.
+    log(`Cloud tag discovery ${index + 1}/${discoveryAttempts}: scanned=${references.length}, name=${references.filter(item => item.attributes?.name === tag).length}, canonical=${canonical.length}, TAG=${canonical.filter(item => item.attributes?.kind === 'TAG').length}, undeleted=${canonical.filter(item => item.attributes?.isDeleted === false).length}.`);
+    if (index + 1 < discoveryAttempts) await sleep(pollMs);
+  }
+  if (!reference) throw new Error('Cloud has not discovered the release tag. Reservation retained; reconcile before starting a build manually.');
   requireId(reference.id, 'Apple tag id');
   const listRuns = () => asc.collection(`/v1/ciWorkflows/${workflowId}/buildRuns?include=sourceBranchOrTag,workflow&limit=200&sort=-number`);
   const findRun = async () => {
