@@ -71,7 +71,9 @@ keyring = { version = "3.6.3", features = ["apple-native", "windows-native"] }
 tempfile = "3"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
-tauri-plugin-updater = "2"
+# Release payloads are macOS tar.gz and direct Windows EXE, without legacy ZIP.
+# The plugin always includes macOS tar/flate2 support; keep verified Rustls TLS.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # Compare the beta and stable manifest versions for the beta channel's
@@ -119,7 +121,7 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com"
 # iOS scale each WKWebView page from CSS px to physical size; Windows
 # concatenates per-sheet WebView2 prints that are already physically sized.
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
-lopdf = "0.36"
+lopdf = "0.42"
 
 [profile.release]
 panic = "abort"
