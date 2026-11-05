@@ -54,11 +54,11 @@
 .resume-header {
   background: linear-gradient(135deg, var(--header-bg) 0%, var(--header-bg-end) 100%);
   color: white;
-  padding: var(--page-margin-top, 0.5in) var(--page-margin-right, 0.5in) 0.4in var(--page-margin-left, 0.5in);
+  padding: calc(var(--page-margin-top, 0.5in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in) calc(0.4in * var(--header-scale, 1)) var(--page-margin-left, 0.5in);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1.5rem;
+  gap: calc(1.5rem * var(--header-scale, 1));
   position: relative;
 }
 
@@ -557,6 +557,7 @@
   right: 0;
   width: 120px;
   height: 120px;
+  max-height: 100%;
   background: linear-gradient(135deg, transparent 50%, color-mix(in srgb, var(--resume-accent) 15%, transparent) 50%);
   pointer-events: none;
 }
@@ -593,7 +594,7 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: var(--page-margin-top, 0.5in) var(--page-margin-right, 0.6in) 0.4in var(--page-margin-left, 0.6in);
+  padding: calc(var(--page-margin-top, 0.5in) * var(--header-scale, 1)) var(--page-margin-right, 0.6in) calc(0.4in * var(--header-scale, 1)) var(--page-margin-left, 0.6in);
 }
 
 .stacked-header .header-main {
@@ -807,7 +808,7 @@
    ========================================================================== */
 
 .compact-header {
-  padding: var(--page-margin-top, 0.35in) var(--page-margin-right, 0.4in) 0.3in var(--page-margin-left, 0.4in);
+  padding: calc(var(--page-margin-top, 0.35in) * var(--header-scale, 1)) var(--page-margin-right, 0.4in) calc(0.3in * var(--header-scale, 1)) var(--page-margin-left, 0.4in);
 }
 
 .compact-header .resume-name {
@@ -906,7 +907,7 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: var(--page-margin-top, 0.6in) var(--page-margin-right, 0.6in) 0.5in var(--page-margin-left, 0.6in);
+  padding: calc(var(--page-margin-top, 0.6in) * var(--header-scale, 1)) var(--page-margin-right, 0.6in) calc(0.5in * var(--header-scale, 1)) var(--page-margin-left, 0.6in);
   background: linear-gradient(180deg, var(--header-bg) 0%, var(--header-bg-end) 100%);
 }
 
@@ -1001,7 +1002,7 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: var(--page-margin-top, 0.4in) var(--page-margin-right, 0.5in) 0.35in var(--page-margin-left, 0.5in);
+  padding: calc(var(--page-margin-top, 0.4in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in) calc(0.35in * var(--header-scale, 1)) var(--page-margin-left, 0.5in);
   background: var(--header-bg);
 }
 
@@ -1201,7 +1202,7 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: var(--page-margin-top, 0.35in) var(--page-margin-right, 0.5in);
+  padding: calc(var(--page-margin-top, 0.35in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in) calc(var(--page-margin-top, 0.35in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in);
   background: linear-gradient(135deg, var(--header-bg) 0%, var(--header-bg-end, var(--header-bg)) 100%);
 }
 
@@ -1243,7 +1244,7 @@
    ========================================================================== */
 
 .timeline-header {
-  padding: var(--page-margin-top, 0.4in) var(--page-margin-right, 0.5in);
+  padding: calc(var(--page-margin-top, 0.4in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in) calc(var(--page-margin-top, 0.4in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in);
   background: linear-gradient(135deg, var(--header-bg) 0%, var(--header-bg-end, var(--header-bg)) 100%);
 }
 
@@ -1325,7 +1326,7 @@
 
 .creative-header {
   text-align: center;
-  padding: var(--page-margin-top, 0.5in) var(--page-margin-right, 0.5in);
+  padding: calc(var(--page-margin-top, 0.5in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in) calc(var(--page-margin-top, 0.5in) * var(--header-scale, 1)) var(--page-margin-right, 0.5in);
   background: linear-gradient(135deg, var(--header-bg) 0%, var(--header-bg-end, var(--header-bg)) 100%);
 }
 
@@ -1452,4 +1453,10 @@
 /* Executive layout photo adjustments */
 .executive-header .photo-placement-header {
   margin: 0 auto 0.3rem;
+}
+
+/* An explicit contact order flows as one row in centered templates. */
+.stacked-contact .contact-row-ordered .location {
+  width: auto;
+  margin-bottom: 0;
 }

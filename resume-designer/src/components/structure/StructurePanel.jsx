@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Plus, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, Plus, Trash2, X } from 'lucide-react';
 
 import { store, generateId, experienceSortValue } from '../../store.js';
 import { sortRunAware, groupExperience, companyKey } from '../../experienceGroups.js';
-import { SINGLE_COLUMN_LAYOUTS } from '../../renderer.js';
+import { SINGLE_COLUMN_LAYOUTS, partitionSectionsByArea } from '../../renderer.js';
+import { CONTACT_FIELDS, getContactOrder } from '../../contactFields.js';
+import { SECTION_TEMPLATES } from '../../sectionTemplates.js';
 import { getSettings, SETTINGS_UPDATED_EVENT } from '../../persistence.js';
 import { SortableList, SortableItem, DragHandle } from '../Sortable.jsx';
 import { PanelSection } from './PanelSection.jsx';
@@ -48,14 +50,6 @@ const TAB_OPTIONS = {
   sidebar: { tabLabel: 'Sidebar', label: 'Sidebar' },
   main: { tabLabel: 'Main', label: 'Main content' },
   design: { tabLabel: 'Design', label: 'Design' },
-};
-
-const SECTION_TEMPLATES = {
-  skills: { title: 'Skills', type: 'list', content: ['Skill 1', 'Skill 2', 'Skill 3'] },
-  highlights: { title: 'Highlights', type: 'list', content: ['- Key achievement 1', '- Key achievement 2'] },
-  languages: { title: 'Languages', type: 'list', content: ['English (Native)', 'Spanish (Conversational)'] },
-  certifications: { title: 'Certifications', type: 'list', content: ['Certification Name — Year'] },
-  interests: { title: 'Interests', type: 'list', content: ['Interest 1', 'Interest 2'] },
 };
 
 // --- tools are stored as a ' • '-joined string, not an array ---
@@ -536,6 +530,7 @@ export default function StructurePanel() {
   const [collapsed, setCollapsed] = useState({});
   const [renameOpen, setRenameOpen] = useState(false); // "Custom Section…" title dialog
   const [customTitle, setCustomTitle] = useState('');
+  const [customArea, setCustomArea] = useState('main');
   // Experience "Sort by" mode: 'date' | 'relevance' | 'custom'. Date/relevance are
   // one-shot reorders; 'custom' keeps the user's manual drag order. Persisted
   // per-variant on the resume data (experienceSortMode) via updateSilent, so it
@@ -608,11 +603,11 @@ export default function StructurePanel() {
     onToggleCollapse: () => toggleCollapse(`${tab}-${id}`),
   });
 
-  const addSection = (templateKey) => {
+  const addSection = (templateKey, area) => {
     const template = SECTION_TEMPLATES[templateKey];
     if (!template) return;
     store.addToArray('sections', {
-      id: generateId('section'), area: 'sidebar',
+      id: generateId('section'), area,
       ...JSON.parse(JSON.stringify(template)),
     });
   };
@@ -620,7 +615,7 @@ export default function StructurePanel() {
     const title = customTitle.trim();
     if (!title) return;
     store.addToArray('sections', {
-      id: generateId('section'), title, type: 'list', area: 'sidebar', content: ['Item 1'],
+      id: generateId('section'), title, type: 'list', area: customArea, content: ['Item 1'],
     });
     setRenameOpen(false);
     setCustomTitle('');
@@ -682,6 +677,40 @@ export default function StructurePanel() {
   const education = data.education || [];
   const tools = normalizeTools(data.tools);
   const toolsDisplay = data.toolsDisplay === 'skills' ? 'skills' : 'list';
+  const contactOrder = getContactOrder(data.contactOrder, activeLayout);
+  const reorderContact = (from, to) => {
+    const next = getContactOrder(store.get('contactOrder'), activeLayout);
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    store.setChangeMetadata('Reordered contact information');
+    store.update('contactOrder', next);
+  };
+  const customSections = (area) => {
+    const entries = partitionSectionsByArea(sections)[area];
+    return (
+      <PanelSection title={area === 'main' ? 'Additional sections' : 'Sections'} {...sectionProps(`${area}-sections`)} headerExtra={
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" type="button" className="h-7 gap-1 px-2" aria-label={`Add ${area} section`}>
+              <Plus className="size-3.5" /> Add section
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {Object.entries(SECTION_TEMPLATES).map(([key, t]) => (
+              <DropdownMenuItem key={key} onSelect={() => addSection(key, area)}>{t.title}</DropdownMenuItem>
+            ))}
+            <DropdownMenuItem onSelect={() => { setCustomArea(area); setCustomTitle(''); setRenameOpen(true); }}>Custom section…</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      }>
+        {entries.length === 0 && <p className="text-xs text-muted-foreground">Add projects, awards, publications, or a section of your own.</p>}
+        <SortableList className="space-y-2" ids={entries.map(({ section, sIdx }) => section.id || `section-${sIdx}`)}
+          onReorder={(from, to) => store.moveInArray('sections', entries[from].sIdx, entries[to].sIdx)}>
+          {entries.map(({ section, sIdx }) => <SectionItem key={section.id || `section-${sIdx}`} section={section} index={sIdx} activeLayout={activeLayout} />)}
+        </SortableList>
+      </PanelSection>
+    );
+  };
 
   return createPortal(
     <>
@@ -721,35 +750,29 @@ export default function StructurePanel() {
               <Field label="Professional title" path="tagline" defaultValue={data.tagline || ''} />
             </PanelSection>
             <PanelSection title="Contact information" {...sectionProps('contact-info')}>
-              {[['location', 'Location', 'text'], ['email', 'Email', 'email'], ['phone', 'Phone', 'tel'], ['portfolio', 'Portfolio URL', 'text'], ['instagram', 'Instagram', 'text']].map(([f, label, type]) => (
-                <Field key={f} label={label} type={type} path={`contact.${f}`} defaultValue={data.contact?.[f] || ''} />
-              ))}
+              <p className="text-xs text-muted-foreground">Drag or use the arrows to change the order. Empty fields stay hidden on your resume.</p>
+              <SortableList className="space-y-3" ids={contactOrder} onReorder={reorderContact}>
+                {contactOrder.map((field, index) => {
+                  const { label, type } = CONTACT_FIELDS[field];
+                  return (
+                    <SortableItem key={field} id={field} className="flex items-center gap-2">
+                      <DragHandle title={`Reorder ${label}`} />
+                      <div className="min-w-0 flex-1"><Field label={label} type={type} path={`contact.${field}`} defaultValue={data.contact?.[field] || ''} /></div>
+                      <div className="flex flex-col pt-4">
+                        <Button variant="ghost" size="icon" className="size-6" aria-label={`Move ${label} up`} disabled={index === 0} onClick={() => reorderContact(index, index - 1)}><ArrowUp className="size-3" /></Button>
+                        <Button variant="ghost" size="icon" className="size-6" aria-label={`Move ${label} down`} disabled={index === contactOrder.length - 1} onClick={() => reorderContact(index, index + 1)}><ArrowDown className="size-3" /></Button>
+                      </div>
+                    </SortableItem>
+                  );
+                })}
+              </SortableList>
             </PanelSection>
           </>
         )}
 
         {tab === 'sidebar' && (
           <>
-            <PanelSection title="Sections" {...sectionProps('sidebar-sections')} headerExtra={
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" type="button" className="size-7" title="Add section">
-                    <Plus className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {Object.entries(SECTION_TEMPLATES).map(([key, t]) => (
-                    <DropdownMenuItem key={key} onSelect={() => addSection(key)}>{t.title}</DropdownMenuItem>
-                  ))}
-                  <DropdownMenuItem onSelect={() => { setCustomTitle(''); setRenameOpen(true); }}>Custom section…</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            }>
-              <SortableList className="space-y-2" ids={sections.map((s, i) => s.id || `section-${i}`)}
-                onReorder={(from, to) => store.moveInArray('sections', from, to)}>
-                {sections.map((section, i) => <SectionItem key={section.id || `section-${i}`} section={section} index={i} activeLayout={activeLayout} />)}
-              </SortableList>
-            </PanelSection>
+            {customSections('sidebar')}
 
             <PanelSection title="Tools" {...sectionProps('tools')}>
               {tools.length > 0 && (
@@ -881,6 +904,7 @@ export default function StructurePanel() {
           </>
         )}
 
+        {tab === 'main' && customSections('main')}
         {tab === 'design' && <DesignTab sectionProps={sectionProps} />}
       </div>
 

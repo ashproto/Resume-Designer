@@ -13,6 +13,8 @@
  * `loadFromStorage` does: these nested objects are shared module state.
  */
 
+import { DEFAULT_MODEL_ID } from './modelDefaults.js';
+
 export const DEFAULT_STORAGE = {
   variants: {},
   currentVariantId: null,
@@ -24,7 +26,7 @@ export const DEFAULT_STORAGE = {
     pageWidthIn: 8.5,
     customColor: '#c45c3e',
     autoFallback: false,
-    defaultModel: 'anthropic/claude-sonnet-4.6',
+    defaultModel: DEFAULT_MODEL_ID,
     customModels: [],
     chatPanelWidth: 320,
     chatReasoningEffort: 'medium',

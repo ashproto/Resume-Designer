@@ -1,6 +1,37 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRuntimeClient } from '../src/sidepanel/runtimeClient.js';
 
+describe('desktop compatibility errors', () => {
+  it.each(['1.12.4', '1.13.0-beta.2', '1.13.0-beta.2+build.5'])('carries a valid detected desktop version to the panel (%s)', async (desktopVersion) => {
+    const client = createRuntimeClient(async () => ({
+      ok: false,
+      error: {
+        code: 'app_update_required', message: 'Update On Paper.', retryable: false,
+        desktopVersion, token: 'must-not-leak', profile: { name: 'Private profile' },
+      },
+    }));
+    const error = await client.checkConnection().catch((failure) => failure);
+
+    expect(error).toMatchObject({
+      code: 'app_update_required', message: 'Update On Paper.', retryable: false,
+      desktopVersion,
+    });
+    expect(error).not.toHaveProperty('token');
+    expect(error).not.toHaveProperty('profile');
+  });
+
+  it.each([undefined, null, 123, {}, '1.2', '01.2.3', '1.2.3-beta.01', '1.2.3\n', `1.2.3-${'a'.repeat(95)}`])('omits invalid or missing desktop version metadata (%j)', async (desktopVersion) => {
+    const client = createRuntimeClient(async () => ({
+      ok: false,
+      error: { code: 'app_update_required', message: 'Update On Paper.', desktopVersion },
+    }));
+    const error = await client.checkConnection().catch((failure) => failure);
+
+    expect(error).toMatchObject({ code: 'app_update_required', message: 'Update On Paper.' });
+    expect(error).not.toHaveProperty('desktopVersion');
+  });
+});
+
 describe('model selection transport', () => {
   it('passes the chosen model and job to every AI action without changing app settings', async () => {
     const send = vi.fn(async () => ({ ok: true, data: {} }));
@@ -68,4 +99,45 @@ it('forwards the application request identity without extra fields', async () =>
   const payload = { profileContextId: 'context', requestId: '550e8400-e29b-41d4-a716-446655440000', variantId: 'resume', company: 'Acme', title: 'Engineer', notes: 'Referred' };
   await client.logApplication({ ...payload, ignored: 'private extra' });
   expect(send).toHaveBeenCalledWith({ type: 'application.log', ...payload });
+});
+
+describe('live operation progress', () => {
+  it('routes only matching progress and releases its listener after completion', async () => {
+    const listeners = new Set();
+    const onMessage = { addListener: vi.fn((listener) => listeners.add(listener)), removeListener: vi.fn((listener) => listeners.delete(listener)) };
+    let complete;
+    const send = vi.fn(() => new Promise((resolve) => { complete = resolve; }));
+    const client = createRuntimeClient(send, { onMessage, createOperationId: () => 'operation-one' });
+    const onProgress = vi.fn();
+    const pending = client.analyzeJobFit({ profileContextId: 'context', job: { description: 'Build tools.' }, onProgress });
+    expect(send).toHaveBeenCalledWith({ type: 'job.fit.analyze', profileContextId: 'context', job: { description: 'Build tools.' }, operationId: 'operation-one' });
+    for (const listener of listeners) {
+      listener({ type: 'operation.progress', operationId: 'other', progress: { message: 'Other panel' } });
+      listener({ type: 'operation.progress', operationId: 'operation-one', progress: { stage: 'analyzing', message: 'Comparing relevant experience.' } });
+    }
+    expect(onProgress).toHaveBeenCalledExactlyOnceWith({ stage: 'analyzing', message: 'Comparing relevant experience.' });
+    complete({ ok: true, data: { analysis: {} } });
+    await pending;
+    expect(listeners.size).toBe(0);
+  });
+
+  it('cleans up progress after failure and omits an absent base resume', async () => {
+    const onMessage = { addListener: vi.fn(), removeListener: vi.fn() };
+    const send = vi.fn(async () => ({ ok: false, error: { code: 'ai_failed', message: 'Try again.' } }));
+    const client = createRuntimeClient(send, { onMessage, createOperationId: () => 'operation-two' });
+    await expect(client.createTailoredResume({ profileContextId: 'context', requestId: 'request', job: {}, onProgress: vi.fn() })).rejects.toThrow('Try again.');
+    expect(send.mock.calls[0][0]).not.toHaveProperty('resumeId');
+    expect(onMessage.removeListener).toHaveBeenCalledWith(onMessage.addListener.mock.calls[0][0]);
+  });
+});
+
+it('requests preview and explicit app activation separately without scanning or filling a page', async () => {
+  const send = vi.fn(async () => ({ ok: true, data: {} }));
+  const client = createRuntimeClient(send);
+  await client.getResumePreview('context', 'resume');
+  await client.openResume('context', 'resume');
+  expect(send.mock.calls.map(([message]) => message)).toEqual([
+    { type: 'resume.preview', profileContextId: 'context', resumeId: 'resume' },
+    { type: 'resume.open', profileContextId: 'context', resumeId: 'resume' },
+  ]);
 });

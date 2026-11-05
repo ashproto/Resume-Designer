@@ -13,6 +13,8 @@ import { generateUniqueVariantName, saveVariant } from './persistence.js';
 import { parseResumeText } from './resumeParser.js';
 import { addJobDescription } from './jobDescriptions.js';
 import { loadVariant } from './variantManager.js';
+import { assertResumeData } from './resumeValidation.js';
+import { DEFAULT_MODEL_ID } from './modelDefaults.js';
 
 // Interview questions for the AI-guided "Start Fresh" flow.
 export const INTERVIEW_QUESTIONS = [
@@ -147,7 +149,7 @@ export async function extractFileText(file) {
  * Improve a single interview answer with AI. Returns the improved text.
  */
 export async function improveInterviewAnswer(questionText, value, modelId) {
-  const model = modelId || 'anthropic/claude-sonnet-4.5';
+  const model = modelId || DEFAULT_MODEL_ID;
   const response = await chat(model, [{
     role: 'user',
     content: `I'm writing my resume. Here's my answer to "${questionText}": "${value}". Please improve this to be more professional and impactful for a resume. Return only the improved text, no explanation.`,
@@ -188,7 +190,44 @@ export function buildResumeFromInterview(answers) {
  */
 export function generateResumeForJob(modelId, targetJob, reasoningEffort, options = {}) {
   if (!modelId) throw new Error('No AI model configured');
-  return generateResumeFromProfileForJob(modelId, targetJob, { reasoningEffort, ...options });
+  return generateResumeFromProfileForJob(modelId, targetJob, { reasoningEffort, ...options }).then((result) => {
+    assertGeneratedDraft(result?.resume);
+    return result;
+  });
+}
+
+// The generator returns flat contact fields and structured education, whereas
+// the saved document has contact:{} and education:string[]. Validate BEFORE
+// conversion or setState: coercing an object to text can hide malformed output,
+// and handing it to the review screen can unmount a previously usable draft.
+function assertGeneratedDraft(resume) {
+  const invalid = () => { throw new Error('AI returned a malformed resume. Please try again.'); };
+  if (!resume || typeof resume !== 'object' || Array.isArray(resume) || !Object.keys(resume).length) invalid();
+  const textFields = (value, names) => {
+    for (const name of names) if (value[name] != null && typeof value[name] !== 'string') invalid();
+  };
+  const list = (value, check) => {
+    if (value == null) return;
+    if (!Array.isArray(value)) invalid();
+    for (const item of value) check(item);
+  };
+  const text = (value) => { if (typeof value !== 'string') invalid(); };
+  textFields(resume, ['email', 'phone', 'location', 'linkedin', 'portfolio']);
+  for (const field of ['skills', 'highlights']) list(resume[field], text);
+  list(resume.education, (entry) => {
+    if (typeof entry === 'string') return;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) invalid();
+    textFields(entry, ['degree', 'school']);
+    if (entry.year != null && !['string', 'number'].includes(typeof entry.year)) invalid();
+  });
+  list(resume.certifications, (entry) => {
+    if (typeof entry === 'string') return;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) invalid();
+    text(entry.name);
+  });
+  // Validate all shared fields with the canonical document contract; education
+  // is the only rendered field whose generated representation differs.
+  assertResumeData({ ...resume, education: [] });
 }
 
 /**
@@ -376,10 +415,10 @@ export function saveOnboardingResume({ parsedResume, mode, targetJob, jobDescrip
   const variantId = `custom-${Date.now()}`;
 
   let baseName;
-  if (mode === 'job' && targetJob) {
-    const jobTitle = targetJob.title || 'Role';
+  if (mode === 'job' && jobDescriptions?.length > 0 && targetJob) {
+    const jobTitle = targetJob.title || resume.tagline || 'Target roles';
     const company = targetJob.company || '';
-    baseName = company ? `${jobTitle} - ${company}` : jobTitle;
+    baseName = jobDescriptions.length > 1 ? `${jobTitle} + ${jobDescriptions.length - 1} more` : (company ? `${jobTitle} - ${company}` : jobTitle);
   } else {
     baseName = resume.name || 'My Resume';
   }

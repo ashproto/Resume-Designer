@@ -74,6 +74,7 @@ import { computeStats } from './applicationStats.js';
 import { formatRate, formatDays } from './accountStats.js';
 import { getAllJobDescriptions, subscribeJobDescriptions } from './jobDescriptions.js';
 import { initWindowDrag } from './tauriDrag.js';
+import { handleNativeLinkClick } from './nativeLinks.js';
 import {
   migrateBuiltInVariants,
   saveSettings,
@@ -647,19 +648,7 @@ export async function init() {
     // setWindowOpenHandler/shell.openExternal pattern.
     document.addEventListener(
       'click',
-      (e) => {
-        const anchor = e.target.closest?.('a[href]');
-        if (!anchor) return;
-        const href = anchor.getAttribute('href');
-        if (!href) return;
-        if (href.startsWith('#') || href.startsWith('/') || href.startsWith('?')) return;
-        if (anchor.target === '_blank' || /^https?:\/\//i.test(href)) {
-          e.preventDefault();
-          openExternal(href).catch((err) =>
-            console.warn('[Link] open failed:', err)
-          );
-        }
-      },
+      (e) => handleNativeLinkClick(e, openExternal),
       true
     );
 
@@ -802,7 +791,7 @@ export async function init() {
     exportFullBackupWithFeedback, importBackupFromFile,
     // Structure panel. The document only ever leaves through this projection,
     // and only ever comes back as a path the projection handed out.
-    getDocument: () => buildDocumentOutline(store.getDataRef()),
+    getDocument: () => buildDocumentOutline(store.getDataRef(), { layout: getSettings().layout }),
     updateField: (path, value) => store.update(path, value),
     // Reorder by rewriting the WHOLE array through the same `store.update`
     // every other edit uses, rather than adding a second mutation path. The

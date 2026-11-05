@@ -15,6 +15,7 @@ const DEFAULT_SPACING = {
   },
   sectionSpacing: 0.8,   // rem
   headerHeight: 'auto',  // 'auto' or a specific value
+  headerScale: 1,        // vertical header padding; 1 preserves the template
   sidebarWidth: 2.4,     // inches (for two-column layouts)
   fontScale: 1.0,        // multiplier for all font sizes
   lineHeight: 1.45       // line-height multiplier
@@ -56,6 +57,7 @@ export function applySpacingSettings(settings) {
   
   // Section spacing
   resume.style.setProperty('--section-spacing', `${s.sectionSpacing}rem`);
+  resume.style.setProperty('--header-scale', String(Number.isFinite(s.headerScale) ? Math.min(1.5, Math.max(0.25, s.headerScale)) : 1));
   
   // Sidebar width
   resume.style.setProperty('--sidebar-width', `${s.sidebarWidth}in`);

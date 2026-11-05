@@ -282,7 +282,7 @@ function ControlSlider({ label, readout, ...sliderProps }) {
   return (
     <div className="flex items-center gap-2.5">
       <Label className="w-[90px] shrink-0 text-[12.5px] font-medium text-foreground">{label}</Label>
-      <Slider className="flex-1" {...sliderProps} />
+      <Slider className="flex-1" thumbProps={{ 'aria-label': label, 'aria-valuetext': readout }} {...sliderProps} />
       <span className="w-11 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{readout}</span>
     </div>
   );
@@ -757,6 +757,16 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
 
       {/* ===== Header Style ===== */}
       <PanelSection title="Header style" {...sectionProps('header-style')}>
+        <ControlSlider
+          label="Header size"
+          readout={`${Math.round((spacing.headerScale ?? 1) * 100)}%`}
+          min={25}
+          max={150}
+          step={5}
+          value={[Math.round((spacing.headerScale ?? 1) * 100)]}
+          onValueChange={([v]) => handleSpacingChange('headerScale', v / 100)}
+        />
+        <p className="text-xs text-muted-foreground">Adjust the space around your name and contact details. 100% is the original size.</p>
         {/* Solid vs styled mode */}
         <Segmented
           stretch
