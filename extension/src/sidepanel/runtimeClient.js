@@ -1,15 +1,19 @@
+import { isValidDesktopVersion } from '../bridgeClient.js';
+
 export class RuntimeMessageError extends Error {
   constructor({
     message = 'The extension background returned an error',
     status = null,
     code = 'runtime_error',
     retryable = false,
+    desktopVersion,
   } = {}) {
     super(message);
     this.name = 'RuntimeMessageError';
     this.status = status;
     this.code = code;
     this.retryable = Boolean(retryable);
+    if (isValidDesktopVersion(desktopVersion)) this.desktopVersion = desktopVersion;
   }
 }
 

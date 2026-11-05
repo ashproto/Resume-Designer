@@ -82,6 +82,21 @@ h3 {
   padding: 15px;
 }
 
+.compatibility-version {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f4efe6;
+  overflow-wrap: anywhere;
+}
+
+.compatibility-version strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #40382f;
+  font-size: 0.75rem;
+}
+
 .brand-lockup {
   display: grid;
   gap: 5px;

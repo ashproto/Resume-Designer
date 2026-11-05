@@ -21,13 +21,21 @@ const MAX_AI_RESPONSE_BYTES = 1024 * 1024;
 // Let the desktop's 15-minute AI deadline return its terminal result first.
 const AI_OPERATION_POLL_TIMEOUT_MS = 16 * 60_000;
 
+export function isValidDesktopVersion(version) {
+  if (typeof version !== 'string' || version.length > 100) return false;
+  const match = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
+  return match?.[0] === version
+    && (!match[1] || match[1].split('.').every((identifier) => !/^0\d+$/.test(identifier)));
+}
+
 export class BridgeError extends Error {
-  constructor(message, { status = null, code = 'bridge_error', retryable = false } = {}) {
+  constructor(message, { status = null, code = 'bridge_error', retryable = false, desktopVersion } = {}) {
     super(message);
     this.name = 'BridgeError';
     this.status = status;
     this.code = code;
     this.retryable = retryable;
+    if (isValidDesktopVersion(desktopVersion)) this.desktopVersion = desktopVersion;
   }
 }
 
@@ -106,7 +114,7 @@ function validateHealth(data) {
   ) {
     throw new BridgeError(
       'On Paper must be updated to work with this companion extension',
-      { code: 'app_update_required', retryable: false },
+      { code: 'app_update_required', retryable: false, desktopVersion: data.version },
     );
   }
 

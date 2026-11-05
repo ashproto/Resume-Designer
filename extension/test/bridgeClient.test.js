@@ -100,6 +100,42 @@ describe('createBridgeClient', () => {
     expect(new Headers(fetchImpl.mock.calls[0][1].headers).has('Authorization')).toBe(false);
   });
 
+  it.each([
+    [1, [...REQUIRED_CAPABILITIES], '1.12.4'],
+    [2, ['profile.context'], '1.13.0-beta.2'],
+    [2, undefined, '1.13.0-beta.2+build.5'],
+    [1, [], `1.2.3-${'a'.repeat(94)}`],
+  ])('preserves a valid desktop version when health is incompatible (%s, %s, %s)', async (protocolVersion, capabilities, version) => {
+    const client = makeClient(async () => jsonResponse({
+      ok: true, app: 'resume-designer', protocolVersion, capabilities, version,
+      token: 'must-not-leak', profile: { name: 'Private profile' },
+    }));
+
+    const error = await captureError(client.health());
+
+    expect(error).toMatchObject({
+      code: 'app_update_required', retryable: false, desktopVersion: version,
+      message: 'On Paper must be updated to work with this companion extension',
+    });
+    expect(error).not.toHaveProperty('token');
+    expect(error).not.toHaveProperty('profile');
+  });
+
+  it.each([
+    undefined, null, 123, {}, '', '1.2', 'v1.2.3', '01.2.3', '1.02.3', '1.2.03',
+    '1.2.3-beta.01', '1.2.3-', '1.2.3+', '1.2.3\n', ' 1.2.3',
+    '<img src=x onerror=alert(1)>', `1.2.3-${'a'.repeat(95)}`,
+  ])('omits invalid or missing desktop version metadata from a health error (%j)', async (version) => {
+    const client = makeClient(async () => jsonResponse({
+      ok: true, app: 'resume-designer', protocolVersion: 1, capabilities: [], version,
+    }));
+
+    const error = await captureError(client.health());
+
+    expect(error).toMatchObject({ code: 'app_update_required', retryable: false });
+    expect(error).not.toHaveProperty('desktopVersion');
+  });
+
   it('claims a pairing grant without reading or sending the bearer token', async () => {
     const getToken = vi.fn(async () => 'must-not-leak');
     const fetchImpl = vi.fn(async () => jsonResponse({ token: 'claimed-token' }));

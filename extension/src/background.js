@@ -41,6 +41,7 @@ function serializeError(error) {
       status: error.status,
       code: error.code,
       retryable: error.retryable,
+      ...(error.desktopVersion ? { desktopVersion: error.desktopVersion } : {}),
     };
   }
 

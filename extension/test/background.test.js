@@ -175,6 +175,50 @@ describe('createBackgroundService', () => {
     });
   });
 
+  it.each(['1.12.4', '1.13.0-beta.2'])('relays the incompatible desktop version without private health fields (%s)', async (version) => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const service = createBackgroundService({
+      chromeApi,
+      fetchImpl: async () => jsonResponse({
+        ...HEALTH, protocolVersion: 1, version,
+        token: 'must-not-leak', profile: { name: 'Private profile' },
+      }),
+    });
+
+    const { response } = await callRuntime(service.runtimeListener, { type: 'connection.check' });
+
+    expect(response).toEqual({
+      ok: false,
+      error: {
+        message: 'On Paper must be updated to work with this companion extension',
+        status: null,
+        code: 'app_update_required',
+        retryable: false,
+        desktopVersion: version,
+      },
+    });
+  });
+
+  it.each([undefined, 'not-a-version', `1.2.3-${'a'.repeat(95)}`])('keeps the original runtime error shape without a valid desktop version (%s)', async (version) => {
+    const { chromeApi } = createChrome({ token: 'paired' });
+    const service = createBackgroundService({
+      chromeApi,
+      fetchImpl: async () => jsonResponse({ ...HEALTH, protocolVersion: 1, version }),
+    });
+
+    const { response } = await callRuntime(service.runtimeListener, { type: 'connection.check' });
+
+    expect(response).toEqual({
+      ok: false,
+      error: {
+        message: 'On Paper must be updated to work with this companion extension',
+        status: null,
+        code: 'app_update_required',
+        retryable: false,
+      },
+    });
+  });
+
   it('probes public health without auth and stays disconnected without a token', async () => {
     const { chromeApi } = createChrome();
     const fetchImpl = vi.fn(async () => jsonResponse(HEALTH));

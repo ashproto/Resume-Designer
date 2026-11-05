@@ -1,6 +1,37 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRuntimeClient } from '../src/sidepanel/runtimeClient.js';
 
+describe('desktop compatibility errors', () => {
+  it.each(['1.12.4', '1.13.0-beta.2', '1.13.0-beta.2+build.5'])('carries a valid detected desktop version to the panel (%s)', async (desktopVersion) => {
+    const client = createRuntimeClient(async () => ({
+      ok: false,
+      error: {
+        code: 'app_update_required', message: 'Update On Paper.', retryable: false,
+        desktopVersion, token: 'must-not-leak', profile: { name: 'Private profile' },
+      },
+    }));
+    const error = await client.checkConnection().catch((failure) => failure);
+
+    expect(error).toMatchObject({
+      code: 'app_update_required', message: 'Update On Paper.', retryable: false,
+      desktopVersion,
+    });
+    expect(error).not.toHaveProperty('token');
+    expect(error).not.toHaveProperty('profile');
+  });
+
+  it.each([undefined, null, 123, {}, '1.2', '01.2.3', '1.2.3-beta.01', '1.2.3\n', `1.2.3-${'a'.repeat(95)}`])('omits invalid or missing desktop version metadata (%j)', async (desktopVersion) => {
+    const client = createRuntimeClient(async () => ({
+      ok: false,
+      error: { code: 'app_update_required', message: 'Update On Paper.', desktopVersion },
+    }));
+    const error = await client.checkConnection().catch((failure) => failure);
+
+    expect(error).toMatchObject({ code: 'app_update_required', message: 'Update On Paper.' });
+    expect(error).not.toHaveProperty('desktopVersion');
+  });
+});
+
 describe('model selection transport', () => {
   it('passes the chosen model and job to every AI action without changing app settings', async () => {
     const send = vi.fn(async () => ({ ok: true, data: {} }));

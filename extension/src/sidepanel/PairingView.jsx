@@ -1,6 +1,9 @@
 import { useState } from 'react';
+import { isValidDesktopVersion } from '../bridgeClient.js';
 
 export const DOWNLOAD_URL = 'https://github.com/ashproto/Resume-Designer/releases/latest';
+const BETA_DOWNLOAD_URL = 'https://github.com/ashproto/Resume-Designer/releases/tag/next';
+const RELEASES_URL = 'https://github.com/ashproto/Resume-Designer/releases';
 const COMPANION_STORE_URL = 'https://chromewebstore.google.com/detail/on-paper-companion/keggfbelidgpjiapcbgkjidenhdjmega';
 
 const COPY = {
@@ -26,8 +29,7 @@ const COPY = {
   },
   incompatible: {
     heading: 'Update On Paper',
-    body: 'This extension needs a newer compatible version of the desktop app.',
-    action: 'Check connection again',
+    body: 'This desktop app doesn’t support the features this version of Companion needs.',
   },
   opening: {
     heading: 'Connecting to On Paper',
@@ -54,12 +56,16 @@ export default function PairingView({
   onRetry,
   onCancel,
   onPair,
+  desktopVersion,
 }) {
   const [token, setToken] = useState('');
   const [manualOpen, setManualOpen] = useState(false);
   const copy = COPY[state] ?? COPY.unreachable;
-  const primaryAction = state === 'incompatible' ? onRetry : onOpen;
-  const canCancel = operation === 'opening' || operation === 'checking' || operation === 'cancelling';
+  const detectedVersion = isValidDesktopVersion(desktopVersion) ? desktopVersion : '';
+  const isBeta = detectedVersion.split('+')[0].includes('-');
+  const updateUrl = !detectedVersion ? RELEASES_URL : isBeta ? BETA_DOWNLOAD_URL : DOWNLOAD_URL;
+  const updateLabel = !detectedVersion ? 'View desktop releases' : isBeta ? 'View beta updates' : 'View desktop updates';
+  const canCancel = state !== 'incompatible' && (operation === 'opening' || operation === 'checking' || operation === 'cancelling');
 
   async function cancelAndPairManually() {
     if (await onCancel()) setManualOpen(true);
@@ -69,7 +75,24 @@ export default function PairingView({
     <section className="panel-section pairing-section" aria-labelledby="pairing-heading">
       <h2 id="pairing-heading">{copy.heading}</h2>
       <p className="supporting-copy">{copy.body}</p>
-      {state === 'unsupported_extension' ? (
+      {state === 'incompatible' ? (
+        <>
+          <p className="supporting-copy compatibility-version">
+            <strong>Detected desktop version</strong>
+            {detectedVersion || 'Desktop version unavailable'}
+          </p>
+          <a className="primary-button" href={updateUrl} target="_blank" rel="noreferrer">
+            {updateLabel}
+          </a>
+          <button type="button" className="secondary-button" disabled={busy} onClick={onRetry}>
+            {operation === 'checking' ? 'Checking connection…' : 'Check connection again'}
+          </button>
+          <p className="supporting-copy">
+            Install the update, reopen On Paper, then check the connection. If you’re already up to date,
+            a compatible update may not have been released yet.
+          </p>
+        </>
+      ) : state === 'unsupported_extension' ? (
         <a className="primary-button" href={COMPANION_STORE_URL} target="_blank" rel="noreferrer">
           {copy.action}
         </a>
@@ -78,7 +101,7 @@ export default function PairingView({
           type="button"
           className="primary-button"
           disabled={busy}
-          onClick={primaryAction}
+          onClick={onOpen}
         >
           {operation === 'cancelling'
             ? 'Cancelling…'
@@ -124,9 +147,11 @@ export default function PairingView({
           </button>
         </details>
       ) : null}
-      <a className="download-link" href={DOWNLOAD_URL} target="_blank" rel="noreferrer">
-        Download On Paper
-      </a>
+      {state !== 'incompatible' ? (
+        <a className="download-link" href={DOWNLOAD_URL} target="_blank" rel="noreferrer">
+          Download On Paper
+        </a>
+      ) : null}
     </section>
   );
 }

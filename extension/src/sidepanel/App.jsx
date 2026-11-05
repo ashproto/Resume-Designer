@@ -554,13 +554,14 @@ function Workspace({
   async function connect({ launch = false } = {}) {
     if (pairingAttempt.current) return null;
     const previous = connection;
+    const checkingCompatibility = !launch && previous.kind === 'incompatible';
     const generation = ++pairingGeneration.current;
     const isCurrent = () => generation === pairingGeneration.current;
-    pairingAttempt.current = { generation, previous };
+    pairingAttempt.current = { generation, previous, desktopVersion: runtimeError?.desktopVersion };
     setRuntimeError(null);
     setPairingBusy(true);
     setPairingAction(launch ? 'opening' : 'checking');
-    setConnection({ ...previous, kind: launch ? 'opening' : 'checking' });
+    setConnection({ ...previous, kind: checkingCompatibility ? 'incompatible' : launch ? 'opening' : 'checking' });
     try {
       const opened = launch ? await client.openApp() : null;
       if (!isCurrent()) return null;
@@ -1358,7 +1359,7 @@ function Workspace({
     : progress?.message || (fillBusy ? 'Filling the fields you reviewed…' : mappingBusy ? 'Matching your details to each field…' : jobActionStatus);
   const connectionLabel = connection.kind === 'connected'
     ? 'Connected'
-    : connection.kind === 'checking'
+    : connection.kind === 'checking' || (pairingBusy && pairingAction === 'checking')
       ? 'Checking connection…'
       : connection.kind === 'opening'
         ? 'Opening On Paper…'
@@ -1493,6 +1494,7 @@ function Workspace({
       {pairingState ? (
         <PairingView
           state={pairingState}
+          desktopVersion={runtimeError?.desktopVersion || pairingAttempt.current?.desktopVersion}
           busy={pairingBusy || connection.kind === 'checking'}
           operation={pairingAction}
           onOpen={openAndReconnect}

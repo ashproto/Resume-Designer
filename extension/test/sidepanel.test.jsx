@@ -1146,21 +1146,36 @@ describe('App explicit workflow', () => {
   });
 
   it('shows update and download guidance for an incompatible or missing desktop app', async () => {
+    const recheck = deferred();
     const incompatible = new RuntimeMessageError({
       message: 'On Paper must be updated',
       code: 'app_update_required',
       retryable: false,
+      desktopVersion: '2.3.2-next.165',
     });
     const client = makeClient({
-      checkConnection: vi.fn(async () => { throw incompatible; }),
+      checkConnection: vi.fn().mockRejectedValueOnce(incompatible).mockReturnValueOnce(recheck.promise),
     });
     await renderApp(client);
 
     expect(container.textContent).toContain('Update On Paper');
-    const download = [...container.querySelectorAll('a')]
-      .find((link) => link.textContent.trim() === 'Download On Paper');
-    expect(download?.href).toMatch(/github\.com\/ashproto\/Resume-Designer\/releases\/latest/);
+    expect(container.querySelector('.compatibility-version')?.textContent ?? '').toContain('2.3.2-next.165');
+    const download = container.querySelector('.pairing-section a.primary-button');
+    expect(download?.href).toBe('https://github.com/ashproto/Resume-Designer/releases/tag/next');
     expect(labelled.bind(null, 'Pairing token')).toThrow();
+    expect(client.openApp).not.toHaveBeenCalled();
+    await click(button('Check connection again'));
+    expect(container.querySelector('.compatibility-version')?.textContent ?? '').toContain('2.3.2-next.165');
+    expect(container.querySelector('.pairing-section a.primary-button')?.href).toBe('https://github.com/ashproto/Resume-Designer/releases/tag/next');
+    expect(button('Checking connection…').disabled).toBe(true);
+    expect(container.querySelector('.connection-status').textContent).toBe('Checking connection…');
+    expect(labelled.bind(null, 'Pairing token')).toThrow();
+    expect(container.textContent).not.toContain('Cancel and pair manually');
+    await act(async () => recheck.resolve({
+      connected: true, profileId: 'profile-1', profileContextId: 'context-1', resumes: [],
+    }));
+    expect(container.querySelector('.connection-status').textContent).toBe('Connected');
+    expect(container.querySelector('.pairing-section')).toBeNull();
     expect(client.openApp).not.toHaveBeenCalled();
   });
 
