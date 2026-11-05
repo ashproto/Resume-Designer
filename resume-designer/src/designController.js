@@ -311,7 +311,7 @@ const MARGIN_SIDES = {
   marginBottom: 'bottom',
   marginLeft: 'left',
 };
-const SPACING_SCALARS = ['fontScale', 'lineHeight', 'sectionSpacing', 'sidebarWidth'];
+const SPACING_SCALARS = ['fontScale', 'lineHeight', 'sectionSpacing', 'sidebarWidth', 'headerScale'];
 const ACCENT_NAMES = ['underlineStyle', 'bulletStyle', 'borderRadius', 'skillTagStyle'];
 const ACCENT_FLAGS = ['showCornerTriangle', 'showSidebarGradient'];
 const PHOTO_NAMES = ['placement', 'shape', 'size', 'borderColor', 'objectPosition'];
@@ -463,6 +463,7 @@ function applySpacing(property, value) {
     const preset = SPACING_PRESETS[String(value)];
     if (!preset) throw new Error(`unknown spacing preset: ${value}`);
     writeSpacing({
+      ...getSpacingSettings(),
       fontScale: preset.fontScale,
       lineHeight: preset.lineHeight,
       sectionSpacing: preset.sectionSpacing,
@@ -739,6 +740,7 @@ export function getDesignState() {
     systemFonts: options(SYSTEM_FONT_STACKS),
     googleFonts: POPULAR_GOOGLE_FONTS.map((f) => ({ family: f.family, category: f.category })),
     spacing: {
+      headerScale: spacing.headerScale,
       fontScale: spacing.fontScale,
       lineHeight: spacing.lineHeight,
       sectionSpacing: spacing.sectionSpacing,

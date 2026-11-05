@@ -56,7 +56,7 @@ export default function PreviewPane({ variant }) {
   return (
     <div
       ref={boxRef}
-      className="overflow-hidden rounded-md border bg-white shadow-sm"
+      className="overflow-hidden rounded-md border bg-white shadow-xs"
       style={{ height: scale ? pageH * scale : undefined }}
       aria-hidden="true"
     >

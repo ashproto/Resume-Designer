@@ -70,7 +70,7 @@ function getAvailableModels() {
 // LiveReasoning panel as it works, replacing the old synthetic 3-step animation.
 function AnalysisLoadingOverlay({ reasoning, title, subtitle }) {
   return createPortal(
-    <div className="fixed inset-0 z-[2200] flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-2200 flex items-center justify-center bg-background/80 p-6 backdrop-blur-xs">
       <div className="flex w-full max-w-md flex-col items-center gap-5 text-center">
         <Loader2 className="size-12 animate-spin text-primary" />
         <div className="space-y-1">
@@ -385,7 +385,7 @@ export default function JobsDialog() {
               type="button"
               aria-label="Close"
               onClick={() => setOpen(false)}
-              className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2"
             >
               <X className="h-4 w-4" />
               <span className="sr-only">Close</span>

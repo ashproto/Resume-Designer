@@ -74,6 +74,7 @@ import { computeStats } from './applicationStats.js';
 import { formatRate, formatDays } from './accountStats.js';
 import { getAllJobDescriptions, subscribeJobDescriptions } from './jobDescriptions.js';
 import { initWindowDrag } from './tauriDrag.js';
+import { handleNativeLinkClick } from './nativeLinks.js';
 import {
   migrateBuiltInVariants,
   saveSettings,
@@ -647,19 +648,7 @@ export async function init() {
     // setWindowOpenHandler/shell.openExternal pattern.
     document.addEventListener(
       'click',
-      (e) => {
-        const anchor = e.target.closest?.('a[href]');
-        if (!anchor) return;
-        const href = anchor.getAttribute('href');
-        if (!href) return;
-        if (href.startsWith('#') || href.startsWith('/') || href.startsWith('?')) return;
-        if (anchor.target === '_blank' || /^https?:\/\//i.test(href)) {
-          e.preventDefault();
-          openExternal(href).catch((err) =>
-            console.warn('[Link] open failed:', err)
-          );
-        }
-      },
+      (e) => handleNativeLinkClick(e, openExternal),
       true
     );
 
@@ -802,7 +791,7 @@ export async function init() {
     exportFullBackupWithFeedback, importBackupFromFile,
     // Structure panel. The document only ever leaves through this projection,
     // and only ever comes back as a path the projection handed out.
-    getDocument: () => buildDocumentOutline(store.getDataRef()),
+    getDocument: () => buildDocumentOutline(store.getDataRef(), { layout: getSettings().layout }),
     updateField: (path, value) => store.update(path, value),
     // Reorder by rewriting the WHOLE array through the same `store.update`
     // every other edit uses, rather than adding a second mutation path. The
@@ -1936,7 +1925,7 @@ function getPageSetup() {
 // from memory is banned. Keep in sync with ui/button.jsx if it changes.
 const EMPTY_STATE_BTN =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium transition-colors ' +
-  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring h-8 px-3';
+  'focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring h-8 px-3';
 
 // Empty canvas state: no variant loaded (fresh profile, or every resume
 // deleted). Tailwind's content glob covers src/**/*.js, so these utilities
@@ -1956,8 +1945,8 @@ function renderEmptyState(container) {
       <p class="text-[15px] font-semibold text-foreground">No resume loaded</p>
       <p class="mt-1 max-w-[36ch] text-[13px] leading-relaxed text-muted-foreground">Create a new resume from scratch, or open one from your library.</p>
       <div class="mt-5 flex items-center gap-2">
-        <button type="button" id="empty-state-create" class="${EMPTY_STATE_BTN} bg-primary text-primary-foreground shadow hover:bg-primary/90">Create resume</button>
-        <button type="button" id="empty-state-library" class="${EMPTY_STATE_BTN} border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground">Open library</button>
+        <button type="button" id="empty-state-create" class="${EMPTY_STATE_BTN} bg-primary text-primary-foreground shadow-sm hover:bg-primary/90">Create resume</button>
+        <button type="button" id="empty-state-library" class="${EMPTY_STATE_BTN} border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground">Open library</button>
       </div>
     </div>
   `;

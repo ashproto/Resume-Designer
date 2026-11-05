@@ -21,7 +21,7 @@ export function SyncSuspendedRow({ suspended, onResume }) {
       <CloudOff className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden />
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-medium">iCloud sync is paused on this Mac</div>
-        <p className="mt-0.5 text-[12.5px] leading-[1.5] text-muted-foreground">
+        <p className="mt-0.5 text-[12.5px] leading-normal text-muted-foreground">
           Your iCloud data for On Paper was deleted from the account. Everything on this Mac
           is still here. Resuming uploads it to iCloud again.
         </p>

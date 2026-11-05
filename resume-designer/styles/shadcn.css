@@ -1,19 +1,140 @@
 /*
- * shadcn/ui + Tailwind layer for the React app chrome.
+ * shadcn/ui + Tailwind (v4) layer for the React app chrome.
  *
- * Tailwind utilities (Preflight disabled — see tailwind.config.js) plus the
- * shadcn design-token contract expressed as ALIASES onto the app's existing 49
+ * Tailwind utilities with Preflight (`@import 'tailwindcss'` includes it) plus
+ * the shadcn design-token contract expressed as ALIASES onto the app's existing
  * CSS variables (styles/main.css). Because each shadcn token points at a
  * --color-* var that already themes via [data-theme] and the
  * prefers-color-scheme fallback, shadcn surfaces inherit light/dark/system
  * theming with no extra wiring.
  *
+ * Preflight is ON because real shadcn components need it for borders,
+ * box-sizing and typography. The resume document (#resume) is a vanilla island
+ * styled by resume.css, and the PDF renders via print.html (no Tailwind), so
+ * neither depends on Preflight being off.
+ *
  * Loaded by the React bundle (src/main.jsx, Step 4); the vanilla app and the
- * PDF print window never import it.
+ * PDF print window never import it. Tailwind v4 keeps its configuration here,
+ * in CSS, where the shadcn CLI also edits it (components.json).
  */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* shadcn's animate-in/out, fade, zoom and slide utilities. Unlike the v3
+   tailwindcss-animate plugin, its animations read Tailwind's own --tw-duration
+   and --tw-ease, so `duration-200` and `ease-in-out` still time them. */
+@import 'tw-animate-css';
+
+/* Reuse the [data-theme="dark"] attribute that src/theme.js already sets for
+   explicit dark mode. In "system" mode theme.js removes the attribute and relies
+   on the @media (prefers-color-scheme) fallback in main.css; shadcn surfaces still
+   theme there because every color maps onto a --color-* var the existing cascade
+   themes — so `dark:` utilities (rare in shadcn) are the only thing not covered
+   under system-dark. Accepted. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * The theme, INLINE on purpose. Tailwind v4 publishes theme values as CSS
+ * variables on :root (--color-*, --radius-*, --font-*) and its utilities read
+ * them back — but styles/main.css already owns a --color-* namespace of its own,
+ * unlayered, so it beats Tailwind's theme layer wherever the names meet. Two do:
+ * --color-accent (the app's terracotta, where shadcn's accent is the hover
+ * surface) and --color-border. `inline` makes each utility embed the shadcn
+ * alias itself (`var(--accent)`), so neither side reads the other's variable.
+ *
+ * Opacity modifiers such as `bg-primary/90` need nothing here: v4 builds them
+ * with color-mix, which is what the v3 config's <alpha-value> wrappers did.
+ */
+@theme inline {
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-bg: var(--destructive-bg);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --font-mono: var(--font-mono-ui);
+  --font-sans: var(--font-ui);
+}
+
+@theme {
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+}
+
+/* Tailwind v4 changed the default border color to `currentcolor`; v3 used
+   gray-200. Kept so every `border` that names no color looks as it did. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+/* Tailwind v4's Preflight also dropped v3's pointer cursor on buttons, so every
+   shadcn <Button> would show the arrow. These are v3's rules, verbatim. */
+@layer base {
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+  :disabled {
+    cursor: default;
+  }
+}
+
+/* Tailwind v3's space-y put the gap on each child AFTER the first (margin-top);
+   v4 puts it on each child BEFORE the last (margin-bottom). They agree for
+   block children, but a shadcn <Label> is inline, and an inline box takes no
+   vertical margin, so every field stack that opens with a label lost its
+   label-to-field gap. This puts it back where v3 had it, on whatever follows
+   the label. Extending the core utility covers every space-y-* value. */
+@utility space-y-* {
+  & > label + * {
+    margin-top: calc(var(--spacing) * --value(number));
+  }
+}
 
 /* The React root hosts the vanilla `.app` skeleton (App.jsx). display:contents
    makes #root layout-transparent so `.app` keeps its body-level flex/grid. */
@@ -22,9 +143,10 @@
 }
 
 /* Form-control normalization — the subset of Tailwind Preflight that shadcn
-   components depend on. Preflight as a whole is disabled (it would flatten the
-   resume's headings/lists/margins and fight the 13.5k-line vanilla CSS — see
-   tailwind.config.js), but WITHOUT this subset native <button>/<input>/<select>/
+   components depend on. Written while Preflight as a whole was disabled (it
+   would flatten the resume's headings/lists/margins and fight the 13.5k-line
+   vanilla CSS); it is on now, and these stay as the floor. WITHOUT this subset
+   native <button>/<input>/<select>/
    <textarea> fall back to the UA default font (Arial) and native chrome, which
    renders as dated "native" controls in WKWebView (the macOS Tauri webview) and
    was the cause of the Settings dialog looking unstyled. These are element-level

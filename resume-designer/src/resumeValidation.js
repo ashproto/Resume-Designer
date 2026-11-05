@@ -39,6 +39,7 @@ export function assertResumeData(data, { requireIdentity = false } = {}) {
       'contact.');
   }
   list(data.education, 'education', text);
+  list(data.contactOrder, 'contactOrder', text);
   list(data.sections, 'sections', (section, path) => {
     object(section, path);
     textFields(section, ['id', 'title', 'type', 'area'], `${path}.`);

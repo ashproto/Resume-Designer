@@ -50,11 +50,24 @@ impl InFlightLimiter {
     }
 
     fn try_acquire(self: &Arc<Self>) -> Option<InFlightPermit> {
-        self.count
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (current < self.limit).then_some(current + 1)
-            })
-            .ok()?;
+        // The loop `fetch_update` ran, written out: Rust 1.99 deprecates that
+        // method for `try_update`, which older toolchains still reject as
+        // unstable, and there is no toolchain pin to move everyone at once.
+        let mut current = self.count.load(Ordering::Acquire);
+        loop {
+            if current >= self.limit {
+                return None;
+            }
+            match self.count.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
         Some(InFlightPermit {
             limiter: Arc::clone(self),
         })
@@ -87,14 +100,14 @@ pub struct JsResponse {
 #[derive(Default)]
 pub struct BridgePending(pub Mutex<HashMap<u64, SyncSender<JsResponse>>>);
 
-/// AI completions and PDF exports are slow (model latency / hidden print
+/// AI completions, PDF exports, and previews are slow (model latency / hidden print
 /// window render + capture). Health and one-time pairing claims are polled
 /// during a cold app launch, so they fail quickly if the webview has not
 /// installed its bridge listener yet instead of blocking a poll for 30s.
 fn timeout_for_path(path: &str) -> Duration {
     if path == "/health" || path == "/pairing/claim" || path == "/pairing/request" {
         Duration::from_secs(2)
-    } else if path.starts_with("/ai/") || path.ends_with("/pdf") {
+    } else if path.starts_with("/ai/") || path.ends_with("/pdf") || path.ends_with("/preview") {
         Duration::from_secs(180)
     } else {
         Duration::from_secs(30)
@@ -472,12 +485,17 @@ mod tests {
     }
 
     #[test]
-    fn timeout_is_long_for_ai_and_pdf_and_short_for_connection_polling() {
+    fn timeout_is_long_for_ai_and_pdf_preview_and_short_for_connection_polling() {
         assert_eq!(timeout_for_path("/ai/complete"), Duration::from_secs(180));
         assert_eq!(
             timeout_for_path("/resumes/v-1/pdf"),
             Duration::from_secs(180)
         );
+        assert_eq!(
+            timeout_for_path("/resumes/v-1/preview"),
+            Duration::from_secs(180)
+        );
+        assert_eq!(timeout_for_path("/resumes/v-1/open"), Duration::from_secs(30));
         assert_eq!(timeout_for_path("/resumes"), Duration::from_secs(30));
         assert_eq!(timeout_for_path("/health"), Duration::from_secs(2));
         assert_eq!(timeout_for_path("/pairing/claim"), Duration::from_secs(2));

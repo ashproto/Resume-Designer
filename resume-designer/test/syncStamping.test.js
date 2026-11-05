@@ -28,8 +28,9 @@ import { registerPersistedSaveHandler } from '../src/sync/syncModel.js';
 import { resetSpacingSettings, defaultSpacingSettings } from '../src/spacingService.js';
 import { resetAccentSettings } from '../src/accentService.js';
 import { clearLegacyHistory } from '../src/chatThreads.js';
-import { BACKUP_FIXED_KEYS, BACKUP_HISTORY_PREFIX } from '../src/profileKeys.js';
+import { BACKUP_FIXED_KEYS, BACKUP_HISTORY_PREFIX, CHANGELOG_SEEN_FIELD } from '../src/profileKeys.js';
 import { SYNCED_SHARED_KEYS, classifyKey } from '../src/sync/syncKeys.js';
+import { stripDeadProviderCredentials } from '../src/profiles.js';
 
 const DATA = 'resume-designer-data';
 const STATE = 'resume-designer-sync-state';
@@ -277,6 +278,41 @@ describe('an unchanged write is not a change', () => {
     expect(appStorage.getItem('resume-designer-applications'))
       .toContain('a-2-from-device-B');
   });
+
+  it('names nothing when the boot sweep removes a dead provider key', async () => {
+    // Those keys never cross the sync boundary, so removing them changes nothing
+    // another device can see. Stamped, the sweep made this device's settings the
+    // newest copy at every boot that found one — beating a real settings edit
+    // made on another device, with nothing parked.
+    const blob = JSON.parse(appStorage.getItem(DATA));
+    blob.settings = { ...blob.settings, anthropicKey: 'sk-ant-old' };
+    appStorage.setItem(DATA, JSON.stringify(blob));
+    await settle();
+    appStorage.setItem(STATE, '{}');
+    await settle();
+    notify.mockClear();
+
+    stripDeadProviderCredentials();
+    await settle();
+
+    expect(JSON.parse(appStorage.getItem(DATA)).settings.anthropicKey).toBeUndefined();
+    expect(stampedIds()).toEqual([]);
+    expect(allNamed()).toEqual([]);
+  });
+
+  it('names nothing when only this device’s release-notes record changed', async () => {
+    // The record never crosses the sync boundary (syncUnits.js), so the unit it
+    // rides in did not change. Stamped, every app update made each device's
+    // settings the newest copy — a stale copy's preferences then beat a real
+    // settings edit made on another device, with nothing parked.
+    const blob = JSON.parse(appStorage.getItem(DATA));
+    blob.settings = { ...blob.settings, [CHANGELOG_SEEN_FIELD]: '2.3.1' };
+    appStorage.setItem(DATA, JSON.stringify(blob));
+    await settle();
+
+    expect(stampedIds()).toEqual([]);
+    expect(allNamed()).toEqual([]);
+  });
 });
 
 describe('device-local keys are never stamped or sent', () => {
@@ -428,7 +464,7 @@ describe('the data blob is split, not double-handled', () => {
 });
 
 describe('applying remote units must not echo', () => {
-  it('stamps nothing at all for an apply', async () => {
+  it('records only the author’s time for an apply, and names nothing', async () => {
     const { applied } = await applyUnits([
       {
         id: 'resume:v-2',
@@ -444,8 +480,15 @@ describe('applying remote units must not echo', () => {
     expect(applied).toBe(3);
     // The bytes landed...
     expect(appStorage.getItem('resume-designer-applications')).toBe('[{"id":"a-9"}]');
-    // ...and nothing claims this device modified them.
-    expect(stampedIds()).toEqual([]);
+    // ...and nothing claims this device modified them. Each landed unit records
+    // the time its AUTHOR wrote it — so re-sending it cannot erase that time on
+    // the server — and never one minted here, which would be the echo.
+    const author = { modifiedAt: '2026-08-09T00:00:00.000Z' };
+    expect(stamps()).toEqual({
+      'resume:v-2': author,
+      'data:settings': author,
+      'key:resume-designer-applications': author,
+    });
     expect(notify).not.toHaveBeenCalled();
   });
 

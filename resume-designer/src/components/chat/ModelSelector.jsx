@@ -120,7 +120,7 @@ export function ModelSelector({
                   <CommandGroup
                     key={group.group}
                     heading={group.group}
-                    className="[&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-primary"
+                    className="**:[[cmdk-group-heading]]:font-semibold **:[[cmdk-group-heading]]:text-primary"
                   >
                     {group.options.map((opt) => (
                       <CommandItem key={opt.value} value={opt.value} keywords={[opt.label]} onSelect={() => pick(opt.value)}>

@@ -29,9 +29,16 @@ function normalize(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
+function accessibleLabelText(element) {
+  if (!element) return '';
+  const clone = element.cloneNode(true);
+  clone.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(node => node.remove());
+  return normalize(clone.textContent);
+}
+
 function associatedLabel(element) {
   return [...(element.labels ?? [])]
-    .map((label) => normalize(label.textContent))
+    .map(accessibleLabelText)
     .filter(Boolean)
     .join(' ');
 }
@@ -40,7 +47,7 @@ function ariaLabelledBy(element) {
   const document = element.ownerDocument;
   return normalize(element.getAttribute('aria-labelledby'))
     .split(' ')
-    .map((id) => normalize(document.getElementById(id)?.textContent))
+    .map((id) => accessibleLabelText(document.getElementById(id)))
     .filter(Boolean)
     .join(' ');
 }
@@ -93,7 +100,7 @@ function labelledGroupContainer(element) {
 
 function textWithoutControls(element) {
   const clone = element.cloneNode(true);
-  clone.querySelectorAll('input, textarea, select, option, button, script, style, [role="combobox"]')
+  clone.querySelectorAll('input, textarea, select, option, button, script, style, [role="combobox"], .select2-container, .AutocompleteSelectFieldUIWidget, [hidden], [aria-hidden="true"]')
     .forEach((control) => control.remove());
   return normalize(clone.textContent);
 }
@@ -170,6 +177,7 @@ export function isButtonBackedYesNoCheckbox(element) {
 
 function descriptorType(element) {
   if (normalize(element.getAttribute('role')).toLowerCase() === 'combobox') return 'custom';
+  if (element.matches('.select2-container, .AutocompleteSelectFieldUIWidget')) return 'custom';
   if (isButtonBackedYesNoCheckbox(element)) return 'custom';
   if (element.tagName === 'TEXTAREA') return 'textarea';
   if (element.tagName === 'SELECT') return 'select';
@@ -198,6 +206,9 @@ export function isUnavailableControl(element) {
 
 function isIgnored(element) {
   if (isUnavailableControl(element)) return true;
+  // A widget's search box is not the applicant's answer. Select2 can mount it
+  // in a popup outside the widget itself, so nesting alone is not sufficient.
+  if (element.matches('input.select2-input, input.select2-search__field')) return true;
   if (element.tagName !== 'INPUT') return false;
 
   const type = inputType(element);
@@ -336,9 +347,20 @@ function semanticYesNoCheckboxGroups(controls) {
 }
 
 export function scanForm(root = document) {
-  const controls = [...root.querySelectorAll('input, textarea, select, [role="combobox"]')]
+  const candidates = [...root.querySelectorAll('input, textarea, select, [role="combobox"], .select2-container, .AutocompleteSelectFieldUIWidget')]
     .filter((element) => !isIgnored(element))
     .filter((element) => descriptorType(element) !== 'file' || hasFileIdentity(element));
+  // Keep the semantic combobox where available; older Select2 versions get
+  // one manual widget descriptor. Never mark its hidden native backing field
+  // or its internal editable search input as a second application answer.
+  const customRoots = candidates.filter(element => descriptorType(element) === 'custom');
+  const controls = candidates.filter(element => {
+    if (element.matches('.select2-container, .AutocompleteSelectFieldUIWidget')
+      && element.querySelector('[role="combobox"]')) return false;
+    return !customRoots.some(parent => parent !== element && parent.contains(element)
+      && !(parent.matches('.select2-container, .AutocompleteSelectFieldUIWidget')
+        && parent.querySelector('[role="combobox"]')));
+  });
   const radioGroups = new Map();
 
   for (const control of controls) {
@@ -441,14 +463,21 @@ function cleanJobTextContainer(container) {
   clone.querySelectorAll(
     'script, style, noscript, template, form, input, textarea, select, button',
   ).forEach((element) => element.remove());
-  return normalize(clone.textContent).slice(0, MAX_JOB_DESCRIPTION_CHARS);
+  const read = node => {
+    if (node.nodeType === 3) return String(node.textContent).replace(/\s+/g, ' ');
+    if (node.nodeType === 1 && node.tagName === 'BR') return '\n';
+    const text = [...node.childNodes].map(read).join('');
+    if (node.tagName === 'LI') return `• ${text.trim()}\n`;
+    if (/^(P|DIV|H[1-6]|SECTION|ARTICLE|UL|OL)$/.test(node.tagName)) return `\n\n${text.trim()}\n\n`;
+    return text;
+  };
+  return read(clone).split('\n').map(line => line.trim()).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim().slice(0, MAX_JOB_DESCRIPTION_CHARS);
 }
 
 function jobTextFromMarkup(root, value) {
   const container = root.createElement('template');
-  container.innerHTML = String(value ?? '')
-    .replace(/<br\s*\/?\s*>/gi, ' ')
-    .replace(/<\/(?:p|div|li|h[1-6]|section|article)\s*>/gi, (tag) => `${tag} `);
+  container.innerHTML = String(value ?? '');
   return cleanJobTextContainer(container.content);
 }
 
@@ -461,6 +490,29 @@ function jobDescription(root, posting) {
     if (text) return text;
   }
   return '';
+}
+
+function jobLocations(root, posting) {
+  const values = [];
+  if (normalize(posting?.jobLocationType).toUpperCase() === 'TELECOMMUTE') values.push('Remote');
+  const locations = Array.isArray(posting?.jobLocation) ? posting.jobLocation : [posting?.jobLocation];
+  for (const location of locations) {
+    if (!location) continue;
+    const address = location.address;
+    if (typeof address === 'string') values.push(normalize(address));
+    else if (address && typeof address === 'object') {
+      values.push([address.addressLocality, address.addressRegion,
+        typeof address.addressCountry === 'object' ? address.addressCountry?.name : address.addressCountry,
+      ].map(normalize).filter(Boolean).join(', '));
+    } else values.push(normalize(typeof location === 'string' ? location : location.name));
+  }
+  if (!values.some(Boolean)) {
+    for (const element of root.querySelectorAll('[itemprop="jobLocation"], [data-automation-id="locations"], [data-testid*="job-location" i], .job-location')) {
+      if (element.closest('form') || isUnavailableControl(element)) continue;
+      values.push(cleanJobTextContainer(element).replace(/\n+/g, ', '));
+    }
+  }
+  return [...new Set(values.map(normalize).filter(Boolean))].slice(0, 12).map(value => value.slice(0, 200));
 }
 
 function jobFingerprint({ url, title, description }) {
@@ -506,6 +558,7 @@ export function scrapePageContext(root = document, pageUrl = location.href) {
   return {
     company,
     title,
+    locations: jobLocations(root, posting),
     url,
     description,
     fingerprint: jobFingerprint({ url, title, description }),

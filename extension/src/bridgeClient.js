@@ -7,6 +7,8 @@ export const REQUIRED_CAPABILITIES = Object.freeze([
   'profile.context',
   'resume.pdf',
   'ai.complete',
+  'ai.progress',
+  'ai.profile-source',
   'ai.job-fit',
   'ai.tailored-resume',
   'profile.answers',
@@ -16,14 +18,24 @@ export const REQUIRED_CAPABILITIES = Object.freeze([
 
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const MAX_AI_RESPONSE_BYTES = 1024 * 1024;
+// Let the desktop's 15-minute AI deadline return its terminal result first.
+const AI_OPERATION_POLL_TIMEOUT_MS = 16 * 60_000;
+
+export function isValidDesktopVersion(version) {
+  if (typeof version !== 'string' || version.length > 100) return false;
+  const match = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
+  return match?.[0] === version
+    && (!match[1] || match[1].split('.').every((identifier) => !/^0\d+$/.test(identifier)));
+}
 
 export class BridgeError extends Error {
-  constructor(message, { status = null, code = 'bridge_error', retryable = false } = {}) {
+  constructor(message, { status = null, code = 'bridge_error', retryable = false, desktopVersion } = {}) {
     super(message);
     this.name = 'BridgeError';
     this.status = status;
     this.code = code;
     this.retryable = retryable;
+    if (isValidDesktopVersion(desktopVersion)) this.desktopVersion = desktopVersion;
   }
 }
 
@@ -34,6 +46,7 @@ function classifyHttpError(status, message, data) {
       pairing_busy: true,
       invalid_model: false,
       pairing_rejected: false,
+      untrusted_pairing_client: false,
       pairing_not_found: false,
       pairing_unavailable: true,
       storage_full: false,
@@ -101,7 +114,7 @@ function validateHealth(data) {
   ) {
     throw new BridgeError(
       'On Paper must be updated to work with this companion extension',
-      { code: 'app_update_required', retryable: false },
+      { code: 'app_update_required', retryable: false, desktopVersion: data.version },
     );
   }
 
@@ -194,6 +207,7 @@ export function createBridgeClient({
   getToken = async () => null,
   baseUrl = BRIDGE_BASE_URL,
   requestTimeoutMs,
+  progressPollIntervalMs = 500,
 } = {}) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
 
@@ -271,7 +285,8 @@ export function createBridgeClient({
     const controller = new AbortController();
     const timeoutMs = requestTimeoutMs ?? (
       path === '/health' || path.startsWith('/pairing/') ? 4_000
-        : (path.startsWith('/ai/') && path !== '/ai/models') || path.endsWith('/pdf') ? 185_000 : 30_000
+        : options.payload?.operationId ? 15_000
+        : (path.startsWith('/ai/') && path !== '/ai/models') || path.endsWith('/pdf') || path.endsWith('/preview') ? 185_000 : 30_000
     );
     let timer;
     let cancel;
@@ -302,6 +317,41 @@ export function createBridgeClient({
 
   const resumePath = (id) => `/resumes/${encodeURIComponent(String(id))}`;
 
+  async function aiRequest(path, payload, options = {}) {
+    let response = await request(path, {
+      ...options, method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
+    });
+    const deadline = Date.now() + AI_OPERATION_POLL_TIMEOUT_MS;
+    let lastProgress = '';
+    while (response?.operationId && ['running', 'complete'].includes(response.state)) {
+      const serialized = JSON.stringify(response.progress);
+      if (serialized !== lastProgress && response.progress) {
+        options.onProgress?.(response.progress);
+        lastProgress = serialized;
+      }
+      if (response.state === 'complete') {
+        const result = response.result;
+        if (!result || !Number.isInteger(result.status) || !result.body) {
+          throw new BridgeError('On Paper returned an invalid operation result', { code: 'invalid_response' });
+        }
+        if (result.status >= 400) {
+          const message = result.body.error || 'AI request failed';
+          throw new BridgeError(message, { status: result.status, ...classifyHttpError(result.status, message, result.body) });
+        }
+        return result.body;
+      }
+      if (options.signal?.aborted) throw new BridgeError('Request cancelled', { code: 'request_cancelled' });
+      if (Date.now() >= deadline) throw new BridgeError('The AI request took too long. Start a new request to try again.', { code: 'ai_operation_timeout', retryable: true });
+      await new Promise((resolve) => setTimeout(resolve, progressPollIntervalMs));
+      response = await request('/ai/progress', {
+        method: 'POST', payload: { operationId: response.operationId, profileContextId: payload.profileContextId },
+        signal: options.signal, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
+      });
+    }
+    // Older desktop versions return the final response directly.
+    return response;
+  }
+
   return {
     health: async (options = {}) => validateHealth(await request('/health', { ...options, authenticated: false })),
     claimPairing: (payload, options = {}) => request('/pairing/claim', {
@@ -315,17 +365,11 @@ export function createBridgeClient({
     getAIModels: () => request('/ai/models', { maxResponseBytes: MAX_AI_RESPONSE_BYTES }),
     getResume: (id) => request(resumePath(id)),
     getPdf: (id) => request(`${resumePath(id)}/pdf`),
-    complete: (payload) => request('/ai/complete', {
-      method: 'POST',
-      payload,
-      maxResponseBytes: MAX_AI_RESPONSE_BYTES,
-    }),
-    analyzeJobFit: (payload) => request('/ai/job-fit', {
-      method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
-    }),
-    createTailoredResume: (payload, options = {}) => request('/ai/tailored-resume', {
-      ...options, method: 'POST', payload, maxResponseBytes: MAX_AI_RESPONSE_BYTES,
-    }),
+    getResumePreview: (id, options = {}) => request(`${resumePath(id)}/preview`, options),
+    openResume: (id, payload, options = {}) => request(`${resumePath(id)}/open`, { ...options, method: 'POST', payload }),
+    complete: (payload, options) => aiRequest('/ai/complete', payload, options),
+    analyzeJobFit: (payload, options) => aiRequest('/ai/job-fit', payload, options),
+    createTailoredResume: (payload, options) => aiRequest('/ai/tailored-resume', payload, options),
     logApplication: (payload, options = {}) => request('/applications', { ...options, method: 'POST', payload }),
     saveAnswer: (payload, options = {}) => request('/profile/answers', { ...options, method: 'POST', payload }),
   };
