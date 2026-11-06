@@ -12,12 +12,27 @@ OP_IOS_TOOLS_DIR="$OP_IOS_APPLE_PROJECT/build/ci-tools"
 op_ios_ci_cloud_gate() {
   # PR previews use a manually dispatched tag, never Cloud's native PR trigger.
   # Request-binding tags intentionally cannot enter the signing/build pipeline.
-  local op_tag_pattern='^ios-testflight/(main|next|pr/[1-9][0-9]*/[1-9][0-9]*)/([0-9a-f]{40})$'
-  if [[ "${CI_XCODE_CLOUD:-}" != TRUE || ! "${CI_TAG:-}" =~ $op_tag_pattern ]]; then
+  local op_release_pattern='^ios-testflight/(main|next)/([0-9a-f]{40})$'
+  local op_preview_pattern='^ios-testflight/pr/([1-9][0-9]*)/([1-9][0-9]*)[/-]([0-9a-f]{40})$'
+  local op_commit op_pr op_comment
+  if [[ "${CI_XCODE_CLOUD:-}" == TRUE && "${CI_TAG:-}" =~ $op_release_pattern ]]; then
+    op_commit="${BASH_REMATCH[2]}"
+  elif [[ "${CI_XCODE_CLOUD:-}" == TRUE && "${CI_TAG:-}" =~ $op_preview_pattern ]]; then
+    op_pr="${BASH_REMATCH[1]}"
+    op_comment="${BASH_REMATCH[2]}"
+    op_commit="${BASH_REMATCH[3]}"
+    # Match the controller's positive safe-integer IDs without requiring Node
+    # before the clean-clone hook has provisioned it. Check length before math.
+    if [[ ${#op_pr} -gt 16 || ${#op_comment} -gt 16 ]] ||
+      (( 10#$op_pr > 9007199254740991 || 10#$op_comment > 9007199254740991 )); then
+      echo 'Refusing Xcode Cloud build: PR and owner request IDs must be positive safe integers.' >&2
+      return 1
+    fi
+  else
     echo 'Refusing Xcode Cloud build: requires an exact main/next or PR dispatch tag.' >&2
     return 1
   fi
-  if [[ "${BASH_REMATCH[2]}" != "${CI_COMMIT:-}" || -n "${CI_PULL_REQUEST_NUMBER:-}" ]]; then
+  if [[ "$op_commit" != "${CI_COMMIT:-}" || -n "${CI_PULL_REQUEST_NUMBER:-}" ]]; then
     echo 'Refusing Xcode Cloud build: tag commit must equal CI_COMMIT and cannot be a pull request.' >&2
     return 1
   fi

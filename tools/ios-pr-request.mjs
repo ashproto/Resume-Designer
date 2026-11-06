@@ -1,5 +1,7 @@
 // Trusted PR preview policy. GitHub data is inspected as data; this module has
 // no CLI, subprocess, candidate execution, Apple access, or dependency install.
+import { previewDispatchTag, parsePreviewDispatchTag } from './ios-pr-tags.mjs';
+
 const REPOSITORY = 'ashproto/Resume-Designer';
 const REPOSITORY_ID = 1163653093;
 const OWNER = 'ashproto';
@@ -30,7 +32,7 @@ const ownerIdentity = user => user?.id === OWNER_ID && user.login === OWNER && u
 const repoIdentity = repo => repo?.id === REPOSITORY_ID && repo.full_name === REPOSITORY;
 const command = body => typeof body === 'string' && body.trim() === '/testflight-dev';
 const requestTag = (prNumber, commentId) => `ios-testflight/request/pr-${prNumber}/comment-${commentId}`;
-const dispatchTag = (prNumber, commentId, source) => `ios-testflight/pr/${prNumber}/${commentId}/${source}`;
+const dispatchTag = (prNumber, commentId, source) => previewDispatchTag({ prNumber, commentId, sha: source });
 
 function requestIdentity(input) {
   const prNumber = number(input.prNumber, 'PR number');
@@ -38,8 +40,10 @@ function requestIdentity(input) {
   const source = sha(input.sha);
   const tag = requestTag(prNumber, commentId);
   requireCondition(input.requestTag === undefined || input.requestTag === tag, 'Request tag does not match the original identity.');
-  const dispatch = dispatchTag(prNumber, commentId, source);
-  requireCondition(input.tag === undefined || input.tag === dispatch, 'Dispatch tag does not match the original identity.');
+  const parsed = input.tag === undefined ? undefined : parsePreviewDispatchTag(input.tag);
+  requireCondition(input.tag === undefined || (parsed && parsed.prNumber === prNumber && parsed.commentId === commentId
+    && parsed.sha === source), 'Dispatch tag does not match the original identity.');
+  const dispatch = input.tag ?? dispatchTag(prNumber, commentId, source);
   return { ...input, prNumber, commentId, sha: source, requestTag: tag, tag: dispatch };
 }
 
@@ -255,5 +259,5 @@ export async function recheckPreview(input, options) {
   const result = await authorizePreview({ ...options, recovery: false, expectedSha: request.sha, requireBinding: true });
   requireCondition(result.skip === false && result.prNumber === request.prNumber && result.commentId === request.commentId,
     'Original preview request is no longer authorized for a start.');
-  return result;
+  return { ...result, tag: request.tag };
 }

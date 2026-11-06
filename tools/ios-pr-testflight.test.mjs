@@ -105,6 +105,10 @@ test('release wires internal-only policy, final live checks, recipients, orderin
 test('recovery is monitor-only even with mode off and no Cloud run ID', async () => {
   const r = runtime({ env: {...env,IOS_PR_TESTFLIGHT_MODE:'off'}, eventName:'workflow_dispatch', event:{inputs:{request_tag:request.requestTag}},
     authorize: async () => ({...request,monitorOnly:true}),
+    gh: { request: async path => {
+      if (path.endsWith(`/2468/${sha}`)) return { ref: `refs/tags/ios-testflight/pr/158/2468/${sha}`, object: { type: 'commit', sha } };
+      throw Object.assign(new Error('Not found'), { status: 404 });
+    } },
     deliver: async (input, options) => {
       assert.equal(input.recoveryOnly,true);
       assert.equal(await options.authorizeSource('monitor'),false);
@@ -153,3 +157,79 @@ test('metadata repair cannot downgrade availability published after its pending 
   assert.deepEqual(writes, []);
   assert.match(serverBody, /available to/);
 });
+
+
+test('fresh preview uses the four-segment full-SHA tag consistently for delivery, ordering and journal', async () => {
+  const tag = `ios-testflight/pr/158/2468-${sha}`;
+  let ordered, recorded;
+  const r = runtime({
+    ordering: async value => { ordered = value; },
+    journal: async value => { recorded = value; return value; },
+    deliver: async (input, options) => {
+      assert.equal(input.tag, tag);
+      await options.beforeStart();
+      await options.recordState('reserved');
+      return { state: 'reserved' };
+    },
+  });
+  await runPreviewCommand('release', r.options);
+  assert.equal(ordered.currentTag, tag);
+  assert.equal(recorded.tag, tag);
+  assert.equal(recorded.sha, sha);
+});
+
+for (const legacy of [false, true]) test(`recovery resolves only the existing ${legacy ? 'legacy' : 'current'} exact ref and retains it everywhere`, async () => {
+  const tags = [`ios-testflight/pr/158/2468-${sha}`, `ios-testflight/pr/158/2468/${sha}`];
+  const actual = tags[legacy ? 1 : 0], calls = [];
+  let recorded, ordered;
+  const r = runtime({ eventName: 'workflow_dispatch', event: { inputs: { request_tag: request.requestTag } },
+    authorize: async () => ({ ...request, tag: tags[0], monitorOnly: true }),
+    gh: { request: async (path, options) => {
+      calls.push([path, options]);
+      if (path.endsWith(actual)) return { ref: `refs/tags/${actual}`, object: { type: 'commit', sha } };
+      throw Object.assign(new Error('Not found'), { status: 404 });
+    } },
+    ordering: async value => { ordered = value; },
+    journal: async value => { recorded = value; return value; },
+    recheck: async value => { assert.equal(value.tag, actual); return value; },
+    deliver: async (input, options) => {
+      assert.equal(input.tag, actual);
+      assert.equal(input.recoveryOnly, true);
+      assert.equal(await options.authorizeSource('start'), false);
+      await options.beforeStart();
+      await options.recordState('not-started');
+      return { state: 'not-started' };
+    },
+  });
+  await runPreviewCommand('recover', r.options);
+  assert.deepEqual(calls.map(([path]) => path), tags.map(tag => `/repos/ashproto/Resume-Designer/git/ref/tags/${tag}`));
+  assert.ok(calls.every(([, options]) => !options || options.method === 'GET'));
+  assert.equal(ordered.currentTag, actual);
+  assert.equal(recorded.tag, actual);
+  assert.equal(recorded.sha, sha);
+  assert.ok(!r.trace.includes('guard') && !r.trace.includes('bind'));
+});
+
+for (const scenario of ['missing', 'both', 'annotated', 'wrong-sha', 'wrong-ref', 'unknown-response', 'forbidden', 'transport']) {
+  test(`recovery refuses ${scenario} reservation identity without delivery or mutation`, async () => {
+    const tags = [`ios-testflight/pr/158/2468-${sha}`, `ios-testflight/pr/158/2468/${sha}`], calls = [];
+    let delivered = false;
+    const r = runtime({ eventName: 'workflow_dispatch', event: { inputs: { request_tag: request.requestTag } },
+      authorize: async () => ({ ...request, monitorOnly: true }),
+      gh: { request: async (path, options) => {
+        calls.push([path, options]);
+        if (scenario === 'forbidden') throw Object.assign(new Error('Forbidden'), { status: 403 });
+        if (scenario === 'transport') throw new Error('Transport failure');
+        if (scenario === 'missing' || (scenario !== 'both' && path.endsWith(tags[1]))) throw Object.assign(new Error('Not found'), { status: 404 });
+        if (scenario === 'unknown-response') return {};
+        return { ref: `refs/tags/${scenario === 'wrong-ref' ? 'unknown/tag' : path.endsWith(tags[0]) ? tags[0] : tags[1]}`,
+          object: { type: scenario === 'annotated' ? 'tag' : 'commit', sha: scenario === 'wrong-sha' ? 'c'.repeat(40) : sha } };
+      } },
+      deliver: async () => { delivered = true; return {}; },
+    });
+    await assert.rejects(runPreviewCommand('recover', r.options), /reservation|ref|recover/i);
+    assert.equal(delivered, false);
+    assert.ok(calls.every(([path, options]) => tags.some(tag => path === `/repos/ashproto/Resume-Designer/git/ref/tags/${tag}`)
+      && (!options || options.method === 'GET')));
+  });
+}

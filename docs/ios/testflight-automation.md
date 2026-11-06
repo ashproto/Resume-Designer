@@ -384,8 +384,20 @@ even while preview mode is off, because an older preview could still be running.
 Each owner comment has a permanent lightweight binding
 `ios-testflight/request/pr-<number>/comment-<id>`. Its original SHA survives full
 workflow reruns. Cloud uses a separate dispatch reservation
-`ios-testflight/pr/<number>/<comment-id>/<full-sha>`. A pushed commit makes an
-unstarted request stale; another comment is required. A new comment may
+`ios-testflight/pr/<number>/<comment-id>-<full-sha>`. This four-component
+name retains the full request identity and commit SHA under the same protected
+prefix. Older five-component dispatch tags
+`ios-testflight/pr/<number>/<comment-id>/<full-sha>` remain valid for recovery;
+their refs are never renamed, deleted or recreated. Recovery reads both exact
+forms, requires exactly one existing matching commit ref, and cannot create a
+tag or start a build. Two matching forms are ambiguous and fail closed.
+
+The four-component format is a controlled compatibility change following a
+pilot where Apple exposed the request-binding tag but omitted the dispatch tag.
+It does not establish a documented Apple path-depth limit; live signed delivery
+must still verify discovery and the complete source identity.
+
+A pushed commit makes an unstarted request stale; another comment is required. A new comment may
 deliberately rebuild the same SHA; rerunning the original comment cannot.
 If the original workflow failed before creating a binding, rerunning it cannot
 approve a later head; create a fresh command instead.

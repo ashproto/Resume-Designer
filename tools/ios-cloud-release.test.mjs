@@ -20,7 +20,8 @@ const build = { id: 'build', attributes: { version: '4', processingState: 'VALID
 const fail404 = () => { throw Object.assign(new Error('missing'), { status: 404 }); };
 
 const previewInput = { ...input, branch: undefined, kind: 'preview', prNumber: 158, commentId: 2468 };
-const previewTag = `ios-testflight/pr/158/2468/${sha}`;
+const previewTag = `ios-testflight/pr/158/2468-${sha}`;
+const legacyPreviewTag = `ios-testflight/pr/158/2468/${sha}`;
 
 test('only full SHAs in the canonical repo and trusted branches are accepted', () => {
   assert.equal(validateInput(input).tag, tag);
@@ -40,6 +41,15 @@ test('preview identity derives a fixed internal-only tag and rejects caller-sele
   assert.throws(() => validateInput({ ...input, audience: 'INTERNAL_ONLY' }));
 });
 
+test('preview validation preserves only an exact current or legacy dispatch tag', () => {
+  for (const tag of [previewTag, legacyPreviewTag]) assert.equal(validateInput({ ...previewInput, tag }).tag, tag);
+  for (const tag of [`ios-testflight/pr/159/2468-${sha}`, `ios-testflight/pr/158/2469/${sha}`,
+    `ios-testflight/pr/158/2468-${'b'.repeat(40)}`, `ios-testflight/pr/158/02468/${sha}`,
+    `ios-testflight/request/158/2468-${sha}`, `${legacyPreviewTag}\n`, null, '']) {
+    assert.throws(() => validateInput({ ...previewInput, tag }));
+  }
+});
+
 test('preview dispatch cannot run without live source and app-ordering checks', async () => {
   const s = scenario();
   await assert.rejects(release(previewInput, s.options), /preview.*checks/i);
@@ -47,12 +57,12 @@ test('preview dispatch cannot run without live source and app-ordering checks', 
   assert.deepEqual(s.writes, []);
 });
 
-function previewScenario() {
+function previewScenario(selectedTag = previewTag) {
   const s = scenario();
   const request = s.gh.request;
   s.gh.request = async (path, options) => {
     const value = await request(path, options);
-    if (path.includes('/git/ref/') || options?.method === 'POST') return { ...value, ref: `refs/tags/${previewTag}` };
+    if (path.includes('/git/ref/') || options?.method === 'POST') return { ...value, ref: `refs/tags/${selectedTag}` };
     return value;
   };
   const ascRequest = s.asc.request;
@@ -64,7 +74,7 @@ function previewScenario() {
   const collection = s.asc.collection;
   s.asc.collection = async path => {
     const values = structuredClone(await collection(path));
-    if (path.includes('/gitReferences')) values[0].attributes = { ...values[0].attributes, name: previewTag, canonicalName: `refs/tags/${previewTag}` };
+    if (path.includes('/gitReferences')) values[0].attributes = { ...values[0].attributes, name: selectedTag, canonicalName: `refs/tags/${selectedTag}` };
     if (path.includes('/builds?')) values.forEach(item => { item.attributes.buildAudienceType = 'INTERNAL_ONLY'; });
     return values;
   };
@@ -85,6 +95,15 @@ test('preview verifies internal-only delivery and journals before its one start'
   assert.ok(s.trace.includes('journal:reserved'));
   assert.ok(s.trace.includes('journal:delivered'));
   assert.equal(s.trace.at(-2), 'source:monitor');
+});
+
+test('an explicitly selected legacy preview retains its actual tag through delivery', async () => {
+  const s = previewScenario(legacyPreviewTag);
+  const result = await release({ ...previewInput, tag: legacyPreviewTag }, s.options);
+  assert.equal(result.tag, legacyPreviewTag);
+  assert.equal(result.state, 'testflight_available');
+  assert.deepEqual(s.writes, ['tag', 'start']);
+  assert.ok(s.trace.includes('journal:post-attempted'));
 });
 
 test('preview live checks remain the final awaited gate before POST', async () => {

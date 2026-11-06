@@ -9,6 +9,7 @@ import { assertPreviewBuildInputs } from './ios-pr-build-inputs.mjs';
 import { createApi, createAscJwt, release } from './ios-cloud-release.mjs';
 import { assertCloudOrdering, recordReservationState, parseControllerRunUrl } from './ios-cloud-order.mjs';
 import { attachReservationEvidence } from './ios-cloud-evidence.mjs';
+import { previewDispatchTag } from './ios-pr-tags.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const SHA = /^[a-f0-9]{40}$/;
@@ -113,9 +114,31 @@ export async function runPreviewCommand(command, options) {
   }
   if (!['release', 'recover'].includes(command)) throw new Error('Unknown preview command');
   const recoveryOnly = command === 'recover';
-  const request = recoveryOnly ? await authorize({ ...context, recovery: true })
+  let request = recoveryOnly ? await authorize({ ...context, recovery: true })
     : identity({ skip: false, prNumber: env.PR_NUMBER, commentId: env.COMMENT_ID, sha: env.PREVIEW_SHA });
   if (request.skip) throw new Error('Recovery request was not authorized');
+  request = identity(request);
+  let tag = previewDispatchTag(request);
+  if (recoveryOnly) {
+    // Resolve only the two immutable identities for this bound command. A
+    // legacy reservation keeps its exact tag; recovery never creates a ref.
+    const existing = [];
+    for (const candidate of [tag, previewDispatchTag(request, { legacy: true })]) {
+      let ref;
+      try { ref = await gh.request(`/repos/${REPOSITORY}/git/ref/tags/${candidate}`, { method: 'GET' }); }
+      catch (error) {
+        if (error?.status === 404) continue;
+        throw new Error('Recovery reservation ref could not be verified');
+      }
+      if (ref?.ref !== `refs/tags/${candidate}` || ref.object?.type !== 'commit' || ref.object.sha !== request.sha) {
+        throw new Error('Recovery reservation ref does not match the original source');
+      }
+      existing.push(candidate);
+    }
+    if (existing.length !== 1) throw new Error('Recovery requires exactly one existing preview reservation ref');
+    tag = existing[0];
+  }
+  request = { ...request, tag };
   const input = { ...request, kind: 'preview', repository: REPOSITORY, recoveryOnly,
     workflowId: env.XCODE_CLOUD_PR_WORKFLOW_ID, appId: env.APP_STORE_CONNECT_APP_ID, groupId: env.APP_STORE_CONNECT_DEV_GROUP_ID,
     resumeRunId: recoveryOnly ? event.inputs?.resume_run_id || undefined : undefined };
@@ -132,11 +155,11 @@ export async function runPreviewCommand(command, options) {
       await recipients({ asc, appId: input.appId, groupId: input.groupId });
       await ordering({ gh, asc, repository: REPOSITORY, appId: input.appId,
         workflowIds: [env.XCODE_CLOUD_WORKFLOW_ID, env.XCODE_CLOUD_PR_WORKFLOW_ID], forStart: true,
-        currentTag: request.tag ?? `ios-testflight/pr/${request.prNumber}/${request.commentId}/${request.sha}` });
+        currentTag: input.tag });
     },
     recordState: async state => {
       const evidence = await journal({ gh, repository: REPOSITORY, sha: input.sha,
-        tag: `ios-testflight/pr/${request.prNumber}/${request.commentId}/${request.sha}`, state, runUrl });
+        tag: input.tag, state, runUrl });
       log(`OP_IOS_RESERVATION_STATE=${JSON.stringify(evidence)}`);
     },
   });

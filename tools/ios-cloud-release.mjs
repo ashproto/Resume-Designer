@@ -12,6 +12,7 @@ import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { attachReservationEvidence, coordinatedReleaseOptions } from './ios-cloud-evidence.mjs';
+import { previewDispatchTag, parsePreviewDispatchTag } from './ios-pr-tags.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const BUNDLE_ID = 'com.onpaper.app';
@@ -37,7 +38,14 @@ export function validateInput(input) {
   if (input.resumeRunId) requireId(input.resumeRunId, 'resume run id');
   const audience = kind === 'preview' ? 'INTERNAL_ONLY' : 'APP_STORE_ELIGIBLE';
   if (input.audience !== undefined && input.audience !== audience) throw new Error('Archive audience cannot override the delivery policy');
-  const tag = kind === 'preview' ? `ios-testflight/pr/${input.prNumber}/${input.commentId}/${input.sha}` : `ios-testflight/${input.branch}/${input.sha}`;
+  let tag = `ios-testflight/${input.branch}/${input.sha}`;
+  if (kind === 'preview') {
+    const parsed = input.tag === undefined ? undefined : parsePreviewDispatchTag(input.tag);
+    if (input.tag !== undefined && (!parsed || parsed.prNumber !== input.prNumber || parsed.commentId !== input.commentId || parsed.sha !== input.sha)) {
+      throw new Error('Preview dispatch tag does not match the exact request identity');
+    }
+    tag = input.tag ?? previewDispatchTag(input);
+  }
   return { ...input, kind, audience, tag };
 }
 
