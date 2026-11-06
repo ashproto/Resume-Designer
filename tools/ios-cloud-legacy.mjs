@@ -95,7 +95,7 @@ export function attachLegacyReservationEvidence(gh, { token, exec = execFileSync
       config = mkdtempSync(join(tmpdir(), 'on-paper-legacy-evidence-'));
       const bytes = exec('gh', ['api', '--allow-escape-sequences', `repos/${REPOSITORY}/actions/jobs/127694679435/logs`], {
         encoding: 'buffer', timeout: 60_000, maxBuffer: 1024 * 1024,
-        env: { PATH: process.env.PATH, GH_TOKEN: token, GH_HOST: 'github.com', GH_CONFIG_DIR: config, GH_PROMPT_DISABLED: '1' },
+        env: { PATH: process.env.PATH, GH_TOKEN: token, GH_HOST: 'github.com', GH_CONFIG_DIR: config, XDG_STATE_HOME: config, XDG_CACHE_HOME: config, GH_PROMPT_DISABLED: '1' },
       });
       if (!Buffer.isBuffer(bytes)) return false;
       // Refuse if the original run was rerun while evidence was being read.

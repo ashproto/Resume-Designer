@@ -111,6 +111,8 @@ function adapterFixture({ real = false, mutate, logTransform, failLog = false, r
     assert.equal(options.env.GH_TOKEN, 'github-only');
     assert.equal(options.env.APP_STORE_CONNECT_PRIVATE_KEY, undefined);
     assert.equal(options.env.GITHUB_TOKEN, undefined);
+    assert.equal(options.env.XDG_STATE_HOME, options.env.GH_CONFIG_DIR);
+    assert.equal(options.env.XDG_CACHE_HOME, options.env.GH_CONFIG_DIR);
     assert.deepEqual(readdirSync(options.env.GH_CONFIG_DIR), []);
     config = options.env.GH_CONFIG_DIR;
     if (failLog) throw new Error('Original logs unavailable');

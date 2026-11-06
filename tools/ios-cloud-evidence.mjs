@@ -70,7 +70,7 @@ export function attachReservationEvidence(gh, { token, exec = execFileSync } = {
       const logs = eligible.sort((a, b) => a.id - b.id).map(job => exec('gh', ['api', '--allow-escape-sequences', `repos/${REPOSITORY}/actions/jobs/${job.id}/logs`], {
         encoding: 'utf8', timeout: 60_000, maxBuffer: 10 * 1024 * 1024,
         // Never pass Apple credentials or the caller's gh aliases/config.
-        env: { PATH: process.env.PATH, GH_TOKEN: token, GH_HOST: 'github.com', GH_CONFIG_DIR: config, GH_PROMPT_DISABLED: '1' },
+        env: { PATH: process.env.PATH, GH_TOKEN: token, GH_HOST: 'github.com', GH_CONFIG_DIR: config, XDG_STATE_HOME: config, XDG_CACHE_HOME: config, GH_PROMPT_DISABLED: '1' },
       })).join('\n');
       return verifyReservationLog(logs, expected);
     } catch { return false; }
