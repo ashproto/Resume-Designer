@@ -159,7 +159,7 @@ test('new release dispatches once and only reports finished after beta is in tes
   assert.deepEqual(s.writes, ['tag', 'start']);
   assert.equal(result.state, 'testflight_available');
   const states = s.outputs.map(x => x.release_state).filter(Boolean);
-  assert.deepEqual(states, ['submitted', 'cloud_succeeded', 'testflight_available']);
+  assert.deepEqual(states, ['discovering_tag', 'submitted', 'cloud_succeeded', 'testflight_available']);
   assert.ok(s.outputs.some(x => x.build_run_id === 'run'));
 });
 
@@ -167,6 +167,60 @@ test('rerun resumes an existing run without a second start', async () => {
   const s = scenario({ existing: true });
   await release(input, s.options);
   assert.deepEqual(s.writes, []);
+});
+
+test('a new release waits through Apple indexing delays beyond ten minutes and starts only once', async () => {
+  const s = scenario();
+  let elapsedMs = 0;
+  const originalCollection = s.asc.collection;
+  s.asc.collection = async path => path.includes('/gitReferences') && elapsedMs < 25 * 60_000
+    ? [] : originalCollection(path);
+  const originalRequest = s.asc.request;
+  s.asc.request = async (path, options) => {
+    if (options?.method === 'POST') assert.ok(elapsedMs >= 25 * 60_000, 'must not start before Apple exposes the tag');
+    return originalRequest(path, options);
+  };
+  delete s.options.discoveryAttempts;
+  s.options.sleep = async ms => { elapsedMs += ms; };
+  assert.equal((await release(input, s.options)).state, 'testflight_available');
+  assert.deepEqual(s.writes, ['tag', 'start']);
+});
+
+test('exhausted tag discovery retains the reservation and reports safe matching diagnostics', async () => {
+  const s = scenario();
+  const logs = [];
+  const original = s.asc.collection;
+  s.asc.collection = async path => path.includes('/gitReferences')
+    ? [{ ...ref, attributes: { ...ref.attributes, isDeleted: true, upstreamDebug: 'do-not-log-upstream-payload' } }]
+    : original(path);
+  s.options.log = message => logs.push(message);
+  await assert.rejects(release(input, s.options), /not discovered.*release tag/i);
+  assert.deepEqual(s.writes, ['tag']);
+  assert.equal(s.outputs.at(-1).release_state, 'discovering_tag');
+  assert.ok(logs.some(line => /canonical.*1/i.test(line) && /undeleted.*0/i.test(line)));
+  assert.ok(logs.every(line => !line.includes('do-not-log-upstream-payload')));
+  assert.equal((await s.gh.request(`/repos/${input.repository}/git/ref/tags/${tag}`)).object.sha, sha);
+});
+
+test('an unindexed tag does not hold a superseded release through the entire discovery window', async () => {
+  const s = scenario();
+  const original = s.asc.collection;
+  s.asc.collection = async path => path.includes('/gitReferences') ? [] : original(path);
+  let sleeps = 0;
+  s.options.sleep = async () => { sleeps++; s.branch.commit.sha = 'b'.repeat(40); };
+  const result = await release(input, s.options);
+  assert.equal(result.state, 'superseded');
+  assert.equal(sleeps, 1);
+  assert.deepEqual(s.writes, ['tag']);
+});
+
+test('loss of branch protection while Apple indexes the tag prevents a Cloud start', async () => {
+  const s = scenario();
+  const original = s.asc.collection;
+  s.asc.collection = async path => path.includes('/gitReferences') ? [] : original(path);
+  s.options.sleep = async () => { s.branch.protected = false; };
+  await assert.rejects(release(input, s.options), /protected/);
+  assert.deepEqual(s.writes, ['tag']);
 });
 
 test('a mistaken explicit resume cannot consume a new head reservation', async () => {
