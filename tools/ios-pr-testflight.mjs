@@ -153,25 +153,73 @@ function writeOutputs(values) {
   }
 }
 
-async function main() {
+// Diagnostics use only these fixed operation names, never API paths, response
+// bodies, exception messages, credentials or environment values.
+function feedbackOperation(path, method = 'GET') {
+  const root = `/repos/${REPOSITORY}`;
+  const pathname = typeof path === 'string' ? path.split('?')[0] : '';
+  if (method === 'GET' && pathname === root) return 'read_repository';
+  if (method === 'GET' && /^\/users\/[A-Za-z0-9-]+$/.test(pathname)) return 'read_user';
+  if (!pathname.startsWith(`${root}/`)) return 'unknown';
+  const suffix = pathname.slice(root.length);
+  if (method === 'GET' && /^\/collaborators\/[A-Za-z0-9-]+\/permission$/.test(suffix)) return 'read_permission';
+  if (method === 'GET' && /^\/git\/ref\/tags\/ios-testflight\/request\/pr-[1-9]\d*\/comment-[1-9]\d*$/.test(suffix)) return 'read_binding';
+  if (method === 'GET' && /^\/issues\/comments\/[1-9]\d*$/.test(suffix)) return 'read_command';
+  if (method === 'GET' && /^\/pulls\/[1-9]\d*$/.test(suffix)) return 'read_pr';
+  if (method === 'GET' && /^\/issues\/[1-9]\d*\/comments$/.test(suffix)) return 'list_comments';
+  if (method === 'POST' && /^\/issues\/[1-9]\d*\/comments$/.test(suffix)) return 'create_comment';
+  if (method === 'PATCH' && /^\/issues\/comments\/[1-9]\d*$/.test(suffix)) return 'update_comment';
+  return 'unknown';
+}
+
+function feedbackApi(gh, diagnostic) {
+  return { request: async (path, options) => {
+    const operation = feedbackOperation(path, options?.method);
+    diagnostic.api = undefined;
+    if (operation === 'list_comments') diagnostic.phase = 'feedback_list';
+    if (operation === 'create_comment' || operation === 'update_comment') diagnostic.phase = 'feedback_write';
+    try { return await gh.request(path, options); }
+    catch (error) {
+      // Capture before policy helpers replace the exception. Emit only if the
+      // command fails: a handled optional binding 404 is not a feedback failure.
+      diagnostic.api = { operation, status: Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599
+        ? error.status : 'transport' };
+      for (const [source, target] of [['rateLimitRemaining', 'remaining'], ['rateLimitReset', 'reset'], ['retryAfter', 'retry_after']]) {
+        if (Number.isSafeInteger(error?.[source]) && error[source] >= 0) diagnostic.api[target] = error[source];
+      }
+      throw error;
+    }
+  } };
+}
+
+async function main(diagnostic) {
   const command = process.argv[2];
   if (!['authorize', 'bind', 'release', 'recover', 'feedback'].includes(command) || process.argv.length !== 3) throw new Error('Expected one trusted preview command');
   const env = process.env;
+  diagnostic.phase = 'init_event';
   const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
+  diagnostic.phase = 'init_token';
   if (!env.GITHUB_TOKEN) throw new Error('GitHub token is required');
+  diagnostic.phase = 'init_api';
   const gh = attachReservationEvidence(createApi({ origin: 'https://api.github.com', token: () => env.GITHUB_TOKEN }), { token: env.GITHUB_TOKEN });
   if (command === 'feedback') {
+    diagnostic.phase = 'feedback_authorize';
+    const feedbackGh = feedbackApi(gh, diagnostic);
     const request = await authorizePreviewFeedback({ eventName: env.GITHUB_EVENT_NAME, event, ref: env.GITHUB_REF,
-      triggeringActor: env.GITHUB_TRIGGERING_ACTOR, gh, recovery: env.GITHUB_EVENT_NAME === 'workflow_dispatch' });
+      triggeringActor: env.GITHUB_TRIGGERING_ACTOR, gh: feedbackGh, recovery: env.GITHUB_EVENT_NAME === 'workflow_dispatch' });
     if (request.skip) return;
+    diagnostic.phase = 'feedback_format';
+    diagnostic.api = undefined;
     const values = { release_state: env.PREVIEW_STATE, build_number: env.PREVIEW_BUILD_NUMBER, build_run_id: env.PREVIEW_CLOUD_RUN_ID };
     const body = formatFeedback({ request, values, error: env.PREVIEW_ERROR,
       runUrl: `https://github.com/${REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}` });
-    await upsertFeedback({ gh, request, body });
+    diagnostic.phase = 'feedback_upsert';
+    await upsertFeedback({ gh: feedbackGh, request, body });
     return;
   }
   let asc;
   if (command === 'release' || command === 'recover') {
+    diagnostic.phase = 'init_apple_api';
     const credentials = { issuerId: env.APP_STORE_CONNECT_ISSUER_ID, keyId: env.APP_STORE_CONNECT_KEY_ID, privateKey: env.APP_STORE_CONNECT_PRIVATE_KEY };
     asc = createApi({ origin: 'https://api.appstoreconnect.apple.com', token: () => createAscJwt(credentials) });
   }
@@ -186,5 +234,11 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => { console.error('Preview controller could not initialize; no delivery is confirmed.'); process.exitCode = 1; });
+  const diagnostic = { phase: 'init_arguments' };
+  main(diagnostic).catch(() => {
+    const api = diagnostic.api ? ` operation=${diagnostic.api.operation} status=${diagnostic.api.status}`
+      + ['remaining', 'reset', 'retry_after'].filter(key => diagnostic.api[key] !== undefined).map(key => ` ${key}=${diagnostic.api[key]}`).join('') : '';
+    console.error(`preview_diagnostic phase=${diagnostic.phase}${api}`);
+    process.exitCode = 1;
+  });
 }
