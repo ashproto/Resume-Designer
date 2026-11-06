@@ -65,7 +65,11 @@ jobs:
 
   bind:
     needs: authorize
-    if: needs.authorize.outputs.skip == 'false' && needs.authorize.outputs.monitor_only != 'true'
+    if: >-
+      github.repository_id == '1163653093' &&
+      github.ref == 'refs/heads/main' && github.event.sender.id == 35086581 &&
+      github.triggering_actor == 'ashproto' &&
+      needs.authorize.outputs.skip == 'false' && needs.authorize.outputs.monitor_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # No Apple environment or credentials. Only trusted code can create a
@@ -97,7 +101,11 @@ jobs:
 
   queued-feedback:
     needs: [authorize, bind]
-    if: needs.authorize.outputs.skip == 'false' && needs.bind.result == 'success'
+    if: >-
+      github.repository_id == '1163653093' &&
+      github.ref == 'refs/heads/main' && github.event.sender.id == 35086581 &&
+      github.triggering_actor == 'ashproto' &&
+      needs.authorize.outputs.skip == 'false' && needs.bind.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -123,7 +131,11 @@ jobs:
     name: Release iOS preview
     needs: [authorize, bind]
     if: >-
-      always() && needs.authorize.result == 'success' &&
+      always() &&
+      github.repository_id == '1163653093' &&
+      github.ref == 'refs/heads/main' && github.event.sender.id == 35086581 &&
+      github.triggering_actor == 'ashproto' &&
+      needs.authorize.result == 'success' &&
       needs.authorize.outputs.skip == 'false' &&
       (needs.authorize.outputs.monitor_only == 'true' || needs.bind.result == 'success')
     runs-on: ubuntu-latest

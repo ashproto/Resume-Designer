@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 const preview = readFileSync(new URL('../.github/workflows/ios-testflight-pr.yml', import.meta.url), 'utf8');
 const production = readFileSync(new URL('../.github/workflows/ios-testflight.yml', import.meta.url), 'utf8');
@@ -44,4 +45,20 @@ test('both delivery lanes share the app queue and the production lane retains it
   assert.match(production, /github\.event\.workflow_run\.event == 'push'/);
   assert.match(production, /run: node tools\/ios-release-gate\.mjs/);
   assert.match(production, /XCODE_CLOUD_PR_WORKFLOW_ID: \$\{\{ vars\.XCODE_CLOUD_PR_WORKFLOW_ID \}\}/);
+});
+
+// The delivery condition uses the shared JS/GitHub expression subset. Exercise
+// it with retained dependency outputs, as a partial workflow rerun actually does.
+test('partial reruns cannot reuse successful owner dependencies to schedule another actor', () => {
+  const expression = jobs.deliver.match(/^    if: >-\n([\s\S]*?)^    runs-on:/m)[1].trim();
+  for (const recovery of [false, true]) {
+    const context = { always: () => true, github: { repository_id:'1163653093', repository_owner_id:'35086581', ref:'refs/heads/main', event:{sender:{id:35086581}}, triggering_actor:'ashproto' },
+      needs: { authorize:{result:'success',outputs:{skip:'false',monitor_only:recovery ? 'true' : 'false'}}, bind:{result:recovery ? 'skipped' : 'success'} } };
+    assert.equal(runInNewContext(expression,context,{timeout:100}),true);
+    context.github.triggering_actor = 'other-collaborator';
+    assert.equal(runInNewContext(expression,context,{timeout:100}),false);
+    context.github.triggering_actor = 'ashproto';
+    context.github.ref = 'refs/heads/feature';
+    assert.equal(runInNewContext(expression,context,{timeout:100}),false);
+  }
 });
