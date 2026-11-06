@@ -9,6 +9,7 @@ import { assertPreviewBuildInputs } from './ios-pr-build-inputs.mjs';
 import { createApi, createAscJwt, release } from './ios-cloud-release.mjs';
 import { assertCloudOrdering, recordReservationState, parseControllerRunUrl } from './ios-cloud-order.mjs';
 import { attachReservationEvidence } from './ios-cloud-evidence.mjs';
+import { previewDispatchTag } from './ios-pr-tags.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const SHA = /^[a-f0-9]{40}$/;
@@ -44,7 +45,7 @@ export function formatFeedback({ request: supplied, values = {}, error, runUrl }
     '', 'The Dev build uses the existing On Paper app and CloudKit data.'].filter(Boolean).join('\n\n');
 }
 
-export async function upsertFeedback({ gh, request: supplied, body }) {
+export async function upsertFeedback({ gh, request: supplied, body, createOnly = false }) {
   const request = identity(supplied), marker = `<!-- on-paper-testflight-request:${request.commentId} -->`;
   if (typeof body !== 'string' || !body.startsWith(marker) || body.length > 10_000) throw new Error('Invalid preview feedback body');
   const comments = [];
@@ -60,6 +61,9 @@ export async function upsertFeedback({ gh, request: supplied, body }) {
   if (matches.length > 1) throw new Error('Ambiguous bot feedback identity');
   const path = matches.length ? `/repos/${REPOSITORY}/issues/comments/${matches[0].id}` : `/repos/${REPOSITORY}/issues/${request.prNumber}/comments`;
   if (matches.length && !positive(matches[0].id)) throw new Error('Invalid existing feedback ID');
+  // Metadata repair never PATCHes: delivery may publish availability after
+  // this list snapshot. Keep every existing authentic notice unchanged.
+  if (createOnly === true && matches.length) return;
   await gh.request(path, { method: matches.length ? 'PATCH' : 'POST', body: { body } });
 }
 
@@ -110,9 +114,31 @@ export async function runPreviewCommand(command, options) {
   }
   if (!['release', 'recover'].includes(command)) throw new Error('Unknown preview command');
   const recoveryOnly = command === 'recover';
-  const request = recoveryOnly ? await authorize({ ...context, recovery: true })
+  let request = recoveryOnly ? await authorize({ ...context, recovery: true })
     : identity({ skip: false, prNumber: env.PR_NUMBER, commentId: env.COMMENT_ID, sha: env.PREVIEW_SHA });
   if (request.skip) throw new Error('Recovery request was not authorized');
+  request = identity(request);
+  let tag = previewDispatchTag(request);
+  if (recoveryOnly) {
+    // Resolve only the two immutable identities for this bound command. A
+    // legacy reservation keeps its exact tag; recovery never creates a ref.
+    const existing = [];
+    for (const candidate of [tag, previewDispatchTag(request, { legacy: true })]) {
+      let ref;
+      try { ref = await gh.request(`/repos/${REPOSITORY}/git/ref/tags/${candidate}`, { method: 'GET' }); }
+      catch (error) {
+        if (error?.status === 404) continue;
+        throw new Error('Recovery reservation ref could not be verified');
+      }
+      if (ref?.ref !== `refs/tags/${candidate}` || ref.object?.type !== 'commit' || ref.object.sha !== request.sha) {
+        throw new Error('Recovery reservation ref does not match the original source');
+      }
+      existing.push(candidate);
+    }
+    if (existing.length !== 1) throw new Error('Recovery requires exactly one existing preview reservation ref');
+    tag = existing[0];
+  }
+  request = { ...request, tag };
   const input = { ...request, kind: 'preview', repository: REPOSITORY, recoveryOnly,
     workflowId: env.XCODE_CLOUD_PR_WORKFLOW_ID, appId: env.APP_STORE_CONNECT_APP_ID, groupId: env.APP_STORE_CONNECT_DEV_GROUP_ID,
     resumeRunId: recoveryOnly ? event.inputs?.resume_run_id || undefined : undefined };
@@ -129,11 +155,11 @@ export async function runPreviewCommand(command, options) {
       await recipients({ asc, appId: input.appId, groupId: input.groupId });
       await ordering({ gh, asc, repository: REPOSITORY, appId: input.appId,
         workflowIds: [env.XCODE_CLOUD_WORKFLOW_ID, env.XCODE_CLOUD_PR_WORKFLOW_ID], forStart: true,
-        currentTag: request.tag ?? `ios-testflight/pr/${request.prNumber}/${request.commentId}/${request.sha}` });
+        currentTag: input.tag });
     },
     recordState: async state => {
       const evidence = await journal({ gh, repository: REPOSITORY, sha: input.sha,
-        tag: `ios-testflight/pr/${request.prNumber}/${request.commentId}/${request.sha}`, state, runUrl });
+        tag: input.tag, state, runUrl });
       log(`OP_IOS_RESERVATION_STATE=${JSON.stringify(evidence)}`);
     },
   });
@@ -204,17 +230,25 @@ async function main(diagnostic) {
   const gh = attachReservationEvidence(createApi({ origin: 'https://api.github.com', token: () => env.GITHUB_TOKEN }), { token: env.GITHUB_TOKEN });
   if (command === 'feedback') {
     diagnostic.phase = 'feedback_authorize';
+    const repair = env.PREVIEW_FEEDBACK_REPAIR === 'true';
+    if (repair && (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || env.GITHUB_REPOSITORY !== REPOSITORY
+      || env.GITHUB_REF !== 'refs/heads/main' || !SHA.test(env.GITHUB_SHA || '')
+      || env.GITHUB_WORKFLOW_REF !== `${REPOSITORY}/.github/workflows/ios-pr-testflight-feedback.yml@refs/heads/main`)) {
+      throw new Error('Feedback repair requires its trusted main dispatch workflow');
+    }
     const feedbackGh = feedbackApi(gh, diagnostic);
     const request = await authorizePreviewFeedback({ eventName: env.GITHUB_EVENT_NAME, event, ref: env.GITHUB_REF,
       triggeringActor: env.GITHUB_TRIGGERING_ACTOR, gh: feedbackGh, recovery: env.GITHUB_EVENT_NAME === 'workflow_dispatch' });
     if (request.skip) return;
     diagnostic.phase = 'feedback_format';
     diagnostic.api = undefined;
-    const values = { release_state: env.PREVIEW_STATE, build_number: env.PREVIEW_BUILD_NUMBER, build_run_id: env.PREVIEW_CLOUD_RUN_ID };
-    const body = formatFeedback({ request, values, error: env.PREVIEW_ERROR,
+    const values = repair ? { release_state: 'unconfirmed' }
+      : { release_state: env.PREVIEW_STATE, build_number: env.PREVIEW_BUILD_NUMBER, build_run_id: env.PREVIEW_CLOUD_RUN_ID };
+    const body = formatFeedback({ request, values,
+      error: repair ? 'Feedback diagnostics only; no Cloud build was started by this run.' : env.PREVIEW_ERROR,
       runUrl: `https://github.com/${REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}` });
     diagnostic.phase = 'feedback_upsert';
-    await upsertFeedback({ gh: feedbackGh, request, body });
+    await upsertFeedback({ gh: feedbackGh, request, body, createOnly: repair });
     return;
   }
   let asc;

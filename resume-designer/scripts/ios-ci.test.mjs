@@ -76,8 +76,13 @@ test('Cloud accepts main and next exact-commit tags', () => {
   }
 });
 
-test('Cloud accepts PR dispatch tags only for their exact commit and optional matching tag ref', () => {
-  for (const tag of [`ios-testflight/pr/1/1/${sha}`, `ios-testflight/pr/157/982451653/${sha}`]) {
+test('Cloud accepts both PR dispatch tag formats only for their exact commit and optional matching tag ref', () => {
+  for (const tag of [
+    `ios-testflight/pr/1/1/${sha}`, `ios-testflight/pr/157/982451653/${sha}`,
+    `ios-testflight/pr/1/1-${sha}`, `ios-testflight/pr/157/982451653-${sha}`,
+    `ios-testflight/pr/9007199254740991/9007199254740991/${sha}`,
+    `ios-testflight/pr/9007199254740991/9007199254740991-${sha}`,
+  ]) {
     for (const ref of ['', `refs/tags/${tag}`]) {
       const result = gate({ CI_TAG: tag, CI_GIT_REF: ref });
       assert.equal(result.status, 0, result.stderr);
@@ -97,6 +102,29 @@ test('Cloud refuses request bindings and malformed PR dispatch identities', () =
     `ios-testflight/pr/1/1/${sha.toUpperCase()}`, `ios-testflight/pr/1/1/${'g'.repeat(40)}`,
     `ios-testflight/pr/1/1/${sha}/extra`, `refs/tags/ios-testflight/pr/1/1/${sha}`,
     ` ios-testflight/pr/1/1/${sha}`, `ios-testflight/pr/1/1/${sha}\n`,
+    `ios-testflight/pr/0/1-${sha}`, `ios-testflight/pr/1/0-${sha}`,
+    `ios-testflight/pr/01/1-${sha}`, `ios-testflight/pr/1/01-${sha}`,
+    `ios-testflight/pr/-1/1-${sha}`, `ios-testflight/pr/1/+1-${sha}`,
+    `ios-testflight/pr/1.5/1-${sha}`, `ios-testflight/pr/1/1e3-${sha}`,
+    `ios-testflight/pr//1-${sha}`, `ios-testflight/pr/1/-${sha}`,
+    `ios-testflight/pr/1/1-${sha.slice(0, 39)}`, `ios-testflight/pr/1/1-${sha}a`,
+    `ios-testflight/pr/1/1-${sha.toUpperCase()}`, `ios-testflight/pr/1/1-${'g'.repeat(40)}`,
+    `ios-testflight/pr/1/1-${sha}/extra`, `refs/tags/ios-testflight/pr/1/1-${sha}`,
+    ` ios-testflight/pr/1/1-${sha}`, `ios-testflight/pr/1/1-${sha}\n`,
+    `ios-testflight/pr/1/1-/${sha}`, `ios-testflight/pr/1/1/${sha}-${sha}`,
+  ]) {
+    const result = gate({ CI_TAG: tag });
+    assert.notEqual(result.status, 0, tag);
+    assert.match(result.stderr, /refus/i);
+  }
+});
+
+test('Cloud refuses unsafe PR or owner-command IDs in either dispatch tag format', () => {
+  for (const tag of [
+    `ios-testflight/pr/9007199254740992/1/${sha}`, `ios-testflight/pr/1/9007199254740992/${sha}`,
+    `ios-testflight/pr/999999999999999999999999/1/${sha}`, `ios-testflight/pr/1/999999999999999999999999/${sha}`,
+    `ios-testflight/pr/9007199254740992/1-${sha}`, `ios-testflight/pr/1/9007199254740992-${sha}`,
+    `ios-testflight/pr/999999999999999999999999/1-${sha}`, `ios-testflight/pr/1/999999999999999999999999-${sha}`,
   ]) {
     const result = gate({ CI_TAG: tag });
     assert.notEqual(result.status, 0, tag);
@@ -105,19 +133,20 @@ test('Cloud refuses request bindings and malformed PR dispatch identities', () =
 });
 
 test('Cloud PR dispatch tags refuse mismatched commits, native PR contexts, refs and build numbers', () => {
-  const tag = `ios-testflight/pr/157/982451653/${sha}`;
-  for (const invalid of [
-    { CI_XCODE_CLOUD: '' }, { CI_XCODE_CLOUD: 'true' },
-    { CI_COMMIT: '' }, { CI_COMMIT: 'b'.repeat(40) }, { CI_COMMIT: sha.toUpperCase() },
-    { CI_COMMIT: `${sha}\n` }, { CI_PULL_REQUEST_NUMBER: '157' }, { CI_PULL_REQUEST_NUMBER: '0' },
-    { CI_GIT_REF: 'refs/heads/next' }, { CI_GIT_REF: `refs/tags/ios-testflight/next/${sha}` },
-    { CI_GIT_REF: `refs/tags/${tag}\n` }, { CI_BUILD_NUMBER: '' }, { CI_BUILD_NUMBER: '0' },
-    { CI_BUILD_NUMBER: '01' }, { CI_BUILD_NUMBER: '-1' }, { CI_BUILD_NUMBER: '1.5' },
-    { CI_BUILD_NUMBER: '1;echo bad' }, { CI_BUILD_NUMBER: '42\n' },
-  ]) {
-    const result = gate({ CI_TAG: tag, ...invalid });
-    assert.notEqual(result.status, 0, JSON.stringify(invalid));
-    assert.match(result.stderr, /refus/i);
+  for (const tag of [`ios-testflight/pr/157/982451653/${sha}`, `ios-testflight/pr/157/982451653-${sha}`]) {
+    for (const invalid of [
+      { CI_XCODE_CLOUD: '' }, { CI_XCODE_CLOUD: 'true' },
+      { CI_COMMIT: '' }, { CI_COMMIT: 'b'.repeat(40) }, { CI_COMMIT: sha.toUpperCase() },
+      { CI_COMMIT: `${sha}\n` }, { CI_PULL_REQUEST_NUMBER: '157' }, { CI_PULL_REQUEST_NUMBER: '0' },
+      { CI_GIT_REF: 'refs/heads/next' }, { CI_GIT_REF: `refs/tags/ios-testflight/next/${sha}` },
+      { CI_GIT_REF: `refs/tags/${tag}\n` }, { CI_BUILD_NUMBER: '' }, { CI_BUILD_NUMBER: '0' },
+      { CI_BUILD_NUMBER: '01' }, { CI_BUILD_NUMBER: '-1' }, { CI_BUILD_NUMBER: '1.5' },
+      { CI_BUILD_NUMBER: '1;echo bad' }, { CI_BUILD_NUMBER: '42\n' },
+    ]) {
+      const result = gate({ CI_TAG: tag, ...invalid });
+      assert.notEqual(result.status, 0, JSON.stringify(invalid));
+      assert.match(result.stderr, /refus/i);
+    }
   }
 });
 

@@ -426,3 +426,49 @@ test('missing or unauthenticated legacy evidence fails closed', async () => {
     await assert.rejects(f.check(), /unresolved.*reservation|reservation.*unresolved/i);
   }
 });
+
+
+for (const previewTag of [`ios-testflight/pr/8/12-${sha}`, `ios-testflight/pr/8/12/${sha}`]) {
+  test(`ordering retains unresolved reservation protection for ${previewTag}`, async () => {
+    const f = fixture(); f.data.refs = [ref(previewTag)];
+    await assert.rejects(f.check(), /unresolved.*reservation|reservation.*unresolved/i);
+    assert.deepEqual(f.data.post, []);
+  });
+
+  test(`ordering reconciles the exact verified Cloud source for ${previewTag}`, async () => {
+    const f = fixture(); f.data.refs = [ref(previewTag)]; f.data.appleRefs = [appleRef(previewTag)];
+    f.data.runs.preview = [run({}, 'preview')]; f.data.runBuilds['cloud-run'] = [build()]; f.data.builds = [build()];
+    await f.check();
+    assert.deepEqual(f.data.post, []);
+  });
+
+  test(`journal records the actual preview tag identity for ${previewTag}`, async () => {
+    const f = fixture();
+    await f.record('not-started', { tag: previewTag });
+    assert.equal(f.data.post.length, 1);
+    assert.equal(f.data.post[0].body.context, reservationStatusContext(previewTag));
+    assert.equal(f.data.post[0].path, `/repos/${repository}/statuses/${sha}`);
+  });
+}
+
+test('current four-segment reservation recovery excludes only that exact reservation', async () => {
+  const currentTag = `ios-testflight/pr/8/99-${otherSha}`;
+  const f = fixture(); f.data.refs = [ref(currentTag, otherSha)];
+  await f.check({ currentTag });
+  f.data.refs.push(ref());
+  await assert.rejects(f.check({ currentTag }), /unresolved.*reservation|reservation.*unresolved/i);
+  assert.deepEqual(f.data.post, []);
+});
+
+test('malformed preview reservation formats fail before any ordering I/O', async () => {
+  for (const currentTag of [
+    `ios-testflight/pr/0/99-${sha}`, `ios-testflight/pr/8/01-${sha}`, `ios-testflight/pr/8/99-${sha.slice(1)}`,
+    `ios-testflight/pr/8/99-${sha.toUpperCase()}`, `ios-testflight/pr/8/99/${sha}/extra`,
+    `ios-testflight/pr/8/99-${sha}\n`, `ios-testflight/pr/9007199254740992/99-${sha}`,
+    `ios-testflight/pr/8/9007199254740992/${sha}`,
+  ]) {
+    const f = fixture();
+    await assert.rejects(f.check({ currentTag }), /reservation/i);
+    assert.deepEqual(f.data.requests, []);
+  }
+});

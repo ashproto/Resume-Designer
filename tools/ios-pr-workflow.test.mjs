@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const preview = readFileSync(new URL('../.github/workflows/ios-testflight-pr.yml', import.meta.url), 'utf8');
@@ -61,4 +61,36 @@ test('partial reruns cannot reuse successful owner dependencies to schedule anot
     context.github.ref = 'refs/heads/feature';
     assert.equal(runInNewContext(expression,context,{timeout:100}),false);
   }
+});
+
+test('metadata-only dispatch cannot accept delivery outcomes or allocate any build job', () => {
+  const path = new URL('../.github/workflows/ios-pr-testflight-feedback.yml', import.meta.url);
+  assert.equal(existsSync(path), true, 'a dedicated metadata-only workflow is required');
+  const workflow = readFileSync(path, 'utf8');
+  assert.match(workflow, /on:\n  workflow_dispatch:\n    inputs:\n      request_tag:/);
+  const inputs = workflow.match(/    inputs:\n([\s\S]*?)\npermissions:/)[1];
+  assert.deepEqual([...inputs.matchAll(/^      ([a-z_]+):/gm)].map(match => match[1]), ['request_tag']);
+  assert.doesNotMatch(workflow, /issue_comment:|workflow_run:|pull_request|push:/);
+  const jobs = workflow.slice(workflow.indexOf('\njobs:\n') + 7);
+  assert.deepEqual([...jobs.matchAll(/^  ([a-z-]+):/gm)].map(match => match[1]), ['feedback']);
+  assert.match(jobs, /timeout-minutes: 5/);
+  assert.doesNotMatch(jobs, /secrets\.|environment:|concurrency:|needs:|contents: write|statuses: write|actions:|APP_STORE|XCODE_CLOUD|npm (?:ci|install)/);
+  const permissions = jobs.match(/^    permissions:\n([\s\S]*?)^    steps:/m)[1];
+  assert.deepEqual(permissions.trim().split('\n').map(line => line.trim()), ['contents: read', 'issues: write', 'pull-requests: read']);
+  assert.match(jobs, /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(jobs, /persist-credentials: false/);
+  assert.match(jobs, /package-manager-cache: false/);
+  assert.deepEqual([...jobs.matchAll(/^        run: (.+)$/gm)].map(match => match[1]), ['node tools/ios-pr-testflight.mjs feedback']);
+  assert.match(jobs, /PREVIEW_FEEDBACK_REPAIR: ['"]true['"]/);
+  assert.doesNotMatch(jobs, /PREVIEW_STATE:|PREVIEW_ERROR:|PREVIEW_BUILD_NUMBER:|PREVIEW_CLOUD_RUN_ID:|github\.event\.inputs/);
+  for (const action of jobs.matchAll(/uses: actions\/[\w-]+@([^\s]+)/g)) assert.match(action[1], /^[a-f0-9]{40}$/);
+  const expression = jobs.match(/^    if: >-\n([\s\S]*?)^    runs-on:/m)[1].trim();
+  const github = { repository_id: '1163653093', repository_owner_id: '35086581', ref: 'refs/heads/main',
+    event_name: 'workflow_dispatch', event: { sender: { id: 35086581 } }, triggering_actor: 'ashproto' };
+  assert.equal(runInNewContext(expression, { github }, { timeout: 100 }), true);
+  for (const [key, value] of [['repository_id','1'], ['repository_owner_id','1'], ['ref','refs/heads/feature'],
+    ['event_name','issue_comment'], ['triggering_actor','other']]) {
+    assert.equal(runInNewContext(expression, { github: { ...github, [key]: value } }, { timeout: 100 }), false);
+  }
+  assert.equal(runInNewContext(expression, { github: { ...github, event: { sender: { id: 1 } } } }, { timeout: 100 }), false);
 });
