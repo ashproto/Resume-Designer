@@ -8,6 +8,8 @@ import { applySpacingSettings } from '../src/spacingService.js';
 import { editableSectionData, getSectionLayout, updateSectionNodeStyle } from '../src/sectionLayout.js';
 import { makeNode, flatten } from '../src/pagination.js';
 import { ConfirmHost } from '../src/components/ui/confirm.jsx';
+import { createChangeSet } from '../src/diffEngine.js';
+import { applyChangesToStore } from '../src/changeApply.js';
 
 const layouts = ['sidebar', 'stacked', 'stacked-vertical', 'right-sidebar', 'compact', 'executive', 'classic', 'classic-featured', 'modern', 'timeline', 'creative'];
 const data = () => ({
@@ -175,12 +177,56 @@ it('keeps a legacy size input mounted through repeated typing and styles the sec
   expect(within(document.querySelector('[data-editor-key="section:@2"]')).getByLabelText('Title size')).toBe(size);
   expect(store.get('sections[2].id')).toBeUndefined();
   fireEvent.blur(size);
-  expect(store.get('sectionLayout.sidebar').find(node => node.key === 'section:@2').titleScale).toBe(1.2);
-  const second = document.querySelector('[data-editor-key="section:@1"]');
+  const noIdKey = `section:${store.get('sections[2].id')}`;
+  expect(store.get('sections[2].id')).toBeTruthy();
+  expect(store.get('sectionLayout.sidebar').find(node => node.key === noIdKey).titleScale).toBe(1.2);
+  expect(within(document.querySelector(`[data-editor-key="${noIdKey}"]`)).getByLabelText('Title size')).toBe(size);
+  const secondKey = `section:${store.get('sections[1].id')}`;
+  const second = document.querySelector(`[data-editor-key="${secondKey}"]`);
   fireEvent.change(within(second).getByLabelText('Content size'), { target: { value: '90' } });
   fireEvent.blur(within(second).getByLabelText('Content size'));
-  expect(store.get('sectionLayout.sidebar').find(node => node.key === 'section:@1').contentScale).toBe(0.9);
+  expect(store.get('sectionLayout.sidebar').find(node => node.key === secondKey).contentScale).toBe(0.9);
   expect(store.get('sectionLayout.sidebar').find(node => node.key === 'section:same').contentScale).toBeUndefined();
+});
+
+it.each(['remove', 'reorder'])('keeps committed legacy typography attached to its section after a canonical %s', operation => {
+  store.setData({ name: 'Alex', sections: [
+    { title: 'Legacy first', content: ['One'] },
+    { title: 'Legacy second', content: ['Two'] },
+  ] }, true);
+  render(<StructurePanel />);
+  fireEvent.click(screen.getByText('Open structure'));
+  fireEvent.click(screen.getByTitle('Sidebar'));
+  const first = document.querySelector('[data-editor-key="section:@0"]');
+  const details = first.querySelector('details');
+  fireEvent.click(details.querySelector('summary'));
+  const italic = within(first).getByRole('button', { name: 'Title italic', exact: true });
+  act(() => italic.focus());
+  fireEvent.click(italic);
+  expect(first.isConnected).toBe(true);
+  expect(first.querySelector('details')).toBe(details);
+  expect(details.open).toBe(true);
+  expect(document.activeElement).toBe(italic);
+  // Commit another control from the same still-open card after its identity
+  // has been saved, as users do when formatting several attributes in a row.
+  fireEvent.click(within(first).getByRole('button', { name: 'Title underline', exact: true }));
+  act(() => {
+    if (operation === 'remove') {
+      const changeSet = createChangeSet(store.getData(), { sections: [store.get('sections[1]')] });
+      applyChangesToStore(changeSet.changes);
+    } else store.moveInArray('sections', 0, 1);
+  });
+  const host = document.querySelector('.resume');
+  host.innerHTML = renderResumeForLayout(store.getData(), 'sidebar');
+  const sections = [...host.querySelectorAll('[data-structure-key^="section:"]')];
+  const survivor = sections.find(section => section.querySelector('h2').textContent === 'Legacy second');
+  expect(survivor.style.getPropertyValue('--section-title-style')).toBe('normal');
+  expect(survivor.style.getPropertyValue('--section-title-decoration')).toBe('none');
+  if (operation === 'reorder') {
+    const styled = sections.find(section => section.querySelector('h2').textContent === 'Legacy first');
+    expect(styled.style.getPropertyValue('--section-title-style')).toBe('italic');
+    expect(styled.style.getPropertyValue('--section-title-decoration')).toBe('underline');
+  }
 });
 
 it('immediately displays a selected typography font', () => {

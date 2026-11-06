@@ -55,6 +55,25 @@ describe('native editor feedback parity', () => {
     expect(cards[3]).toMatchObject({ parentKey: 'group:strengths', style: { contentItalic: true } });
     expect(cards[1].style.titleScale).toBe(1.2);
   });
+
+  it('preserves array-backed tools when the native editor adds another tool', () => {
+    store.setData({ ...doc, tools: ['Figma', 'Sketch'] }, true, 'native-parity');
+    const outline = buildDocumentOutline(store.getData());
+    const card = outline.cards.find(card => card.key === 'tools');
+    const fields = [...card.fields, ...outline.groups
+      .filter(group => card.groupIds.includes(group.id)).flatMap(group => group.fields)];
+    const field = fields.find(field => field.path === 'tools');
+    expect(field.value).toBe('Figma • Sketch');
+    expect(store.get('tools')).toEqual(['Figma', 'Sketch']);
+
+    expect(send('setField', { path: field.path, value: `${field.value} • Blender` }).ok).toBe(true);
+    expect(store.get('tools')).toBe('Figma • Sketch • Blender');
+    expect(buildDocumentOutline(store.getData()).groups.find(group => group.id === 'tools')
+      .fields[0].value).toBe('Figma • Sketch • Blender');
+    store.undo();
+    expect(store.get('tools')).toEqual(['Figma', 'Sketch']);
+  });
+
   it('edits section order, grouping, styles, deletion and restoration through shared undo history', () => {
     expect(send('sectionMove', { key: 'summary', direction: '-1' }).ok).toBe(true);
     expect(store.get('sectionLayout.main').map(node => node.key)).toEqual(['summary', 'experience']);

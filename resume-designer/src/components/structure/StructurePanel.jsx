@@ -563,10 +563,10 @@ export default function StructurePanel() {
   });
 
   const updateStructure = (change, description, isText = false) => {
-    // Typing must not change a legacy card's React key. Structural edits add
-    // IDs, then translate captured fallback references before applying actions.
-    const next = isText ? structuredClone(store.getData()) : editableSectionData(store.getData(), generateId);
-    if (isText) next.sectionLayout = getSectionLayout(next);
+    // Every saved presentation reference needs a stable content identity,
+    // including typography. Positional fallback references are only for reads:
+    // a later canonical removal/reorder must not attach styles to another row.
+    const next = editableSectionData(store.getData(), generateId);
     const collapseKeys = (data.sections || []).map((section, index) => [sectionKey(section, index, data.sections), next.sections?.[index] && sectionKey(next.sections[index], index, next.sections)]);
     change(next);
     if (collapseKeys.some(([before, after]) => before !== after)) setCollapsed(previous => {
@@ -809,8 +809,11 @@ export default function StructurePanel() {
       {nodes.map((node, index) => {
         const title = titleFor(node);
         const match = sectionForKey(data, node.key);
+        // The form remounts for structural/external changes. Within that
+        // lifetime, keep this card mounted when its first style edit assigns
+        // a legacy section an ID; focused inputs and open controls survive.
         return <SectionCard
-          key={node.key} node={node} title={title}
+          key={match ? `section-position:${match.index}` : node.key} node={node} title={title}
           titlePath={match ? `sections[${match.index}].title` : undefined}
           collapsed={!!collapsed[node.key]} onToggle={() => toggleCollapse(node.key)}
           onTitleChange={value => match ? writeField(`sections[${match.index}].title`, value) : updateStructure(next => {

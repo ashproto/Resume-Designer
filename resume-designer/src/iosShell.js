@@ -595,13 +595,14 @@ export function buildDocumentOutline(data, { layout = 'sidebar', measureContacts
     });
   });
 
-  if (typeof data.tools === 'string' && data.tools) {
+  const tools = editableToolsText(data.tools);
+  if (tools) {
     groups.push({
       id: 'tools',
       title: 'Tools',
       listPath: null,
       listOffset: 0,
-      fields: [{ path: 'tools', label: 'Tools', value: data.tools, multiline: true }],
+      fields: [{ path: 'tools', label: 'Tools', value: tools, multiline: true }],
     });
   }
 
@@ -648,6 +649,10 @@ function sectionSignature(data, key) {
   return JSON.stringify([found.node, content(found.node)]);
 }
 
+function editableToolsText(tools) {
+  return Array.isArray(tools) ? tools.join(' • ') : typeof tools === 'string' ? tools : '';
+}
+
 function buildSectionCards(data, groups) {
   const layout = getSectionLayout(data);
   const cards = [];
@@ -660,7 +665,7 @@ function buildSectionCards(data, groups) {
     cards.push({ key: node.key, title: sectionNodeTitle(data, node), area, parentKey,
       isGroup: Array.isArray(node.children), groupIds, style,
       signature: sectionSignature(data, node.key),
-      fields: node.key === 'tools' && !groupIds.length ? [{ path: 'tools', label: 'Tools', value: typeof data.tools === 'string' ? data.tools : '', multiline: true }] : [],
+      fields: node.key === 'tools' && !groupIds.length ? [{ path: 'tools', label: 'Tools', value: editableToolsText(data.tools), multiline: true }] : [],
       canMoveUp: index > 0, canMoveDown: index < nodes.length - 1 });
     if (node.children) visit(node.children, area, node.key);
   });
