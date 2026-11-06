@@ -89,6 +89,7 @@ describe('buildSnapshot', () => {
       profile: null,
       onboarding: null,
       diff: null,
+      generationReview: null,
     });
   });
 });
@@ -490,8 +491,11 @@ describe('buildDocumentOutline', () => {
   });
 
   it('survives a missing or malformed document', () => {
-    expect(buildDocumentOutline(null)).toEqual({ groups: [] });
-    expect(buildDocumentOutline('nope')).toEqual({ groups: [] });
+    for (const data of [null, undefined, 'nope', []]) {
+      // Both collections are required by Swift's DocumentOutline decoder.
+      // A missing document offers no edit actions; the store cannot save them.
+      expect(buildDocumentOutline(data)).toEqual({ groups: [], additions: [], cards: [], restorable: [] });
+    }
     expect(buildDocumentOutline({}).groups.map((g) => g.id)).toEqual(['header', 'summary']);
   });
 });
@@ -553,7 +557,7 @@ describe('buildChatView', () => {
     // text yet, it is the only thing that tells the user the send landed.
     const { messages } = view({ loading: true });
     expect(messages).toEqual([
-      { id: 'streaming', role: 'assistant', text: '', hasChanges: false, reasoning: '' },
+      { id: 'streaming', role: 'assistant', text: '', hasChanges: false, reviewable: false, reasoning: '' },
     ]);
   });
 
@@ -570,7 +574,7 @@ describe('buildChatView', () => {
     });
     expect(messages.at(-1)).toEqual({
       id: 'streaming', role: 'assistant', text: 'Here is',
-      hasChanges: false, reasoning: '**Reading**\nthe summary\n',
+      hasChanges: false, reviewable: false, reasoning: '**Reading**\nthe summary\n',
     });
   });
 
@@ -811,6 +815,15 @@ describe('the Design sheet commands', () => {
     postMessage.mock.calls.map(([m]) => m).filter((m) => m.kind === 'snapshot').at(-1);
 
   afterEach(() => { delete globalThis.webkit; });
+
+  it('publishes a complete, action-free outline when structure opens before any resume is loaded', async () => {
+    const { postMessage, send } = await mount({ getDocument: () => buildDocumentOutline(null) });
+    expect(send({ type: 'setStructureOpen', value: 'true' })).toEqual({ ok: true });
+    await settled();
+    expect(lastSnapshot(postMessage).document).toEqual({
+      groups: [], additions: [], cards: [], restorable: [], revision: 0, saveFailed: false,
+    });
+  });
 
   it('puts the profile list and the active one in the snapshot', async () => {
     const listProfiles = vi.fn(() => [

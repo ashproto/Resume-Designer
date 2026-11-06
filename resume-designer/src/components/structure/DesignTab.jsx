@@ -242,7 +242,7 @@ function paletteSwatchBackground(p1, p2, p3) {
 function tileClass(selected, extra) {
   return cn(
     'rounded-md border text-left transition-colors hover:bg-accent/50',
-    selected && 'border-primary bg-primary/[0.04] text-primary ring-1 ring-primary',
+    selected && 'border-primary bg-primary/4 text-primary ring-1 ring-primary',
     extra,
   );
 }
@@ -282,7 +282,7 @@ function ControlSlider({ label, readout, ...sliderProps }) {
   return (
     <div className="flex items-center gap-2.5">
       <Label className="w-[90px] shrink-0 text-[12.5px] font-medium text-foreground">{label}</Label>
-      <Slider className="flex-1" {...sliderProps} />
+      <Slider className="flex-1" thumbProps={{ 'aria-label': label, 'aria-valuetext': readout }} {...sliderProps} />
       <span className="w-11 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{readout}</span>
     </div>
   );
@@ -351,7 +351,7 @@ function UnderlinePreview({ styleId, width, className }) {
     case 'dashed':
       return <span className={cn(base, 'border-dashed border-primary')} style={{ borderBottomWidth: width, borderBottomStyle: 'dashed' }} />;
     case 'gradient':
-      return <span className={cn(base, 'bg-gradient-to-r from-primary to-transparent')} style={{ height: width }} />;
+      return <span className={cn(base, 'bg-linear-to-r from-primary to-transparent')} style={{ height: width }} />;
     case 'none':
       return <span className={cn(base, 'bg-muted-foreground/30')} style={{ height: width }} />;
     default:
@@ -757,6 +757,16 @@ export default function DesignTab({ sectionProps = () => ({}) }) {
 
       {/* ===== Header Style ===== */}
       <PanelSection title="Header style" {...sectionProps('header-style')}>
+        <ControlSlider
+          label="Header size"
+          readout={`${Math.round((spacing.headerScale ?? 1) * 100)}%`}
+          min={25}
+          max={150}
+          step={5}
+          value={[Math.round((spacing.headerScale ?? 1) * 100)]}
+          onValueChange={([v]) => handleSpacingChange('headerScale', v / 100)}
+        />
+        <p className="text-xs text-muted-foreground">Adjust the space around your name and contact details. 100% is the original size.</p>
         {/* Solid vs styled mode */}
         <Segmented
           stretch

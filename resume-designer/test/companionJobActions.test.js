@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createBridgeRouter } from '../src/bridgeRoutes.js';
+import { buildResumeData } from '../src/onboardingLogic.js';
 
 import {
   MAX_JOB_DESCRIPTION_BYTES,
@@ -80,6 +81,7 @@ function makeDeps(overrides = {}) {
       tailorReasoning: 'high',
     })),
     getDefaultModelId: vi.fn(() => 'fallback/model'),
+    buildResumeData,
     analyzeResumeDataAgainstJobs: vi.fn(async () => analysis()),
     generateResumeChangesForData: vi.fn(async () => ({
       changes: {
@@ -111,6 +113,203 @@ function makeDeps(overrides = {}) {
   };
 }
 
+describe('companion operation cancellation', () => {
+  it('forwards the signal to analysis and rejects a late successful analysis after cancellation', async () => {
+    const pending = deferred();
+    const controller = new AbortController();
+    const deps = makeDeps({ analyzeResumeDataAgainstJobs: vi.fn(() => pending.promise) });
+    const operation = createCompanionJobActions(deps).analyzeJobFit({ resumeId: 'resume-1', job: JOB, signal: controller.signal });
+    expect(deps.analyzeResumeDataAgainstJobs.mock.calls[0][3].signal).toBe(controller.signal);
+    controller.abort();
+    pending.resolve(analysis());
+    await expect(operation).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+  });
+
+  it.each(['resume', 'profile'])('forwards the signal and prevents a late %s generation from saving after cancellation', async (source) => {
+    const pending = deferred();
+    const controller = new AbortController();
+    const generate = vi.fn(() => pending.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate, generateResumeFromProfileForJob: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { ...(source === 'resume' ? { resumeId: 'resume-1' } : {}), requestId: REQUEST_ID, job: JOB, signal: controller.signal };
+    const operation = actions.createTailoredResume(request);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    expect(generate.mock.calls[0].at(-1).signal).toBe(controller.signal);
+    controller.abort();
+    const retry = actions.createTailoredResume(request);
+    // Replaying the same cancelled execution cannot dispatch more paid work.
+    await expect(retry).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+    const rejected = expect(operation).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+    pending.resolve(source === 'resume'
+      ? { changes: { summary: 'Must not be saved' } }
+      : { resume: { name: 'Ash', email: 'ash@example.com', summary: 'Must not be saved', experience: [], education: [], skills: [] } });
+    await rejected;
+    expect(generate).toHaveBeenCalledOnce();
+    expect(deps.saveVariant).not.toHaveBeenCalled();
+    expect(deps.loadVariant).not.toHaveBeenCalled();
+    expect(deps.flush).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit retry replace aborted work and prevents its late output from replacing the new save', async () => {
+    const oldGeneration = deferred();
+    const newGeneration = deferred();
+    const controller = new AbortController();
+    const generate = vi.fn().mockImplementationOnce(() => oldGeneration.promise)
+      .mockImplementationOnce(() => newGeneration.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const oldOperation = actions.createTailoredResume({ ...request, signal: controller.signal });
+    const oldResult = oldOperation.catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    controller.abort();
+    const newOperation = actions.createTailoredResume({ ...request, signal: new AbortController().signal });
+    const newResult = newOperation.catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    newGeneration.resolve({ changes: { summary: 'The explicitly retried resume' } });
+    expect(await newResult).toMatchObject({ created: true });
+    oldGeneration.resolve({ changes: { summary: 'Expired provider output' } });
+    expect(await oldResult).toMatchObject({ status: 504, code: 'ai_failed' });
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+    expect(deps.saveVariant.mock.calls[0][2].summary).toBe('The explicitly retried resume');
+    expect(await actions.createTailoredResume(request)).toMatchObject({ created: false });
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases a canceled request ID for explicit new input while the old provider remains pending', async () => {
+    const oldGeneration = deferred();
+    const newGeneration = deferred();
+    const controller = new AbortController();
+    const generate = vi.fn().mockImplementationOnce(() => oldGeneration.promise)
+      .mockImplementationOnce(() => newGeneration.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const oldResult = actions.createTailoredResume({ ...request, signal: controller.signal }).catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    controller.abort();
+    const newResult = actions.createTailoredResume({ ...request, job: { ...JOB, description: 'An explicitly chosen new role.' } })
+      .catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    newGeneration.resolve({ changes: { summary: 'The new role' } });
+    expect(await newResult).toMatchObject({ created: true });
+    oldGeneration.resolve({ changes: { summary: 'Canceled old role' } });
+    expect(await oldResult).toMatchObject({ status: 504 });
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+    expect(deps.saveVariant.mock.calls[0][2].summary).toBe('The new role');
+    await expect(actions.createTailoredResume(request)).rejects.toMatchObject({ status: 409, code: 'idempotency_conflict' });
+  });
+
+  it('does not remove a replacement when the old authorization later aborts or settles', async () => {
+    const oldGeneration = deferred();
+    const newGeneration = deferred();
+    const controller = new AbortController();
+    let authorized = true;
+    const generate = vi.fn().mockImplementationOnce(() => oldGeneration.promise)
+      .mockImplementationOnce(() => newGeneration.promise);
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const oldResult = actions.createTailoredResume({ ...request, signal: controller.signal }, {
+      assertAuthorized() {
+        if (!authorized) throw Object.assign(new Error('Revoked'), { status: 401 });
+      },
+    }).catch((error) => error);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    authorized = false;
+    const newResult = actions.createTailoredResume(request);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    controller.abort();
+    const conflicting = { ...request, job: { ...JOB, description: 'Different pending input.' } };
+    await expect(actions.createTailoredResume(conflicting)).rejects.toMatchObject({ status: 409 });
+    oldGeneration.resolve({ changes: { summary: 'Old revoked output' } });
+    expect(await oldResult).toMatchObject({ status: 401 });
+    await expect(actions.createTailoredResume(conflicting)).rejects.toMatchObject({ status: 409 });
+    newGeneration.resolve({ changes: { summary: 'The replacement' } });
+    expect(await newResult).toMatchObject({ created: true });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+  });
+
+  it('releases the ID when upstream aborts synchronously before its cleanup listener is installed', async () => {
+    const controller = new AbortController();
+    const generate = vi.fn().mockImplementationOnce(() => {
+      controller.abort();
+      return new Promise(() => {});
+    }).mockResolvedValueOnce({ changes: { summary: 'A fresh request' } });
+    const deps = makeDeps({ generateResumeChangesForData: generate });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    void actions.createTailoredResume({ ...request, signal: controller.signal });
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    await expect(actions.createTailoredResume({ ...request, job: { ...JOB, description: 'New input after cancellation.' } }))
+      .resolves.toMatchObject({ created: true });
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])('detaches the abort cleanup listener when generation succeeds=%s', async (succeeds) => {
+    const generation = deferred();
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const listeners = new Set();
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    const addSpy = vi.spyOn(signal, 'addEventListener').mockImplementation((type, listener, options) => {
+      if (type === 'abort') listeners.add(listener);
+      add(type, listener, options);
+    });
+    const removeSpy = vi.spyOn(signal, 'removeEventListener').mockImplementation((type, listener, options) => {
+      if (type === 'abort') listeners.delete(listener);
+      remove(type, listener, options);
+    });
+    try {
+      const deps = makeDeps({ generateResumeChangesForData: vi.fn(() => generation.promise) });
+      const operation = createCompanionJobActions(deps).createTailoredResume({ resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB, signal });
+      const result = operation.catch((error) => error);
+      await vi.waitFor(() => expect(deps.generateResumeChangesForData).toHaveBeenCalledOnce());
+      expect(listeners.size).toBe(1);
+      generation.resolve(succeeds ? { changes: { summary: 'A completed request' } } : {});
+      expect(await result).toMatchObject(succeeds ? { created: true } : { code: 'invalid_ai_response' });
+      expect(listeners.size).toBe(0);
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
+
+  it('replays an already saved resume after abort during durability without generating or saving again', async () => {
+    const durability = deferred();
+    const controller = new AbortController();
+    const deps = makeDeps({ flush: vi.fn(() => durability.promise) });
+    const actions = createCompanionJobActions(deps);
+    const request = { resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB };
+    const operation = actions.createTailoredResume({ ...request, signal: controller.signal });
+    await vi.waitFor(() => expect(deps.saveVariant).toHaveBeenCalledOnce());
+    controller.abort();
+    const retry = actions.createTailoredResume({ ...request, signal: new AbortController().signal });
+    durability.resolve(true);
+    expect(await operation).toMatchObject({ created: true });
+    expect(await retry).toMatchObject({ created: false });
+    expect(deps.generateResumeChangesForData).toHaveBeenCalledOnce();
+    expect(deps.saveVariant).toHaveBeenCalledOnce();
+  });
+
+  it('rejects cancellation during fingerprinting before dispatching generation', async () => {
+    const fingerprint = deferred();
+    const controller = new AbortController();
+    const deps = makeDeps();
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(() => fingerprint.promise);
+    try {
+      const operation = createCompanionJobActions(deps).createTailoredResume({ resumeId: 'resume-1', requestId: REQUEST_ID, job: JOB, signal: controller.signal });
+      controller.abort();
+      fingerprint.resolve(new ArrayBuffer(32));
+      await expect(operation).rejects.toMatchObject({ status: 504, code: 'ai_failed' });
+      expect(deps.generateResumeChangesForData).not.toHaveBeenCalled();
+      expect(deps.saveVariant).not.toHaveBeenCalled();
+    } finally { digest.mockRestore(); }
+  });
+});
+
 describe('createCompanionJobActions analyzeJobFit', () => {
   it('analyzes the explicitly selected resume with app-owned model settings and normalized job text', async () => {
     const deps = makeDeps();
@@ -130,7 +329,7 @@ describe('createCompanionJobActions analyzeJobFit', () => {
         description: 'Build accessible products and lead cross-functional teams.',
         url: 'https://jobs.example.test/staff-product-engineer',
       }],
-      { reasoningEffort: 'low' },
+      { reasoningEffort: 'low', concise: true },
     );
   });
 
@@ -535,4 +734,45 @@ describe('revocation before tailored resume persistence', () => {
     expect(await fixture.tailor()).toMatchObject({ status: 200, body: { created: false } });
     expect(fixture.deps.saveVariant).toHaveBeenCalledOnce();
   });
+});
+
+describe('profile-based companion generation', () => {
+  it('generates without an existing resume and retries the same saved identity', async () => {
+    const resume = { name: 'Ash', email: 'ash@example.com', summary: 'Product engineer', education: [{ degree: 'BS', school: 'Example University', year: '2020' }], experience: [], skills: ['Research'], tools: ['Figma'] };
+    const generate = vi.fn(async () => ({ resume, gaps: [] }));
+    const deps = makeDeps({ generateResumeFromProfileForJob: generate });
+    const actions = createCompanionJobActions(deps);
+    const hooks = { onReasoning: vi.fn() };
+    const request = { requestId: REQUEST_ID, job: JOB, hooks };
+    const first = await actions.createTailoredResume(request);
+    const replay = await actions.createTailoredResume(request);
+    expect(first.created).toBe(true);
+    expect(replay.created).toBe(false);
+    expect(replay.resume.id).toBe(first.resume.id);
+    expect(generate).toHaveBeenCalledOnce();
+    expect(generate).toHaveBeenCalledWith('tailor/model', expect.objectContaining({ title: 'Staff Product Engineer' }), { targetPages: 1, reasoningEffort: 'high', hooks });
+    expect(deps.generateResumeChangesForData).not.toHaveBeenCalled();
+    expect(deps.saveVariant.mock.calls[0][2]).toMatchObject({ name: 'Ash', contact: { email: 'ash@example.com' }, tools: 'Figma', education: [expect.stringContaining('Example University')], sections: [expect.objectContaining({ title: 'Skills', content: ['Research'] })] });
+  });
+
+  it('rejects invalid profile-generated documents before saving', async () => {
+    const deps = makeDeps({ generateResumeFromProfileForJob: vi.fn(async () => ({ resume: { name: 'Ash', experience: 'invalid' } })) });
+    await expect(createCompanionJobActions(deps).createTailoredResume({ requestId: REQUEST_ID, job: JOB })).rejects.toMatchObject({ code: 'invalid_ai_response' });
+    expect(deps.saveVariant).not.toHaveBeenCalled();
+  });
+
+  it('analyzes the full profile with no saved resume and forwards progress hooks', async () => {
+    const profile = { markdown: '# Ash\nEngineer building accessible products' };
+    const hooks = { onReasoning: vi.fn() };
+    const deps = makeDeps({ getUserProfile: () => profile });
+    const result = await createCompanionJobActions(deps).analyzeJobFit({ job: JOB, hooks });
+    expect(result.resumeId).toBeNull();
+    expect(deps.analyzeResumeDataAgainstJobs).toHaveBeenCalledWith('analysis/model', { profile }, expect.any(Array), { concise: true, reasoningEffort: 'low', hooks });
+  });
+});
+
+it('asks for career details before analyzing an empty profile', async () => {
+  const deps = makeDeps({ getUserProfile: () => ({}), hasProfileData: () => false });
+  await expect(createCompanionJobActions(deps).analyzeJobFit({ job: JOB })).rejects.toMatchObject({ code: 'profile_empty' });
+  expect(deps.analyzeResumeDataAgainstJobs).not.toHaveBeenCalled();
 });

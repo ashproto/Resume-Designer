@@ -61,7 +61,7 @@ describe('anchored change application', () => {
         experience: [
           A,
           X,
-          { ...B, company: 'Beta Corp', bullets: ['b1'] },
+          { ...B, company: 'Beta Corp', bullets: ['b1 CHANGED'] },
         ],
       },
     );
@@ -78,7 +78,7 @@ describe('anchored change application', () => {
     expect(orders.length).toBeGreaterThanOrEqual(24);
     expect([...results]).toHaveLength(1);
     expect(JSON.parse([...results][0])).toEqual([
-      'Acme:[a1]', 'Xeno:[x1]', 'Beta Corp:[b1]',
+      'Acme:[a1]', 'Xeno:[x1]', 'Beta Corp:[b1 CHANGED]',
     ]);
   });
 

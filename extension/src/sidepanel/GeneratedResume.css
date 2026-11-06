@@ -1,0 +1,25 @@
+.generated-resume { gap: 16px; min-width: 0; }
+.generated-resume-heading { display: flex; align-items: center; gap: 11px; }
+.generated-resume-heading > div { min-width: 0; }
+.generated-resume-heading .eyebrow { margin-bottom: 5px; }
+.generated-resume-heading h2 { margin: 0; font-size: 1.05rem; line-height: 1.35; letter-spacing: -0.025em; }
+.generated-resume-check { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; color: #246b45; background: #e7f1e9; }
+.generated-resume-check svg { width: 20px; height: 20px; }
+.generated-resume-preview { display: grid; justify-items: center; gap: 13px; margin: 0; padding: 20px 16px 15px; border: 1px solid #e1d8cc; border-radius: 10px; background: #eee7dc; }
+.generated-resume-sheet { display: flex; align-items: flex-start; justify-content: center; width: min(100%, 220px); min-height: 190px; background: #fff; box-shadow: 0 3px 12px #0c0a0814; }
+.generated-resume-sheet img { display: block; width: 100%; height: auto; }
+.generated-resume-placeholder { display: grid; align-content: center; justify-items: center; gap: 12px; width: 100%; min-height: 190px; padding: 24px 14px; color: #62594e; text-align: center; }
+.generated-resume-placeholder svg { width: 32px; height: 40px; color: #a99d8d; }
+.generated-resume-placeholder p { margin: 0; font-size: 0.76rem; line-height: 1.45; }
+.generated-resume-preview figcaption { display: grid; gap: 4px; width: 100%; text-align: center; overflow-wrap: anywhere; }
+.generated-resume-preview figcaption strong { color: #40382f; font-size: 0.82rem; line-height: 1.4; font-weight: 650; }
+.generated-resume-preview figcaption span { color: #62594e; font-size: 0.72rem; line-height: 1.4; }
+.generated-resume-preview-message { display: grid; gap: 7px; }
+.generated-resume-preview-message p,
+.generated-resume-open-error,
+.generated-resume-next-step p { margin: 0; color: #62594e; font-size: 0.78rem; line-height: 1.5; overflow-wrap: anywhere; }
+.generated-resume-preview-message .text-button { font-size: 0.78rem; }
+.generated-resume-open { width: 100%; }
+.generated-resume-open-error { color: #9a3412; }
+.generated-resume-next-step { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid #e1d8cc; }
+.generated-resume-next-step button { width: 100%; }

@@ -12,6 +12,7 @@ import { isTauri, isIOSPlatform, stageTextForShare, notify } from './native.js';
 import { sharePdf, isNativeShellAvailable } from './iosShell.js';
 import { appStorage, onWriteFailure, onWriteSettled } from './appStorage.js';
 import { storageErrorToast } from './storageToast.js';
+import { DEFAULT_STORAGE } from './storageDefaults.js';
 // The API key lives in the OS keychain, not beside the resume data on disk.
 import {
   getSecret, setSecret, isSecretStoreReady, setCredentialChangeNotifier,
@@ -102,57 +103,6 @@ export function commitRestoredUnits(restoredUnits) {
 // the only place that knows the bytes reached disk. The notifier now has ONE
 // installer (syncModel's `setStorageDirtyNotifier`) rather than two, and there
 // is no longer a route that can announce a unit earlier than the drain.
-
-// Storage structure
-const DEFAULT_STORAGE = {
-  variants: {},
-  currentVariantId: null,
-  settings: {
-    colorPalette: 'terracotta',
-    layout: 'sidebar',
-    pageSize: 'continuous',
-    orientation: 'portrait',
-    pageWidthIn: 8.5,
-    customColor: '#c45c3e',
-    autoFallback: false,
-    defaultModel: 'anthropic/claude-sonnet-4.6',
-    customModels: [],
-    chatPanelWidth: 320,
-    chatReasoningEffort: 'medium',
-    chatWebSearch: false,
-    analysisModel: '',
-    analysisReasoning: 'medium',
-    tailorModel: '',
-    tailorReasoning: 'medium',
-    onboardingModel: '',
-    onboardingReasoning: 'medium'
-  },
-  userProfile: {
-    // Contact information
-    contactInfo: {
-      fullName: '',
-      email: '',
-      phone: '',
-      location: '',
-      linkedin: '',
-      portfolio: '',
-      github: '',
-      twitter: '',
-      instagram: ''
-    },
-    personalSummary: '',
-    careerGoals: '',
-    workExperience: [],
-    skills: [],
-    education: [],
-    projects: [],
-    certifications: [],
-    achievements: [],
-    industryKnowledge: '',
-    preferences: '',
-    customSections: []
-  }
-};
 
 // Load all data from storage
 export function loadFromStorage() {
@@ -461,7 +411,12 @@ export function saveSettings(settings) {
     throw new Error('saveSettings cannot write openrouterKey — use saveApiKey()');
   }
   const storage = loadFromStorage();
-  storage.settings = { ...storage.settings, ...rest };
+  // From the defaults when this blob has no settings yet — which is what
+  // getSettings reads there too. A pull that has landed only résumés leaves
+  // exactly that blob, and spreading nothing wrote a settings object holding
+  // ONE key, which travelled as the whole of `data:settings` and reset every
+  // other preference on every device.
+  storage.settings = { ...(storage.settings || structuredClone(DEFAULT_STORAGE.settings)), ...rest };
   // The blob never GAINS a credential here (`rest` excludes openrouterKey) —
   // but an existing blob value is the pre-extraction fallback and must NOT be
   // stripped by this path: in cached mode the shared-key and blob files flush

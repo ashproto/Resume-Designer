@@ -218,7 +218,7 @@ export function ChatComposer({
 
       {/* Composer: bordered rounded card wrapping the uncontrolled textarea + the
           controls row (model button, web/reasoning toggles, send) — mockup `.composer`. */}
-      <div className="rounded-[12px] border border-input bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
+      <div className="rounded-[12px] border border-input bg-background shadow-xs focus-within:ring-1 focus-within:ring-ring">
         <Textarea
           id="chat-input"
           placeholder="Ask anything..."

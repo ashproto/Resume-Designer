@@ -35,9 +35,9 @@ const SegmentedItem = React.forwardRef(({ className, active = false, size, ...pr
     data-state={active ? "active" : "inactive"}
     className={cn(
       "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[7px] font-medium text-muted-foreground transition-colors",
-      "hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+      "hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
       "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0",
-      "data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
+      "data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-xs",
       size === "xs" ? "h-[25px] px-2.5 text-xs" : "h-[29px] px-3 text-[13px]",
       className
     )}

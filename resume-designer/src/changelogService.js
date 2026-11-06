@@ -7,6 +7,9 @@
  * dynamic-imports persistence/native) so the unit tests import cleanly.
  */
 
+// The one static import: a pure leaf with no imports of its own.
+import { CHANGELOG_SEEN_FIELD } from './profileKeys.js';
+
 // 100 is GitHub's per_page maximum. Deliberately ONE request rather than
 // paginating: the unauthenticated API allows 60 requests per hour per IP, and
 // this runs on launch, so four pages of 25 would burn the budget four times as
@@ -139,7 +142,9 @@ export async function fetchReleaseHistory() {
   }
 }
 
-const SEEN_KEY = 'changelogLastSeenVersion';
+// From the pure leaf that names it, so the sync boundary that keeps it on this
+// device and this module cannot disagree about the spelling.
+const SEEN_KEY = CHANGELOG_SEEN_FIELD;
 
 // How many skipped releases to stack under the current one. Someone returning
 // after a long gap should get the story, not a wall of text — the rest stay one

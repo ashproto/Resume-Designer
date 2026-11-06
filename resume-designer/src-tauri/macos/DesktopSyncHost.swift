@@ -155,6 +155,39 @@ final class DesktopSyncHost {
     json.withCString { callback?(0, $0) }
   }
 
+  /// The unit the page holds under `id` in `profileId`, for `recordToSend`.
+  /// Nonisolated for the same reason as `scopes(forUnitIds:)` below: a test
+  /// probe calls it from a plain Task. The witness calls this too.
+  func unit(withId id: String, inProfile profileId: String) async -> SyncUnit? {
+    let value: Any
+    do {
+      value = try await request("syncUnit", ["unitId": id, "profileId": profileId])
+    } catch {
+      // Nobody answered — the deadline against a page that is reloading, or a
+      // handler that threw. That is NOT this device having nothing:
+      // `recordToSend` treats nil as final and takes the change off the queue,
+      // so reading silence that way dropped a real local edit until the unit
+      // happened to be edited again. The id waits for the next start instead,
+      // under the profile whose record this is — as OPShell's host does.
+      await deferSync([id], inProfile: profileId.isEmpty ? nil : profileId)
+      NSLog("[OPDesktopSync] no answer for unit \(id) (\(error)); held for the next start")
+      return nil
+    }
+    // A null answer is this device having nothing under that id. The engine
+    // drops the queued send and the server keeps whatever it already holds:
+    // absence is never a deletion.
+    guard let object = value as? [String: Any] else { return nil }
+    guard JSONSerialization.isValidJSONObject(object),
+          let data = try? JSONSerialization.data(withJSONObject: object),
+          let unit = try? JSONDecoder().decode(SyncUnit.self, from: data) else {
+      // The two halves of the bridge disagree about the shape of a unit: the
+      // same effect as having nothing to send, but a bug rather than a state.
+      NSLog("[OPDesktopSync] sync unit \(id) did not decode: \(object)")
+      return nil
+    }
+    return unit
+  }
+
   /// Which zone each unit belongs in. Nonisolated on purpose: the hoist calls
   /// it from a plain Task, and `cargo test` pumps no main loop — a hop to the
   /// `@MainActor` witness would hang there. The witness calls this too.
@@ -817,14 +850,7 @@ extension DesktopSyncHost: OPSyncHost {
   // Each mirrors the iOS host's decoding exactly.
 
   func syncUnit(withId id: String, inProfile profileId: String) async -> SyncUnit? {
-    guard let value = try? await request("syncUnit", ["unitId": id, "profileId": profileId]),
-          let object = value as? [String: Any],
-          JSONSerialization.isValidJSONObject(object),
-          let data = try? JSONSerialization.data(withJSONObject: object),
-          let unit = try? JSONDecoder().decode(SyncUnit.self, from: data) else {
-      return nil
-    }
-    return unit
+    await unit(withId: id, inProfile: profileId)
   }
 
   func syncScopes(forUnitIds ids: [String]) async -> [String: String]? {
@@ -1074,6 +1100,18 @@ public func op_sync_deferred(_ keySuffix: UnsafePointer<CChar>) -> UnsafeMutable
 @_cdecl("op_sync_hoist_shared")
 public func op_sync_hoist_shared() {
   Task { await host.hoistSharedSyncDeferred() }
+}
+
+/// Test probe: ask the page for one unit the way `recordToSend` does, then
+/// report on id 0 whether one came back — the ledger shows whether it was held.
+@_cdecl("op_sync_probe_unit")
+public func op_sync_probe_unit(_ unitId: UnsafePointer<CChar>, _ profileId: UnsafePointer<CChar>) {
+  let id = String(cString: unitId)
+  let profile = String(cString: profileId)
+  Task {
+    let unit = await host.unit(withId: id, inProfile: profile)
+    host.notify("unitProbe", ["unitId": id, "found": unit != nil])
+  }
 }
 
 /// Test probe: the profile queues the drain would see — the enumeration path,

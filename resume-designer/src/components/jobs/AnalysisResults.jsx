@@ -71,7 +71,7 @@ function RecommendationCard({ rec, originalIndex, appliedIndexes, onApply }) {
         <div className="rounded-[7px] bg-success-bg px-2.5 py-2 text-success">{rec.suggested}</div>
       </div>
 
-      <p className="mt-[9px] text-[12px] leading-[1.5] text-muted-foreground">{rec.reason}</p>
+      <p className="mt-[9px] text-[12px] leading-normal text-muted-foreground">{rec.reason}</p>
     </div>
   );
 }

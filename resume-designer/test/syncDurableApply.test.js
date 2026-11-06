@@ -379,8 +379,9 @@ describe('waiting for the disk does not widen the echo-suppression window', () =
     const stamps = JSON.parse(appStorage.getItem(STATE) ?? '{}');
     // The local write is stamped...
     expect(stamps[`key:${APPS}`]).toBeTruthy();
-    // ...and the applied unit is not, which is the suppression still working.
-    expect(stamps['data:settings']).toBeUndefined();
+    // ...and the applied unit carries only its AUTHOR'S time, recorded by the
+    // landing — never one minted here, which is the suppression still working.
+    expect(stamps['data:settings']).toEqual({ modifiedAt: AT });
     setStorageWriteObserver(null);
   });
 });

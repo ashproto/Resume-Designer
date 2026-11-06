@@ -29,14 +29,16 @@ vi.mock('../src/persistence.js', () => ({
 vi.mock('../src/applications.js', () => ({ addApplication: vi.fn(), getCompanionApplication: vi.fn(() => null) }));
 vi.mock('../src/learnedAnswers.js', () => ({ getAllLearnedAnswers: vi.fn(), saveLearnedAnswer: vi.fn() }));
 vi.mock('../src/aiService.js', () => ({
-  analyzeResumeDataAgainstJobs: vi.fn(), completeForBridge: vi.fn(),
-  generateResumeChangesForData: vi.fn(), getDefaultModelId: vi.fn(),
+  analyzeResumeDataAgainstJobs: vi.fn(), checkProfileHasData: vi.fn(), completeForBridge: vi.fn(),
+  generateResumeChangesForData: vi.fn(), generateResumeFromProfileForJob: vi.fn(), getDefaultModelId: vi.fn(),
   getAllModels: vi.fn(), getCustomModels: vi.fn(), getSelectableChatModels: vi.fn(),
   isSafeModelSlug: vi.fn(), validateModelId: vi.fn(),
 }));
 vi.mock('../src/companionJobActions.js', () => ({ createCompanionJobActions: () => ({}) }));
+vi.mock('../src/onboardingLogic.js', () => ({ buildResumeData: vi.fn() }));
 vi.mock('../src/variantManager.js', () => ({ loadVariant: vi.fn() }));
 vi.mock('../src/pdf.js', () => ({ exportVariantPdfBase64: vi.fn() }));
+vi.mock('../src/resumeThumbnail.js', () => ({ renderResumeThumbnail: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: mocks.getVersion }));
@@ -164,5 +166,51 @@ describe('native save durability wiring', () => {
     expect(command).toBe('bridge_respond');
     expect(response).toMatchObject({ id: 2, status: 507 });
     expect(JSON.parse(response.body)).toMatchObject({ code: 'storage_full' });
+  });
+});
+
+describe('native saved resume preview and opening wiring', () => {
+  async function initializedResume() {
+    const { getVariants } = await import('../src/persistence.js');
+    const { loadVariant } = await import('../src/variantManager.js');
+    getVariants.mockReturnValue({ 'saved-resume': { id: 'saved-resume', name: 'Tailored resume' } });
+    loadVariant.mockReturnValue(true);
+    await (await import('../src/bridge.js')).initBridge({ profileId: 'profile' });
+    const handler = mocks.listen.mock.calls.find(([event]) => event === 'bridge:request')[1];
+    const authorization = `Bearer ${mocks.storage.get(TOKEN_KEY)}`;
+    await handler({ payload: { id: 1, method: 'GET', path: '/resumes', authorization } });
+    const { profileContextId } = JSON.parse(mocks.invoke.mock.calls.at(-1)[1].body);
+    return { handler, authorization, profileContextId, loadVariant };
+  }
+  it('uses the actual saved-PDF export and raster helper without changing the active variant', async () => {
+    const { handler, authorization, loadVariant } = await initializedResume();
+    const { exportVariantPdfBase64 } = await import('../src/pdf.js');
+    const { renderResumeThumbnail } = await import('../src/resumeThumbnail.js');
+    exportVariantPdfBase64.mockResolvedValue('real-saved-pdf');
+    renderResumeThumbnail.mockResolvedValue({ imageBase64: 'aW1hZ2U=', mimeType: 'image/png', width: 480, height: 622, pageCount: 1 });
+    await handler({ payload: { id: 2, method: 'GET', path: '/resumes/saved-resume/preview', authorization } });
+    expect(exportVariantPdfBase64).toHaveBeenCalledExactlyOnceWith('saved-resume');
+    expect(renderResumeThumbnail).toHaveBeenCalledExactlyOnceWith('real-saved-pdf');
+    expect(loadVariant).not.toHaveBeenCalled();
+    expect(mocks.invoke.mock.calls.at(-1)[1]).toMatchObject({ status: 200 });
+  });
+  it('selects the requested variant and foregrounds the existing window', async () => {
+    const { handler, authorization, profileContextId, loadVariant } = await initializedResume();
+    await handler({ payload: { id: 2, method: 'POST', path: '/resumes/saved-resume/open', authorization, body: JSON.stringify({ profileContextId }) } });
+    expect(loadVariant).toHaveBeenCalledExactlyOnceWith('saved-resume');
+    expect(mocks.show).toHaveBeenCalledOnce();
+    expect(mocks.unminimize).toHaveBeenCalledOnce();
+    expect(mocks.setFocus).toHaveBeenCalledOnce();
+    const response = mocks.invoke.mock.calls.at(-1)[1];
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({ opened: true, id: 'saved-resume' });
+  });
+  it('does not foreground a variant that cannot be loaded', async () => {
+    const { handler, authorization, profileContextId, loadVariant } = await initializedResume();
+    loadVariant.mockReturnValue(false);
+    await handler({ payload: { id: 2, method: 'POST', path: '/resumes/saved-resume/open', authorization, body: JSON.stringify({ profileContextId }) } });
+    expect(mocks.show).not.toHaveBeenCalled();
+    expect(mocks.setFocus).not.toHaveBeenCalled();
+    expect(mocks.invoke.mock.calls.at(-1)[1]).toMatchObject({ status: 404 });
   });
 });

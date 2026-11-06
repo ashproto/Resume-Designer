@@ -29,7 +29,7 @@ export function JobCard({ jd, collapsed, onToggleCollapse, onToggleActive, onEdi
       data-id={jd.id}
       className={cn(
         'rounded-[10px] border bg-card transition-colors',
-        jd.isActive && 'border-primary/50 bg-primary/[0.025]',
+        jd.isActive && 'border-primary/50 bg-primary/2.5',
       )}
     >
       <div className="flex items-center gap-2.5 px-3 py-2.5">
@@ -38,7 +38,7 @@ export function JobCard({ jd, collapsed, onToggleCollapse, onToggleActive, onEdi
           aria-label={collapsed ? 'Expand' : 'Collapse'}
           title={collapsed ? 'Expand' : 'Collapse'}
           onClick={onToggleCollapse}
-          className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+          className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2"
         >
           <ChevronDown className={cn('h-4 w-4 transition-transform', collapsed && '-rotate-90')} />
         </button>

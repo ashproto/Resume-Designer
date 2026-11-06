@@ -75,6 +75,15 @@ struct OnboardingView: Decodable, Equatable {
   var model: String
   var reasoning: String
   var generating: Generating?
+  // Optional so a cached page from an earlier app version still decodes.
+  var generationBrief: GenerationBrief?
+  var generationReview: ShellSnapshot.GenerationReview?
+  var hasProfileData: Bool?
+  var revision: Generating?
+  var canRevise: Bool?
+  var canUndoRevision: Bool?
+  var draftRevision: Int?
+  var revisionCompletions: Int?
 
   var jobDescriptions: [Job]
   var isTailored: Bool
@@ -104,6 +113,14 @@ struct OnboardingView: Decodable, Equatable {
     let title: String
     let company: String
     let description: String
+  }
+
+  struct GenerationBrief: Decodable, Equatable {
+    let inputMode: String
+    let prompt: String
+    let targetPages: Int
+    let verbosity: String?
+    let jobDescriptions: [Job]
   }
 
   struct Model: Decodable, Equatable, Identifiable {

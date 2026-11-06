@@ -92,7 +92,7 @@ function DiffColumn({ label, tone, dim, children }) {
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'min-h-9 whitespace-pre-wrap break-words rounded-[8px] px-[11px] py-[9px] text-[12.5px] leading-[1.55]',
+          'min-h-9 whitespace-pre-wrap wrap-break-word rounded-[8px] px-[11px] py-[9px] text-[12.5px] leading-[1.55]',
           tone === 'proposed' ? 'bg-success-bg text-success' : 'bg-destructive-bg text-destructive',
           dim && 'opacity-55',
         )}
@@ -134,7 +134,7 @@ function ChangeCard({ change, mode, applied, onApply, onReject }) {
       );
     }
     body = (
-      <div className="whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-2.5 text-sm">{inner}</div>
+      <div className="whitespace-pre-wrap wrap-break-word rounded-md border bg-muted/40 p-2.5 text-sm">{inner}</div>
     );
   } else {
     // Side-by-side. For a word-diffed modify, each column shows only its side's
@@ -554,7 +554,7 @@ export default function DiffDialog() {
               type="button"
               aria-label="Close"
               onClick={close}
-              className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              className="rounded-sm text-muted-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2"
             >
               <X className="h-4 w-4" />
               <span className="sr-only">Close</span>

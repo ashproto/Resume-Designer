@@ -1,16 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  chat, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders,
-  generateResumeChanges, getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels,
+  resumeAssistantChat, generateBullets, getFeedback, improveSummary, isConfigured, getConfiguredProviders,
+  getDefaultModelId, validateModelId, isSafeModelSlug, getAllModels,
   modelSupportsReasoning, getCustomModels, removeCustomModel, fetchModelCatalog,
   getAllCatalogModels, refreshCatalogIfStale, CATALOG_UPDATED_EVENT,
   profileInterviewChat, extractProfileFromInterview, saveExtractedProfile,
 } from '../../aiService.js';
 import { getSettings, saveSettings, getUserProfile, SETTINGS_UPDATED_EVENT } from '../../persistence.js';
+import { DEFAULT_MODEL_ID } from '../../modelDefaults.js';
 import { store } from '../../store.js';
 import { createChangeSet } from '../../diffEngine.js';
 import { showDiffView } from '../../diffView.js';
-import { showInlineChanges } from '../../inlineChanges.js';
+import { showInlineChanges, hideInlineChanges, getPendingChanges } from '../../inlineChanges.js';
 import {
   loadThreads, persistThreads, makeThread, trimMessages, clearLegacyHistory,
   migrateThreads, pickCurrentThreadId, chooseThreadAfterDelete, withContextMarker,
@@ -28,18 +29,6 @@ export function getAIModels() {
     options: models.map((m) => ({ value: m.id, label: m.label })),
   }));
 }
-
-const FALLBACK_MODEL = 'anthropic/claude-sonnet-4.6';
-
-// Keywords that mark a message as a change request (→ diff flow) vs. a question.
-const CHANGE_KEYWORDS = [
-  'change', 'update', 'modify', 'edit', 'rewrite', 'improve', 'replace',
-  'make it', 'make my', 'fix', 'adjust', 'enhance', 'revise', 'rework',
-  'redo', 'transform', 'convert', 'add to', 'remove from', 'delete',
-  'can you change', 'can you update', 'can you modify', 'can you edit',
-  'please change', 'please update', 'please modify', 'please edit',
-  'tailor', 'customize', 'personalize', 'optimize',
-];
 
 // ── Pure helpers (module scope; read settings/store at call time) ───────────
 
@@ -68,13 +57,7 @@ export function getModelLabel(value) {
 
 function getInitialModel() {
   const settings = getSettings();
-  if (settings.defaultModel) return validateModelId(settings.defaultModel);
-  return getDefaultModelId() || FALLBACK_MODEL;
-}
-
-function isChangeRequest(message) {
-  const lower = message.toLowerCase();
-  return CHANGE_KEYWORDS.some((k) => lower.includes(k));
+  return validateModelId(settings.defaultModel) || DEFAULT_MODEL_ID;
 }
 
 // Label for a context chip derived from the captured resume content/path.
@@ -220,8 +203,8 @@ export function useChat() {
     persistCurrentThread(next);
   };
 
-  const addMessage = (role, content, applyData = null) =>
-    appendMessage({ id: uid(), role, content, applyData, variantId: getCurrentId(), timestamp: new Date().toISOString() });
+  const addMessage = (role, content, applyData = null, context = null) =>
+    appendMessage({ id: uid(), role, content, applyData, ...(context?.length ? { context } : {}), variantId: getCurrentId(), timestamp: new Date().toISOString() });
 
   // Insert a context-switch divider into the current thread when the active
   // resume differs from the thread's last turn (no-op otherwise). Called at the
@@ -373,62 +356,6 @@ export function useChat() {
   const stop = () => { if (abortRef.current) abortRef.current.abort(); };
 
   // ── AI flows ───────────────────────────────────────────────────────────
-  const getAIResponse = async (userMessage, hasExplicitContext = false) => {
-    const modelId = modelRef.current;
-    const startThreadId = currentThreadIdRef.current;
-    // Capture the active resume at request START. The reply commits to
-    // startThreadId, so it must also be stamped with the variant that thread
-    // belongs to — using getCurrentId() at completion would mis-stamp the turn
-    // (and corrupt lastTurnVariantId/context dividers) if the user switched
-    // resumes mid-stream.
-    const startVariantId = getCurrentId();
-    setLoading(true);
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setStreamThreadId(startThreadId);
-    // Last 10 user/assistant turns; replace the final turn with the
-    // context-augmented version we actually want to send. reasoningDetails ride
-    // along on assistant turns for Anthropic thinking continuity.
-    const history = messagesRef.current
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .slice(-10)
-      .map((m) => ({ role: m.role, content: m.content, reasoningDetails: m.reasoningDetails }));
-    if (history.length > 0) history[history.length - 1].content = userMessage;
-
-    setStreamingMessage({
-      id: uid(), role: 'assistant', streaming: true, content: '', reasoning: '',
-      reasoningDetails: [], annotations: [], run: null, timestamp: new Date().toISOString(),
-    });
-
-    try {
-      const res = await chat(modelId, history, !hasExplicitContext, {
-        reasoningEffort: reasoningRef.current,
-        webSearch: webSearchRef.current,
-        signal: controller.signal,
-        structured: true,
-        hooks: {
-          // Only paint the live stream while its origin thread is in view — if the
-          // user switched away, keep buffering/finishing but don't leak it into the
-          // thread they're now looking at (the full reply still commits below).
-          onReasoning: (_d, full) => { if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ reasoning: full })); },
-          onContent: (_d, full) => { if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ content: full })); },
-          onAnnotations: (list) => { if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ annotations: list })); },
-        },
-      });
-      finishRequest(controller);
-      commitToThread(startThreadId, {
-        id: uid(), role: 'assistant',
-        content: res.stopped ? (res.text ? `${res.text}\n\n_(stopped)_` : '_(stopped)_') : res.text,
-        reasoning: res.reasoning, reasoningDetails: res.reasoningDetails,
-        annotations: res.annotations, run: res.run, variantId: startVariantId, timestamp: new Date().toISOString(),
-      });
-      refreshCustomModels(); // chat() records any newly-used custom slug
-    } catch (error) {
-      finishRequest(controller);
-      commitToThread(startThreadId, { id: uid(), role: 'error', content: error.message, variantId: startVariantId, timestamp: new Date().toISOString() });
-    }
-  };
-
   const getAIFeedback = async () => {
     const startThreadId = currentThreadIdRef.current;
     const startVariantId = getCurrentId();
@@ -517,110 +444,75 @@ export function useChat() {
     }
   };
 
-  const requestAIChanges = async (instruction, targetPath = null, hasExplicitContext = false) => {
+  const getAIResponse = async (userMessage) => {
     const startThreadId = currentThreadIdRef.current;
-    // Stamp the committed turns with the resume active at request START (the one
-    // startThreadId belongs to), not getCurrentId() at completion — see getAIResponse.
     const startVariantId = getCurrentId();
-    // The DOCUMENT, not only which resume. Sync can adopt a newer copy of the
-    // SAME resume while this runs, which leaves the id unchanged and so passes
-    // the check below — and the paths in `result.changes` were generated from
-    // the copy that has just been replaced. `documentAdopted` cannot help
-    // either: this proposal is created AFTER that event fired, so the listener
-    // that invalidates open proposals has nothing to invalidate yet.
     const startAdoptions = store.documentAdoptions();
+    const resumeData = JSON.parse(JSON.stringify(store.getData()));
+    // Use the same transcript tail that survives a relaunch, including selected
+    // context and the actual wording of prior proposals rather than just UI copy.
+    const history = messagesRef.current.slice(-50).map((message) => ({ ...message }));
+    const lastUser = history.map((message) => message.role).lastIndexOf('user');
+    if (lastUser >= 0) history[lastUser].content = userMessage;
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
     setStreamThreadId(startThreadId);
-    // Stream the model's reasoning live (the JSON answer is buffered and parsed
-    // into a diff when the stream completes).
+    // Keep the JSON answer buffered; only reasoning and citations stream into
+    // the bubble. The completed reply and proposal are committed together.
     setStreamingMessage({
       id: uid(), role: 'assistant', streaming: true, content: '', reasoning: '',
       reasoningDetails: [], annotations: [], run: null, timestamp: new Date().toISOString(),
     });
-    let capturedRun = null;
-    let capturedReasoning = '';
     try {
-      const result = await generateResumeChanges(modelRef.current, instruction, targetPath, null, 'generate', {
-        reasoningEffort: reasoningRef.current,
+      const result = await resumeAssistantChat(modelRef.current, history, {
+        resumeData, pendingChanges: getPendingChanges(),
+        reasoningEffort: reasoningRef.current, webSearch: webSearchRef.current,
         signal: controller.signal,
         hooks: {
-          onReasoning: (_d, full) => {
-            capturedReasoning = full;
-            // Paint live only while the origin thread is in view (see getAIResponse).
+          onReasoning: (_delta, full) => {
             if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ reasoning: full }));
           },
-          onRun: (r) => { capturedRun = r; },
+          onAnnotations: (annotations) => {
+            if (currentThreadIdRef.current === startThreadId) scheduleFlush(() => ({ annotations }));
+          },
         },
       });
       finishRequest(controller);
-
-      if (!result.changes || Object.keys(result.changes).length === 0) {
-        // Nothing to apply. The router that sent us here is keyword-based
-        // (isChangeRequest), so questions land in this path constantly —
-        // "how would you improve my summary?" contains "improve" — and the
-        // change model answers them by explaining why it made no edits: "No
-        // resume edits were made because this was a question rather than an
-        // edit request." That is a non-answer to a question the user actually
-        // asked. Ask conversationally instead and let the real reply stand on
-        // its own.
-        //
-        // Only when the origin thread is still the one in view: getAIResponse
-        // captures currentThreadId itself, so retrying after a mid-request
-        // switch would commit this thread's answer into another one.
-        if (currentThreadIdRef.current === startThreadId) {
-          await getAIResponse(instruction, hasExplicitContext);
-          return;
-        }
-        commitToThread(startThreadId, {
-          id: uid(), role: 'assistant',
-          content: result.explanation || 'No changes were generated. The AI may need more specific instructions.',
-          reasoning: capturedReasoning || null, run: capturedRun,
-          variantId: startVariantId, timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      const count = Object.keys(result.changes).length;
-      // The edits were generated for the resume active at request START. If the
-      // user switched resumes before it returned, building the diff against the
-      // now-current store.getData() (and showing/applying it) would write the old
-      // resume's edits into the new one — so don't; tell them to switch back.
-      if (getCurrentId() !== startVariantId) {
-        commitToThread(startThreadId, {
-          id: uid(), role: 'assistant',
-          content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''}`}\n\nThese edits are for the resume you started from — switch back to it and resend to apply them.`,
-          reasoning: capturedReasoning || null, run: capturedRun,
-          variantId: startVariantId, timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      if (store.documentAdoptions() !== startAdoptions) {
-        commitToThread(startThreadId, {
-          id: uid(), role: 'assistant',
-          content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''}`}\n\nThis resume changed on another device while I was working, so these edits are for a version you no longer have. Ask again and I will use the current one.`,
-          reasoning: capturedReasoning || null, run: capturedRun,
-          variantId: startVariantId, timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      const changeSet = createChangeSet(store.getData(), result.changes);
-      showInlineChanges(changeSet);
-
-      commitToThread(startThreadId, {
-        id: uid(), role: 'assistant',
-        content: `${result.explanation || `Generated ${count} change${count > 1 ? 's' : ''} to your resume.`}\n\nChanges are highlighted on your resume. Use the buttons to apply or reject individual changes, or click "Review changes" below for a detailed diff view.`,
-        reasoning: capturedReasoning || null, run: capturedRun,
+      const message = {
+        id: uid(), role: 'assistant', content: result.reply,
+        reasoning: result.reasoning, reasoningDetails: result.reasoningDetails,
+        annotations: result.annotations, run: result.run,
         variantId: startVariantId, timestamp: new Date().toISOString(),
-        pendingChanges: changeSet,
-      });
+      };
+      if (result.stopped || controller.signal.aborted) {
+        commitToThread(startThreadId, { ...message, content: '_(stopped)_' });
+        return;
+      }
+      if (Object.keys(result.changes).length) {
+        // Proposals belong to the document used for their prompt. Do not diff
+        // them against another resume or an updated copy of the same document.
+        if (getCurrentId() !== startVariantId) {
+          message.content += '\n\nThese edits are for the resume you started from — switch back to it and ask again to review them.';
+        } else if (store.documentAdoptions() !== startAdoptions || JSON.stringify(store.getData()) !== JSON.stringify(resumeData)) {
+          message.content += '\n\nThis resume changed while I was working. Ask again and I will use the current version.';
+        } else {
+          const changeSet = createChangeSet(store.getData(), result.changes);
+          if (changeSet.changes.length) {
+            showInlineChanges(changeSet);
+            message.pendingChanges = changeSet;
+            message.resumeChanges = result.changes;
+            message.content = `${message.content || 'I proposed edits to your resume.'}\n\nReview the highlighted changes on your resume, or open the detailed review below.`;
+          } else {
+            hideInlineChanges();
+          }
+        }
+      }
+      if (!message.content) message.content = 'No resume changes were needed.';
+      commitToThread(startThreadId, message);
+      refreshCustomModels();
     } catch (error) {
       finishRequest(controller);
-      // A user Stop aborts the buffered JSON mid-stream → JSON.parse fails. Show a
-      // clean "(stopped)" turn instead of a misleading "not valid JSON" error.
       commitToThread(startThreadId, controller.signal.aborted
         ? { id: uid(), role: 'assistant', content: '_(stopped)_', variantId: startVariantId, timestamp: new Date().toISOString() }
         : { id: uid(), role: 'error', content: error.message, variantId: startVariantId, timestamp: new Date().toISOString() });
@@ -868,23 +760,15 @@ Let's begin!`);
     }
 
     const chips = chipsRef.current;
-    let messageWithContext = text;
-    if (chips.length > 0) {
-      const contextText = chips.map((chip) => `[${chip.label}]:\n${chip.content}`).join('\n\n');
-      messageWithContext = `Context from resume:\n${contextText}\n\n---\n\nUser request: ${text}`;
-    }
-
     markContextIfSwitched();
-    addMessage('user', text);
-    const targetPath = chips.length > 0 ? chips[0].path : null;
+    addMessage('user', text, null, chips);
     clearChips();
 
     if (interviewActiveHere()) {
       await continueInterview(text);
       return;
     }
-    if (isChangeRequest(text)) await requestAIChanges(messageWithContext, targetPath, chips.length > 0);
-    else await getAIResponse(messageWithContext, chips.length > 0);
+    await getAIResponse(text);
   };
 
   // ── context chips ──────────────────────────────────────────────────────
@@ -1022,7 +906,7 @@ Let's begin!`);
     // Fall back to the built-in default, NOT getInitialModel(): settings still
     // points at the just-removed (valid) slug, so getInitialModel() would
     // re-select what we just removed.
-    if (slug === modelRef.current) selectModel(getDefaultModelId() || FALLBACK_MODEL);
+    if (slug === modelRef.current) selectModel(getDefaultModelId() || DEFAULT_MODEL_ID);
     refreshCustomModels();
   };
   const setReasoning = (level) => { setReasoningEffortState(level); saveSettings({ chatReasoningEffort: level }); };

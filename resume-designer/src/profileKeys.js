@@ -101,6 +101,13 @@ const RESUME_DATA_KEY = 'resume-designer-data';
 // cannot drift into disagreeing about what a credential is.
 const SETTINGS_CREDENTIAL_FIELD = 'openrouterKey';
 
+// Which release's notes THIS INSTALL last showed (changelogService.js). It rides
+// inside `settings` on disk but describes a device, not a person — two devices
+// on two versions each keep their own — so it never crosses the sync boundary
+// (see src/sync/syncUnits.js). Named once, here, for the same reason as the
+// credential field above.
+export const CHANGELOG_SEEN_FIELD = 'changelogLastSeenVersion';
+
 /**
  * Strip a legacy credential out of a `resume-designer-data` blob crossing a
  * backup boundary — used by BOTH the full-backup paths in persistence.js and
@@ -201,6 +208,23 @@ export function withoutDeadProviderCredentials(logicalKey, value) {
     // read a credential out of. Round-trips untouched, as above.
     return value;
   }
+}
+
+/**
+ * The same strip on a `settings` OBJECT, for the sync boundary, which sends
+ * `settings` as its own record (sync/syncUnits.js) — the counterpart of
+ * withoutSettingsCredential for these keys. A blob the boot sweep has not
+ * cleaned yet would otherwise put them into CloudKit in clear text.
+ *
+ * Returns the SAME reference when there is nothing to strip.
+ */
+export function withoutDeadProviderSettings(settings) {
+  if (!settings || typeof settings !== 'object') return settings;
+  const present = DEAD_PROVIDER_CREDENTIALS.filter((k) => k in settings);
+  if (!present.length) return settings;
+  const next = { ...settings };
+  for (const k of present) delete next[k];
+  return next;
 }
 
 /**

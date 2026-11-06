@@ -32,7 +32,7 @@ export function AIConsentHost() {
   if (!request) return null;
   return (
     <Dialog open={!!request} onOpenChange={(open) => { if (!open) settle.current?.(false); }}>
-      <DialogContent className="glass-card max-w-lg z-[3100]" overlayClassName="z-[3100]">
+      <DialogContent className="glass-card max-w-lg z-3100" overlayClassName="z-3100">
         <DialogTitle>{request?.title || 'AI data sharing'}</DialogTitle>
         <DialogDescription className="whitespace-pre-line">{request?.message}</DialogDescription>
         <details className="text-sm">
