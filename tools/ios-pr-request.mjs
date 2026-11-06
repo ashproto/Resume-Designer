@@ -125,9 +125,10 @@ async function successfulCi(gh, pr, source) {
   const workflow = await read(gh, `${ROOT}/actions/workflows/ci.yml`);
   requireCondition(workflow?.path === WORKFLOW_PATH, 'Unexpected CI workflow path.');
   number(workflow.id, 'CI workflow ID');
-  // Do not filter head_sha: GitHub may record the synthetic PR merge here.
-  // Association metadata must still name the exact requested source head.
-  const runs = await collection(gh, `${ROOT}/actions/workflows/ci.yml/runs?event=pull_request`, 'workflow_runs');
+  // Limit polling to this source branch, while retaining associated synthetic
+  // merge runs. Exact repository/PR/head checks below remain authoritative.
+  const branch = typeof pr.head?.ref === 'string' && pr.head.ref ? `&branch=${encodeURIComponent(pr.head.ref)}` : '';
+  const runs = await collection(gh, `${ROOT}/actions/workflows/ci.yml/runs?event=pull_request${branch}`, 'workflow_runs');
   const candidates = runs.filter(run => associatedRun(run, pr.number, source, pr.base.ref));
   requireCondition(candidates.length > 0, 'Successful associated PR CI is required; create a fresh command after it passes.');
   for (const run of candidates) number(run.id, 'CI run ID');

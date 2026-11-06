@@ -60,22 +60,67 @@ export function safeApiUrl(origin, path) {
 }
 
 export function createApi({ origin, token, fetchImpl = fetch, sleep = pause }) {
+  // Every authorization read still reaches GitHub. Only its authenticated 304
+  // may reuse JSON, isolated by exact URL/token and bounded for this process.
+  const conditional = origin === 'https://api.github.com';
+  const cache = new Map();
+  let cacheToken, cacheBytes = 0, epoch = 0;
+  const clearCache = () => { cache.clear(); cacheBytes = 0; epoch++; };
+  const discard = url => {
+    cacheBytes -= cache.get(url)?.size || 0;
+    cache.delete(url);
+  };
+  const validEtag = value => typeof value === 'string' && value.length <= 1024 && /^(?:W\/)?"[\x21\x23-\x7e]*"$/.test(value);
+  // If-None-Match compares valid opaque tags regardless of the W/ marker.
+  const sameEtag = (left, right) => validEtag(left) && validEtag(right)
+    && left.replace(/^W\//, '') === right.replace(/^W\//, '');
   async function request(path, { method = 'GET', body } = {}) {
     const url = safeApiUrl(origin, path);
     const attempts = method === 'GET' ? 3 : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
+        const credential = token();
+        if (conditional && credential !== cacheToken) { clearCache(); cacheToken = credential; }
+        if (conditional && method !== 'GET') clearCache();
+        const version = epoch;
+        const cached = conditional && method === 'GET' && typeof credential === 'string' && credential
+          ? cache.get(url) : undefined;
         const response = await fetchImpl(url, {
           method, redirect: 'error', signal: AbortSignal.timeout(30_000),
-          headers: { Authorization: `Bearer ${token()}`, Accept: 'application/json', 'Content-Type': 'application/json', ...(origin === 'https://api.github.com' ? { 'X-GitHub-Api-Version': '2022-11-28' } : {}) },
+          headers: { Authorization: `Bearer ${credential}`, Accept: 'application/json', 'Content-Type': 'application/json', ...(conditional ? { 'X-GitHub-Api-Version': '2022-11-28' } : {}),
+            ...(cached ? { 'If-None-Match': cached.etag } : {}) },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
+        const etag = response.headers?.get('etag');
+        if (response.status === 304 && cached && version === epoch && credential === cacheToken
+          && cache.get(url) === cached && (etag == null || sameEtag(etag, cached.etag))) {
+          return JSON.parse(cached.text);
+        }
         if (!response.ok) {
           // Do not print response bodies: upstream error text can echo inputs.
-          throw Object.assign(new Error(`${method} ${new URL(url).pathname} failed (${response.status})`), { status: response.status });
+          const limit = name => {
+            const value = response.headers?.get(name);
+            return typeof value === 'string' && /^\d{1,15}$/.test(value) ? Number(value) : undefined;
+          };
+          throw Object.assign(new Error(`${method} ${new URL(url).pathname} failed (${response.status})`), {
+            status: response.status,
+            ...(conditional ? { rateLimitRemaining: limit('x-ratelimit-remaining'),
+              rateLimitReset: limit('x-ratelimit-reset'), retryAfter: limit('retry-after') } : {}),
+          });
         }
         const text = await response.text();
-        return text ? JSON.parse(text) : {};
+        const value = text ? JSON.parse(text) : {};
+        if (conditional && method === 'GET' && version === epoch && credential === cacheToken) {
+          discard(url);
+          const size = Buffer.byteLength(text);
+          if (credential && response.status === 200 && validEtag(etag) && url.length <= 8192 && size <= 1024 * 1024) {
+            // Store serialized JSON so callers can never mutate cached facts.
+            while (cache.size >= 128 || cacheBytes + size > 4 * 1024 * 1024) discard(cache.keys().next().value);
+            cache.set(url, { etag, text: text || '{}', size });
+            cacheBytes += size;
+          }
+        }
+        return value;
       } catch (error) {
         const transient = error.status === undefined || error.status === 429 || error.status >= 500;
         if (!transient || attempt + 1 === attempts) throw error;

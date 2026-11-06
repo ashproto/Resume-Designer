@@ -13,7 +13,7 @@ As of **2026-11-06**, the protected-branch release lane is operational and
 delivered source `dd1ca63c1a3992ec50a8846c509b1551fa450415` as internal TestFlight
 build **6**. That evidence is for the existing main/next lane, not the new PR
 preview workflow below. The PR preview implementation has passed local tests and independent review.
-Its bootstrap is being reviewed in [PR #158](https://github.com/ashproto/Resume-Designer/pull/158). Preview mode remains off until the bootstrap lands and the controlled pilot below is verified.
+The preview bootstrap reached default main through reviewed regular merge commits in [PR #158](https://github.com/ashproto/Resume-Designer/pull/158), [PR #160](https://github.com/ashproto/Resume-Designer/pull/160) and [PR #159](https://github.com/ashproto/Resume-Designer/pull/159). The controlled pilot uses [UI PR #161](https://github.com/ashproto/Resume-Designer/pull/161); general activation awaits verified delivery and physical Duo confirmation. Check the live repository variables and the original request run for current mode/outcome.
 
 The PR Cloud workflow is saved with clean builds, restricted editing, manual
 `ios-testflight/pr/` tags, an internal-only archive and **On Paper Dev** as its
@@ -407,6 +407,15 @@ journal for that reservation, after all live Cloud/upload checks; missing or
 changed evidence remains blocked. It grants no start/retry authority, changes
 no status or tag, and cannot close any other reservation.
 
+GitHub GETs use bounded, per-process conditional requests. Every read still
+contacts GitHub with the current token; only an authenticated matching `304`
+reuses isolated JSON for the exact URL. Token changes and mutation attempts
+invalidate those validators. Errors never fall back to cached authorization,
+and Apple requests remain uncached. CI lookup is scoped to the source branch
+while retaining exact repository/PR/head checks and synthetic-merge support.
+This follows [GitHub conditional-request guidance](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests)
+so unchanged polling reads do not consume the primary request budget.
+
 For recovery, run **iOS PR TestFlight** from **main**, supplying its original
 `request_tag` and an optional known `resume_run_id`. Omitting the run ID scans for
 the exact reservation; it still cannot start a build or create another tag. The
@@ -420,6 +429,14 @@ authoritative Apple reconciliation. A definitively recorded pre-POST failure or
 Apple rejection can close an unused reservation for ordering; absence from an
 API list alone cannot. Do not delete tags, restart ambiguous reservations or
 request another build to work around the block.
+
+Feedback failures emit a `preview_diagnostic` record with a fixed initialization
+or feedback phase, fixed API operation name, and HTTP status or `transport`.
+Numeric rate-limit remaining/reset/retry-after fields are included when supplied
+by GitHub so quota failures can be distinguished from access failures.
+Raw API bodies, exception messages, paths and credentials are excluded. A failed
+status comment does not establish the delivery outcome: inspect the original
+Actions/Cloud run and its reservation before any recovery or new command.
 
 An isolated feedback job updates one bot comment per owner request with the
 source SHA, Actions URL, Cloud run/build identity and verified state. Feedback

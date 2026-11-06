@@ -485,3 +485,17 @@ test('later workflow attempts can recover and monitor the original bound request
   const result = await authorizePreview(context);
   assert.equal(result.monitorOnly, true); assert.equal(result.sha, SHA);
 });
+
+
+test('CI lookup scopes to the encoded source branch and retains synthetic-merge provenance', async () => {
+  const { context, state } = fixture();
+  state.pr.head.ref = 'codex/feature#1+name&more';
+  state.run.head_sha = MERGE;
+  assert.equal((await authorizePreview(context)).ciRunId, 900);
+  const queries = state.requests.filter(value => value.path.includes('/ci.yml/runs?'));
+  assert.equal(queries.length, 1);
+  const query = new URL(queries[0].path, 'https://api.github.com').searchParams;
+  assert.equal(query.get('branch'), state.pr.head.ref);
+  assert.equal(query.get('event'), 'pull_request');
+  assert.equal(query.get('head_sha'), null);
+});
