@@ -71,7 +71,9 @@ jobs:
     needs: authorize
     if: needs.authorize.outputs.skip == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 210
+    # Up to 60 minutes each for tag discovery/ambiguous-start reconciliation,
+    # then 90 each for Cloud completion and Apple processing, plus API overhead.
+    timeout-minutes: 330
     # Configure this environment to allow only main workflow runs. Its Apple
     # API key is never shared with CI or candidate code. See setup runbook.
     environment: ios-testflight

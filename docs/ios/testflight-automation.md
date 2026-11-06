@@ -219,12 +219,25 @@ the pilot; do not reset it when recreating a workflow.
 5. Only after this pilot succeeds, set the repository variable to `true`.
    Subsequent successful push CI runs on `next` and `main` will request delivery.
 
-The release workflow can run for up to three and a half hours. A Cloud or Apple processing
+The release workflow can run for up to five and a half hours. A Cloud or Apple processing
 timeout fails the GitHub job and retains the last known run/build details. It
 does not imply Apple stopped the build.
 
+Apple's repository index can take longer than ten minutes to expose a new tag.
+The dispatcher makes 120 checks, 30 seconds apart (roughly an hour plus API time),
+while retaining the original creator's one-time start authorization. It reports the discovery
+phase and matching-reference counts without logging API payloads. While waiting,
+a new release rechecks its protected branch and exits if superseded, so it does
+not delay newer candidates for the full discovery window. The exact tag, commit,
+workflow, and undeleted-reference checks still apply before any Cloud start.
+
 ## Recovery
 
+- A tag-discovery timeout means no Cloud start was attempted by that run. Leave
+  its immutable reservation in place. A retry still cannot assume the reservation
+  is unused: an earlier process could have sent a start request before losing
+  its response. Follow the reconciliation steps below rather than deleting the
+  tag or permitting another POST merely because no run is currently visible.
 - For a monitoring failure, use **Re-run failed jobs** on the original GitHub
   run, retaining the successful authorization job's original commit outputs. The deterministic
   tag causes the dispatcher to locate and monitor an existing matching run
