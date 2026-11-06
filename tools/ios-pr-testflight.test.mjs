@@ -115,3 +115,41 @@ test('recovery is monitor-only even with mode off and no Cloud run ID', async ()
   await runPreviewCommand('recover', r.options);
   assert.ok(!r.trace.includes('guard') && !r.trace.includes('ordering'));
 });
+
+test('metadata repair never overwrites an existing authentic bot request notice', async () => {
+  const available = '<!-- on-paper-testflight-request:2468 -->\n\n### On Paper PR TestFlight\n\nBuild **9** is available to **On Paper Dev** in TestFlight.\n\nSource: `' + sha + '`.';
+  const pending = '<!-- on-paper-testflight-request:2468 -->\nQueued';
+  for (const [createOnly, existingBody, user, writesExpected] of [
+    [true, available, { id: 41898282, type: 'Bot', login: 'github-actions[bot]' }, 0],
+    [false, available, { id: 41898282, type: 'Bot', login: 'github-actions[bot]' }, 1],
+    [true, available.replace(sha, 'c'.repeat(40)), { id: 41898282, type: 'Bot', login: 'github-actions[bot]' }, 0],
+    [true, pending, { id: 41898282, type: 'Bot', login: 'github-actions[bot]' }, 0],
+    [true, available, { id: 1, type: 'User', login: 'other' }, 1],
+  ]) {
+    const writes = [];
+    await upsertFeedback({ request, createOnly, body: '<!-- on-paper-testflight-request:2468 -->\nUnconfirmed',
+      gh: { request: async (_path, options) => {
+        if (options) { writes.push(options); return {}; }
+        return [{ id: 200, user, body: existingBody }];
+      } },
+    });
+    assert.equal(writes.length, writesExpected);
+  }
+});
+
+test('metadata repair cannot downgrade availability published after its pending list snapshot', async () => {
+  const marker = '<!-- on-paper-testflight-request:2468 -->';
+  let serverBody = marker + '\nQueued';
+  const writes = [];
+  await upsertFeedback({ request, createOnly: true, body: marker + '\nUnconfirmed',
+    gh: { request: async (_path, options) => {
+      if (options) { writes.push(options); serverBody = options.body.body; return {}; }
+      const snapshot = { id: 200, user: { id: 41898282, type: 'Bot', login: 'github-actions[bot]' }, body: serverBody };
+      // Delivery publishes availability after the list response was generated.
+      serverBody = marker + '\nBuild **9** is available to **On Paper Dev** in TestFlight.';
+      return [snapshot];
+    } },
+  });
+  assert.deepEqual(writes, []);
+  assert.match(serverBody, /available to/);
+});

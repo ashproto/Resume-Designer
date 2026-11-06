@@ -310,21 +310,109 @@ test('rerun resumes an existing run without a second start', async () => {
   assert.deepEqual(s.writes, []);
 });
 
-test('a new release waits through Apple indexing delays beyond ten minutes and starts only once', async () => {
+test('a new release waits through Apple indexing delays beyond ten minutes within its deadline and starts only once', async () => {
   const s = scenario();
   let elapsedMs = 0;
   const originalCollection = s.asc.collection;
-  s.asc.collection = async path => path.includes('/gitReferences') && elapsedMs < 25 * 60_000
+  s.asc.collection = async path => path.includes('/gitReferences') && elapsedMs < 12 * 60_000
     ? [] : originalCollection(path);
   const originalRequest = s.asc.request;
   s.asc.request = async (path, options) => {
-    if (options?.method === 'POST') assert.ok(elapsedMs >= 25 * 60_000, 'must not start before Apple exposes the tag');
+    if (options?.method === 'POST') assert.ok(elapsedMs >= 12 * 60_000, 'must not start before Apple exposes the tag');
     return originalRequest(path, options);
   };
   delete s.options.discoveryAttempts;
+  s.options.now = () => elapsedMs;
   s.options.sleep = async ms => { elapsedMs += ms; };
   assert.equal((await release(input, s.options)).state, 'testflight_available');
   assert.deepEqual(s.writes, ['tag', 'start']);
+});
+
+test('tag discovery includes slow authorization time and clips sleeps to its fifteen-minute deadline', async () => {
+  const s = previewScenario();
+  let elapsedMs = 0, listings = 0;
+  const sleeps = [];
+  const collection = s.asc.collection;
+  s.asc.collection = async path => {
+    if (path.includes('/gitReferences')) { listings++; return []; }
+    return collection(path);
+  };
+  s.options.authorizeSource = async purpose => {
+    if (purpose === 'discover') elapsedMs += 25_000;
+    return true;
+  };
+  delete s.options.discoveryAttempts;
+  s.options.now = () => elapsedMs;
+  s.options.sleep = async ms => { sleeps.push(ms); elapsedMs += ms; };
+  await assert.rejects(release(previewInput, s.options));
+  assert.equal(elapsedMs, 15 * 60_000);
+  assert.ok(listings < 20, 'slow API work counts instead of allowing all 120 attempts');
+  assert.equal(sleeps.at(-1), 20_000, 'the final sleep is clipped to the remaining budget');
+  assert.deepEqual(s.writes, ['tag']);
+  assert.deepEqual(s.trace, ['journal:reserved', 'journal:not-started']);
+});
+
+test('authorization returning after the discovery deadline cannot make another reference request', async () => {
+  const s = previewScenario();
+  let elapsedMs = 0, listings = 0;
+  s.asc.collection = async () => { listings++; return []; };
+  s.options.authorizeSource = async purpose => {
+    if (purpose === 'discover') elapsedMs += 15 * 60_000;
+    return true;
+  };
+  delete s.options.discoveryAttempts;
+  s.options.now = () => elapsedMs;
+  s.options.sleep = async ms => { elapsedMs += ms; };
+  await assert.rejects(release(previewInput, s.options), /discovery deadline/i);
+  assert.equal(listings, 1);
+  assert.deepEqual(s.writes, ['tag']);
+  assert.deepEqual(s.trace, ['journal:reserved', 'journal:not-started']);
+});
+
+test('a tag returned at the discovery deadline cannot authorize a Cloud POST', async () => {
+  const s = previewScenario();
+  let elapsedMs = 0;
+  const collection = s.asc.collection;
+  s.asc.collection = async path => {
+    const result = await collection(path);
+    if (path.includes('/gitReferences')) elapsedMs = 15 * 60_000;
+    return result;
+  };
+  s.options.now = () => elapsedMs;
+  await assert.rejects(release(previewInput, s.options), /discovery deadline/i);
+  assert.deepEqual(s.writes, ['tag']);
+  assert.ok(!s.trace.includes('journal:post-attempted'));
+  assert.equal(s.trace.at(-1), 'journal:not-started');
+});
+
+test('a tag returned just before the discovery deadline retains all start checks and one POST', async () => {
+  const s = previewScenario();
+  let elapsedMs = 0;
+  const collection = s.asc.collection;
+  s.asc.collection = async path => {
+    const result = await collection(path);
+    if (path.includes('/gitReferences')) elapsedMs = 15 * 60_000 - 1;
+    return result;
+  };
+  s.options.now = () => elapsedMs;
+  assert.equal((await release(previewInput, s.options)).state, 'testflight_available');
+  assert.deepEqual(s.writes, ['tag', 'start']);
+  assert.ok(s.trace.includes('ordering'));
+  assert.ok(s.trace.includes('source:start'));
+  assert.ok(s.trace.includes('journal:post-attempted'));
+  assert.ok(!s.trace.includes('journal:not-started'));
+});
+
+test('an existing reservation discovery deadline cannot claim authenticated no-start evidence', async () => {
+  const s = scenario({ existing: true });
+  let elapsedMs = 0;
+  const journal = [];
+  s.asc.collection = async () => { elapsedMs = 15 * 60_000; return []; };
+  s.options.now = () => elapsedMs;
+  s.options.recordState = async state => { journal.push(state); };
+  await assert.rejects(release({ ...input, recoveryOnly: true }, s.options), /discovery deadline/i);
+  assert.deepEqual(s.writes, []);
+  assert.deepEqual(journal, []);
 });
 
 test('exhausted tag discovery retains the reservation and reports safe matching diagnostics', async () => {

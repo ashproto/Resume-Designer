@@ -246,13 +246,20 @@ The release workflow can run for up to five and a half hours. A Cloud or Apple p
 timeout fails the GitHub job and retains the last known run/build details. It
 does not imply Apple stopped the build.
 
-Apple's repository index can take longer than ten minutes to expose a new tag.
-The dispatcher makes 120 checks, 30 seconds apart (roughly an hour plus API time),
-while retaining the original creator's one-time start authorization. It reports the discovery
-phase and matching-reference counts without logging API payloads. While waiting,
-a new release rechecks its protected branch and exits if superseded, so it does
-not delay newer candidates for the full discovery window. The exact tag, commit,
-workflow, and undeleted-reference checks still apply before any Cloud start.
+Tag discovery has both a 120-check ceiling and a 15-minute monotonic elapsed-time
+budget, including source reauthorization and Apple reference reads. Sleeps are
+clipped to the remaining budget. An in-flight read may finish after the deadline;
+a reference read completed at or after the deadline is refused. The controller
+awaits that read rather than leaving background dispatch work running.
+
+The original creator waits for a reference only within this window. Once the
+reference is found, all remaining ordering and final source checks still apply. The controller
+reports discovery counts without logging API payloads,
+rechecks source eligibility while waiting, and exits if superseded. The exact tag,
+commit, workflow and undeleted-reference checks still apply before any Cloud
+start. A discovery timeout retains the immutable tag and records a no-start
+receipt only when that controller owns the unused reservation and has neither
+possibly sent a start request nor observed an existing Cloud run.
 
 ## Recovery
 
@@ -437,6 +444,20 @@ by GitHub so quota failures can be distinguished from access failures.
 Raw API bodies, exception messages, paths and credentials are excluded. A failed
 status comment does not establish the delivery outcome: inspect the original
 Actions/Cloud run and its reservation before any recovery or new command.
+
+For feedback diagnostics or repair without Cloud monitoring, manually run
+**iOS PR TestFlight Feedback Repair** from **main** with only the original `request_tag`.
+The dedicated five-minute job revalidates the owner/admin, unchanged owner
+command and immutable binding, then runs the trusted feedback CLI with a fixed
+unconfirmed outcome. It has no Apple credentials, release environment, build
+queue, candidate execution, ref/status writes or delivery dependency. Callers
+cannot supply a success state or build identity. Repair creates a missing notice
+only; it never updates an existing authentic request notice, so a concurrent
+availability update cannot be replaced by diagnostics. A simultaneous creation
+can still produce duplicate notices; duplicates fail closed and require operator
+reconciliation. This is not an atomic or exactly-once comment operation.
+This path exercises the actual Actions feedback token and safe diagnostics;
+it does not start or recover a Cloud build, or prove TestFlight availability.
 
 An isolated feedback job updates one bot comment per owner request with the
 source SHA, Actions URL, Cloud run/build identity and verified state. Feedback

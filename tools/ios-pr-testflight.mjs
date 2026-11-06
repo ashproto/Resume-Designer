@@ -44,7 +44,7 @@ export function formatFeedback({ request: supplied, values = {}, error, runUrl }
     '', 'The Dev build uses the existing On Paper app and CloudKit data.'].filter(Boolean).join('\n\n');
 }
 
-export async function upsertFeedback({ gh, request: supplied, body }) {
+export async function upsertFeedback({ gh, request: supplied, body, createOnly = false }) {
   const request = identity(supplied), marker = `<!-- on-paper-testflight-request:${request.commentId} -->`;
   if (typeof body !== 'string' || !body.startsWith(marker) || body.length > 10_000) throw new Error('Invalid preview feedback body');
   const comments = [];
@@ -60,6 +60,9 @@ export async function upsertFeedback({ gh, request: supplied, body }) {
   if (matches.length > 1) throw new Error('Ambiguous bot feedback identity');
   const path = matches.length ? `/repos/${REPOSITORY}/issues/comments/${matches[0].id}` : `/repos/${REPOSITORY}/issues/${request.prNumber}/comments`;
   if (matches.length && !positive(matches[0].id)) throw new Error('Invalid existing feedback ID');
+  // Metadata repair never PATCHes: delivery may publish availability after
+  // this list snapshot. Keep every existing authentic notice unchanged.
+  if (createOnly === true && matches.length) return;
   await gh.request(path, { method: matches.length ? 'PATCH' : 'POST', body: { body } });
 }
 
@@ -204,17 +207,25 @@ async function main(diagnostic) {
   const gh = attachReservationEvidence(createApi({ origin: 'https://api.github.com', token: () => env.GITHUB_TOKEN }), { token: env.GITHUB_TOKEN });
   if (command === 'feedback') {
     diagnostic.phase = 'feedback_authorize';
+    const repair = env.PREVIEW_FEEDBACK_REPAIR === 'true';
+    if (repair && (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || env.GITHUB_REPOSITORY !== REPOSITORY
+      || env.GITHUB_REF !== 'refs/heads/main' || !SHA.test(env.GITHUB_SHA || '')
+      || env.GITHUB_WORKFLOW_REF !== `${REPOSITORY}/.github/workflows/ios-pr-testflight-feedback.yml@refs/heads/main`)) {
+      throw new Error('Feedback repair requires its trusted main dispatch workflow');
+    }
     const feedbackGh = feedbackApi(gh, diagnostic);
     const request = await authorizePreviewFeedback({ eventName: env.GITHUB_EVENT_NAME, event, ref: env.GITHUB_REF,
       triggeringActor: env.GITHUB_TRIGGERING_ACTOR, gh: feedbackGh, recovery: env.GITHUB_EVENT_NAME === 'workflow_dispatch' });
     if (request.skip) return;
     diagnostic.phase = 'feedback_format';
     diagnostic.api = undefined;
-    const values = { release_state: env.PREVIEW_STATE, build_number: env.PREVIEW_BUILD_NUMBER, build_run_id: env.PREVIEW_CLOUD_RUN_ID };
-    const body = formatFeedback({ request, values, error: env.PREVIEW_ERROR,
+    const values = repair ? { release_state: 'unconfirmed' }
+      : { release_state: env.PREVIEW_STATE, build_number: env.PREVIEW_BUILD_NUMBER, build_run_id: env.PREVIEW_CLOUD_RUN_ID };
+    const body = formatFeedback({ request, values,
+      error: repair ? 'Feedback diagnostics only; no Cloud build was started by this run.' : env.PREVIEW_ERROR,
       runUrl: `https://github.com/${REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}` });
     diagnostic.phase = 'feedback_upsert';
-    await upsertFeedback({ gh: feedbackGh, request, body });
+    await upsertFeedback({ gh: feedbackGh, request, body, createOnly: repair });
     return;
   }
   let asc;
