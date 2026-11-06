@@ -155,6 +155,36 @@ describe('resize refit guard', () => {
     expect(shownZoom()).toBe('47%'); // min(380/816, 880/1056) — width now binds
   });
 
+  it('refits to the native usable width when a system rail changes the canvas without a window event', async () => {
+    const { resizeTo } = await boot({ clientWidth: 400, clientHeight: 900 });
+    const { createNativeCanvasViewportUpdater } = await import('../src/iosShell.js');
+    document.getElementById('zoom-fit').click();
+    settleFit();
+    expect(shownZoom()).toBe('47%');
+
+    // Native already removed the rail from its child frame. Web fit must
+    // subtract only its own document padding, never that rail a second time.
+    resizeTo(328, 900);
+    createNativeCanvasViewportUpdater(window)({ width: 328, height: 900,
+      insets: { top: 0, left: 0, bottom: 0, right: 72 } });
+    vi.advanceTimersByTime(200);
+    settleFit();
+    expect(shownZoom()).toBe('38%'); // (328 - 20) / 816
+  });
+
+  it('preserves manual zoom when the native usable viewport changes', async () => {
+    const { resizeTo } = await boot({ clientWidth: 400, clientHeight: 900 });
+    const { createNativeCanvasViewportUpdater } = await import('../src/iosShell.js');
+    document.getElementById('zoom-reset').click();
+    expect(shownZoom()).toBe('100%');
+
+    resizeTo(328, 900);
+    createNativeCanvasViewportUpdater(window)({ width: 328, height: 900 });
+    vi.advanceTimersByTime(200);
+    settleFit();
+    expect(shownZoom()).toBe('100%');
+  });
+
   it('refits a fitted canvas on orientationchange (the iOS rotation case)', async () => {
     const { resizeTo } = await boot({ clientWidth: 400, clientHeight: 500 });
 

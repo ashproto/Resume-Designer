@@ -1466,6 +1466,24 @@ function disablePageZoom() {
   }
 }
 
+/**
+ * Native owns the safe-area layout. A change to its usable canvas can happen
+ * without the scene/window resizing (for example, a toolbar changing axis).
+ * Reuse the normal resize/refit guard: it refits fitted views and preserves a
+ * manual zoom. Do not subtract native-consumed insets again in web content.
+ */
+export function createNativeCanvasViewportUpdater(targetWindow = window) {
+  let previous = null;
+  return (viewport) => {
+    const { width, height } = viewport || {};
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+    if (previous?.width === width && previous?.height === height) return false;
+    previous = { width, height };
+    targetWindow.dispatchEvent(new targetWindow.Event('resize'));
+    return true;
+  };
+}
+
 let activated = false;
 let activationSent = false;
 let streamDocument = false;
@@ -1595,6 +1613,7 @@ export function publishOnboarding(state, handlers) {
  *   ownership of the module graph.
  */
 export function initIOSShell(deps) {
+  const updateCanvasViewport = createNativeCanvasViewportUpdater(window);
   const publishAfterCanvas = () => {
     if (typeof requestAnimationFrame !== 'function') return;
     const owner = window.__opShell;
@@ -2489,6 +2508,9 @@ export function initIOSShell(deps) {
 
   window.__opShell = {
     command: dispatch,
+    // The native container has already consumed safe areas and system bars.
+    // Only notify the shared fitted-view guard when its usable bounds change.
+    setCanvasViewport: (viewport) => activated && updateCanvasViewport(viewport),
     /**
      * The same commands, for `callAsyncJavaScript`, which awaits what the page
      * returns. `command` drops a promise because `evaluateJavaScript` cannot
@@ -2516,6 +2538,7 @@ export function initIOSShell(deps) {
       activated = true;
       document.documentElement.classList.add(NATIVE_SHELL_CLASS);
       disablePageZoom();
+      updateCanvasViewport(window.__opCanvasViewport);
       // Tell Swift a document just came up, so it can re-disable WKWebView's own
       // pinch zoom. Those settings live on the scroll view and WebKit re-derives
       // them from the new page's viewport, so a reload hands the canvas back a
