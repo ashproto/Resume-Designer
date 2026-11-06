@@ -3978,19 +3978,8 @@ private struct ShellView: View {
             DiffReviewSheet(model: model, review: review)
           }
         }
-        .sheet(isPresented: Binding(
-          get: { snapshot.generationReview?.open == true && snapshot.onboarding?.open != true },
-          set: { if !$0 { model.send("generationNotesClose") } }
-        ), onDismiss: {
-          if continueGenerationDiscussion {
-            continueGenerationDiscussion = false
-            model.send("setChatOpen", ["value": "true"])
-            sheet = .chat
-          }
-        }) {
-          if let review = snapshot.generationReview {
-            GenerationNotesSheet(model: model, review: review) { continueGenerationDiscussion = true }
-          }
+        .sheet(isPresented: generationNotesPresented, onDismiss: generationNotesDidDismiss) {
+          generationNotesContent
         }
         // The one sheet the PAGE opens: export generates for a second or two
         // first, and the result arrives as a message rather than a tap.
@@ -4102,6 +4091,33 @@ private struct ShellView: View {
           .zIndex(100)
       }
     }
+  }
+
+  // Keep this sheet's binding, callbacks and content outside the large body
+  // expression so Xcode 26 can type-check each part independently.
+  private var generationNotesPresented: Binding<Bool> {
+    Binding<Bool>(
+      get: { snapshot.generationReview?.open == true && snapshot.onboarding?.open != true },
+      set: { if !$0 { model.send("generationNotesClose") } }
+    )
+  }
+
+  @ViewBuilder
+  private var generationNotesContent: some View {
+    if let review = snapshot.generationReview {
+      GenerationNotesSheet(model: model, review: review, onContinue: continueGenerationNotesDiscussion)
+    }
+  }
+
+  private func continueGenerationNotesDiscussion() {
+    continueGenerationDiscussion = true
+  }
+
+  private func generationNotesDidDismiss() {
+    guard continueGenerationDiscussion else { return }
+    continueGenerationDiscussion = false
+    model.send("setChatOpen", ["value": "true"])
+    sheet = Sheet.chat
   }
 
   private var preferredColorScheme: ColorScheme? {
