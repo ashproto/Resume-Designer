@@ -394,8 +394,11 @@ tag or start a build. Two matching forms are ambiguous and fail closed.
 
 The four-component format is a controlled compatibility change following a
 pilot where Apple exposed the request-binding tag but omitted the dispatch tag.
-It does not establish a documented Apple path-depth limit; live signed delivery
-must still verify discovery and the complete source identity.
+The next pilot discovered the four-component dispatch tag, then stopped before
+any Cloud start because the ordering guard could not reconcile two expired
+historical Cloud records. This does not establish a documented Apple path-depth
+limit, or prove signed preview delivery. The complete source identity remains
+required.
 
 A pushed commit makes an unstarted request stale; another comment is required. A new comment may
 deliberately rebuild the same SHA; rerunning the original comment cannot.
@@ -408,9 +411,12 @@ Existing reservations can only be reconciled/monitored. Both workflows share
 new starts, the controller additionally checks earlier Cloud runs and uploads;
 a departed Actions monitor cannot free an unfinished Cloud upload.
 
-Reservation outcome commit statuses are discovery pointers, not proof. Clearing
-an unused reservation requires the final matching structured outcome in the
-authenticated logs of a completed trusted-main release job. The controller uses
+Reservation outcome commit statuses are discovery pointers, not proof. Reconciling
+a reservation requires the final matching structured outcome in the authenticated
+logs of a completed trusted-main release job. A `not-started` or `rejected`
+outcome proves that controller did not start Cloud. A `delivered` outcome requires
+a successful delivery job; the overall Actions run may fail in a separate
+feedback job. The controller uses
 the hosted runner's `gh` CLI with an isolated empty config and only its GitHub
 token to read those job logs; Apple credentials are excluded from that child
 environment. Missing logs/provenance, uncertain POST acceptance or unknown upload
@@ -425,6 +431,37 @@ files and authenticated raw-log digest. It applies only with no structured
 journal for that reservation, after all live Cloud/upload checks; missing or
 changed evidence remains blocked. It grants no start/retry authority, changes
 no status or tag, and cannot close any other reservation.
+
+
+Cloud build information can expire while an uploaded TestFlight build and its
+immutable reservation remain. Absence from the current Cloud inventory does not
+prove that a tag was never started. The six known successful pre-journal deliveries are
+reconciled separately by `tools/ios-cloud-legacy-delivered.mjs`:
+
+| Source | Original authenticated controller | Verified historical upload |
+| --- | --- | --- |
+| `a955735f2c838ffe562a396947f5453c9c3f3bb0` | [35931900952](https://github.com/ashproto/Resume-Designer/actions/runs/35931900952) | Build **1**, `a8b8af70-b487-4f09-8b29-b78fa4391d11` |
+| `1c0ba3cb8e760993bd8c8da111ade912ad93bd23` | [37385750802](https://github.com/ashproto/Resume-Designer/actions/runs/37385750802) | Build **2**, `dc0f758b-0555-48c0-bc69-cd75791e5b74` |
+| `7d8cf012f0868c82ba0ae9667c214d5946582655` | [42119769773](https://github.com/ashproto/Resume-Designer/actions/runs/42119769773) | Build **3**, `f988ddbd-464f-4f22-a9e9-73523300e425` |
+| `2440b8910616134b00e0cc40a37c6a76f04e5e06` | [42132963754](https://github.com/ashproto/Resume-Designer/actions/runs/42132963754) | Build **4**, `02cdf79b-a228-4824-b7b9-0fee96ed1d84` |
+| `1909eee5e72aa78b40dcf48068d01710464c31bc` | [42158719963](https://github.com/ashproto/Resume-Designer/actions/runs/42158719963) | Build **5**, `509023a3-da0a-44e9-a189-0ccb2f58305b` |
+| `dd1ca63c1a3992ec50a8846c509b1551fa450415` | [42160990194](https://github.com/ashproto/Resume-Designer/actions/runs/42160990194) | Build **6**, `49d33278-eef7-4a04-a62e-84e8ed58af87` |
+
+Each fixed receipt requires the unchanged reservation, original owner/main run
+and attempt, authorization and successful delivery jobs, pinned controller and
+workflow source, and authenticated raw delivery log bytes. The original
+controller checked the Cloud source, app, uploaded build and availability before
+recording success. Ordering additionally rechecks that exact upload's app,
+iOS platform, build number and current processing/beta state through Apple.
+The exception applies only when no structured journal exists; it cannot override
+a newer pending, invalid or unverified outcome. It grants no new start authority
+and never modifies a tag. All current Cloud runs and app uploads are checked first.
+
+Later completed deliveries use their authenticated structured `delivered`
+journal. Neither path is an age-based bypass or a permanent evidence store:
+missing/deleted GitHub logs or changed provenance keep ordering blocked even
+when a build is old. Retain controller evidence and reconcile it explicitly
+before repository log retention removes it.
 
 GitHub GETs use bounded, per-process conditional requests. Every read still
 contacts GitHub with the current token; only an authenticated matching `304`
@@ -470,6 +507,15 @@ can still produce duplicate notices; duplicates fail closed and require operator
 reconciliation. This is not an atomic or exactly-once comment operation.
 This path exercises the actual Actions feedback token and safe diagnostics;
 it does not start or recover a Cloud build, or prove TestFlight availability.
+
+Only the isolated queued, final and repair feedback jobs receive
+`pull-requests: write` with `issues: read` and `contents: read`. The live Actions
+feedback token returned HTTP 403 for PR timeline comment creation with the
+previous `issues: write` / `pull-requests: read` pair. An independent
+[GitHub API permission report](https://github.com/github/rest-api-description/issues/6994)
+reproduces that discrepancy. Authorization, request binding and Apple delivery
+retain their existing narrower PR read permission; no global write permission
+or additional Apple access is granted.
 
 An isolated feedback job updates one bot comment per owner request with the
 source SHA, Actions URL, Cloud run/build identity and verified state. Feedback
