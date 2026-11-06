@@ -1199,8 +1199,7 @@ final class ShellModel: ObservableObject {
   /// bar.
   @Published private(set) var conflictNotice: String?
 
-  /// Counts notices so a stale hide cannot cut a newer one short — the same
-  /// clock `keepZoomOpen` runs in the chrome, for the same reason.
+  /// Counts notices so a stale hide cannot cut a newer one short.
   private var conflictNoticeGeneration = 0
 
   /// Every failure the status line is still standing behind, keyed the way
@@ -3427,14 +3426,15 @@ final class OPShell: NSObject {
         NSLog("[OPShell] could not remove the staged PDF: \(error)")
       }
     }
-    // iPad presents this as a popover and CRASHES without an anchor. Anchor it
-    // to the top-trailing corner, under the PDF button that started the export.
+    // A popover needs an anchor. Use the actual safe layout frame so a Duo
+    // side rail or an iPad inset cannot leave it outside the usable window.
     if let popover = sheet.popoverPresentationController {
       popover.sourceView = root.view
+      let usable = root.view.safeAreaLayoutGuide.layoutFrame
       popover.sourceRect = CGRect(
-        x: root.view.bounds.maxX - 40, y: root.view.safeAreaInsets.top, width: 1, height: 1
+        x: usable.maxX - 1, y: usable.minY, width: 1, height: 1
       )
-      popover.permittedArrowDirections = [.up]
+      popover.permittedArrowDirections = .any
     }
     // A dialog may still be dismissing, and "frontmost" was not enough: a
     // controller on its way out is still `presentedViewController` until the
@@ -3567,6 +3567,44 @@ private struct CanvasHost: UIViewControllerRepresentable {
   /// Cumulative scale, the midpoint between the fingers, and the state.
   let onPinch: (CGFloat, CGPoint, UIGestureRecognizer.State) -> Void
 
+  /// Native bars and safe areas have already sized this controller's view.
+  /// Publish its actual viewport so a fitted document follows bar/rail changes
+  /// even when the scene itself did not resize. Web content applies no insets.
+  final class ViewportController: UIViewController {
+    weak var canvasWebView: WKWebView?
+    var loadingObservation: NSKeyValueObservation?
+    private var previousSize: CGSize = .zero
+
+    override func viewDidLayoutSubviews() {
+      super.viewDidLayoutSubviews()
+      publishViewport()
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+      super.viewSafeAreaInsetsDidChange()
+      publishViewport()
+    }
+
+    func publishViewport(force: Bool = false) {
+      let size = view.bounds.size
+      guard size.width > 0, size.height > 0,
+        size.width.isFinite, size.height.isFinite,
+        force || size != previousSize,
+        let webView = canvasWebView,
+        let data = try? JSONSerialization.data(withJSONObject: [
+          "width": Double(size.width), "height": Double(size.height),
+        ]), let json = String(data: data, encoding: .utf8)
+      else { return }
+      previousSize = size
+      // The pending value also handles native layout winning the boot race.
+      // The page consumes it on activation; a reload republishes it below.
+      webView.evaluateJavaScript(
+        "window.__opCanvasViewport = \(json); window.__opShell?.setCanvasViewport(window.__opCanvasViewport);",
+        completionHandler: nil
+      )
+    }
+  }
+
   /// A real `UIPinchGestureRecognizer`, not SwiftUI's `MagnifyGesture`.
   ///
   /// SwiftUI gestures attached to a hosted UIKit view lose the arbitration to
@@ -3622,8 +3660,15 @@ private struct CanvasHost: UIViewControllerRepresentable {
   func makeCoordinator() -> Coordinator { Coordinator(onPinch: onPinch) }
 
   func makeUIViewController(context: Context) -> UIViewController {
-    let container = UIViewController()
+    let container = ViewportController()
     container.view.backgroundColor = .systemBackground
+    if let wk = webView as? WKWebView {
+      container.canvasWebView = wk
+      container.loadingObservation = wk.observe(\.isLoading, options: [.new]) { [weak container] view, _ in
+        guard !view.isLoading else { return }
+        DispatchQueue.main.async { container?.publishViewport(force: true) }
+      }
+    }
 
     let pinch = UIPinchGestureRecognizer(
       target: context.coordinator, action: #selector(Coordinator.handlePinch(_:))
@@ -3668,7 +3713,9 @@ private struct CanvasHost: UIViewControllerRepresentable {
     return container
   }
 
-  func updateUIViewController(_ controller: UIViewController, context: Context) {}
+  func updateUIViewController(_ controller: UIViewController, context: Context) {
+    (controller as? ViewportController)?.publishViewport()
+  }
 
   private func pin(_ view: UIView, to parent: UIView) {
     NSLayoutConstraint.activate([
@@ -3726,19 +3773,6 @@ private struct ShellView: View {
   @State private var continueGenerationDiscussion = false
   /// The zoom a pinch started from; nil when no pinch is in flight.
   @State private var pinchBase: Double?
-  /// The bar is showing the zoom controls rather than the tools — see
-  /// `keepZoomOpen`.
-  @State private var zoomExpanded = false
-  /// Counts zoom interactions so a stale hide cannot cut a newer one short.
-  @State private var zoomInteraction = 0
-  /// A zoom menu is open, so the auto-collapse must not run.
-  ///
-  /// SwiftUI's `Menu` reports neither its opening nor its dismissal, so this is
-  /// set on the tap that opens one and cleared by whichever comes first: an
-  /// action being chosen, or the backstop below. Without the backstop a menu
-  /// dismissed by tapping elsewhere would pin the controls open for good — the
-  /// bug this guard exists to fix, with the sign flipped.
-  @State private var zoomMenuOpen = false
 
   private enum Sheet: String, Identifiable {
     case settings, structure, design, chat, library, history, jobs, profile, pdfPreview
@@ -3756,50 +3790,47 @@ private struct ShellView: View {
   /// this has to stay separate however small it looks.
   @ToolbarContentBuilder
   private var chrome: some ToolbarContent {
-        // `.disabled` is applied per ITEM, never to the NavigationStack's
-        // content. It is an environment modifier that propagates down the
-        // whole tree, so putting it on the content disabled CanvasHost and
-        // therefore the hosted WKWebView — every tap on the web dialog was
-        // swallowed before it reached the page, silently.
-        ToolbarItem(placement: .topBarLeading) {
-          // ONE button, not two. The initials and the overflow were separate
-          // controls sitting side by side, which spent the leading slot twice
-          // and made "whose profile is this" compete with "what else can I
-          // do". Merged, the profile IS the identity of everything in the
-          // menu, which is what it always was.
-          // …and while a PDF is being captured, for the reason on `titleMenu`
-          // below: this menu switches workspaces, which changes the document
-          // mid-capture just as surely as switching résumés does.
-          actionsMenu.disabled(snapshot.modalOpen || snapshot.pdfBusy)
-        }
-        ToolbarItem(placement: .principal) {
-          // DISABLED DURING A CAPTURE, not only during a modal. The main-window
-          // export yields — once while the layout settles, and again for every
-          // page it captures — and the document can be swapped in any of those
-          // gaps. What comes out is the replacement résumé, or worse, pages of
-          // each, under the original's filename. The export button already
-          // refuses a second run; this is the same rule for the other way to
-          // change what is being captured.
-          titleMenu.disabled(snapshot.modalOpen || snapshot.pdfBusy)
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-          HStack(spacing: 10) {
-            // Present only while records are actually landing, and carrying
-            // no label: a spinner beside the workspace is legible as "this is
-            // catching up", and there is nothing truthful to add about how
-            // far along a fetch is. It sits on the trailing side because the
-            // leading pair is about to become one workspace control.
-            if model.syncPulling {
-              ProgressView()
-                .controlSize(.small)
-                .transition(.opacity)
-                .accessibilityLabel("Syncing")
-            }
-            pdfButton
-          }
-          .animation(.easeInOut(duration: 0.2), value: model.syncPulling)
-          .disabled(snapshot.modalOpen)
-        }
+    ToolbarItem(placement: .topBarLeading) {
+      actionsMenu.disabled(snapshot.modalOpen || snapshot.pdfBusy)
+    }
+    ToolbarItem(placement: .principal) {
+      titleMenu.disabled(snapshot.modalOpen || snapshot.pdfBusy)
+    }
+    ToolbarItem(placement: .topBarTrailing) {
+      pdfButton.disabled(snapshot.modalOpen)
+    }
+    if model.syncPulling {
+      ToolbarItem(placement: .topBarTrailing) {
+        ProgressView().controlSize(.small).accessibilityLabel("Syncing")
+      }
+    }
+    ToolbarItemGroup(placement: .bottomBar) {
+      Button { model.send("undo") } label: {
+        Label("Undo", systemImage: "arrow.uturn.backward")
+      }
+      .disabled(snapshot.modalOpen || snapshot.pdfBusy)
+      Button { model.send("redo") } label: {
+        Label("Redo", systemImage: "arrow.uturn.forward")
+      }
+      .disabled(snapshot.modalOpen || snapshot.pdfBusy)
+      Spacer()
+      Button {
+        model.send("setChatOpen", ["value": "true"])
+        sheet = .chat
+      } label: {
+        Label("Assistant", systemImage: "bubble.left.and.text.bubble.right")
+      }
+      .disabled(snapshot.modalOpen)
+      Button {
+        model.send("setStructureOpen", ["value": "true"])
+        sheet = .structure
+      } label: {
+        Label("Edit resume", systemImage: "list.bullet.rectangle")
+      }
+      .disabled(snapshot.modalOpen || snapshot.pdfBusy)
+      styleButton.disabled(snapshot.modalOpen || snapshot.pdfBusy)
+      zoomMenu.disabled(snapshot.modalOpen || snapshot.pdfBusy)
+    }
   }
 
   var body: some View {
@@ -3811,10 +3842,8 @@ private struct ShellView: View {
         switch state {
         case .began:
           pinchBase = snapshot.zoom
-          keepZoomOpen()
         case .changed:
           model.setZoom((pinchBase ?? snapshot.zoom) * Double(scale), live: true, focus: focus)
-          keepZoomOpen()
         default:
           // One final non-live value closes the gesture on the web side, which
           // is what puts the zoom transition back for the buttons. It still
@@ -3822,42 +3851,16 @@ private struct ShellView: View {
           // the corner as the gesture lifts.
           model.setZoom((pinchBase ?? snapshot.zoom) * Double(scale), live: false, focus: focus)
           pinchBase = nil
-          keepZoomOpen()
         }
       }
-        // The canvas runs the full height of the window, not from the bottom of
-        // the navigation bar to the top of the home indicator. Both bars are
-        // transparent, so this is what actually puts the résumé behind them —
-        // inset to the safe area it would be sitting between two strips of
-        // empty window instead. Running under the bottom bar is deliberate and
-        // was reverted once when "fixed". `.resume-scroller` reserves the top
-        // bar's height as padding, so the page starts below the chrome and
-        // scrolls up behind it.
-        //
-        // This also keeps the KEYBOARD out of the layout (the default region
-        // set includes it), which is what stops SwiftUI and WKWebView both
-        // avoiding it and collapsing the canvas to a ~90pt strip.
-        //
-        // EVERY edge, not just the vertical pair. Portrait has no horizontal
-        // safe-area inset, so naming only top and bottom looked complete and
-        // was: nothing could show the difference. LANDSCAPE has them — the
-        // sensor housing on one side, and a symmetric inset on the other — and
-        // the canvas stopped at them, leaving a black gutter down each edge of
-        // the screen.
-        //
-        // That gutter was both of the things it looked like. The bars are
-        // transparent, so what reads as "the header background" is this
-        // webview showing THROUGH the navigation bar — when it stopped short,
-        // the header appeared to stop short with it, and the avatar and share
-        // button ended up sitting on its edge rather than inside it. One gap,
-        // two symptoms.
-        .ignoresSafeArea(edges: .all)
+        // The navigation container owns every hardware/bar inset. Only the
+        // keyboard is excluded here: WebKit manages its own editing viewport.
+        // Background can fill the window without putting document text or
+        // controls beneath Duo's asymmetric system rail.
+        .ignoresSafeArea(.keyboard)
+        .safeAreaInset(edge: .top, spacing: 0) { conflictBanner }
         .navigationBarTitleDisplayMode(.inline)
-        // No bar backgrounds: the résumé runs edge to edge and shows THROUGH the
-        // chrome, which is the whole point of glass controls floating over it.
-        // Each toolbar item carries its own backing, so nothing here depends on
-        // the bar for legibility.
-        .toolbarBackground(.hidden, for: .navigationBar, .bottomBar)
+        .toolbar(snapshot.modalOpen ? .hidden : .visible, for: .bottomBar)
         .toolbar { chrome }
         .sheet(item: $sheet) { which in
           switch which {
@@ -4032,40 +4035,7 @@ private struct ShellView: View {
           }
         }
     }
-    // On the NavigationStack rather than the canvas: the canvas ignores the
-    // safe area, so `.bottom` there is the screen edge, while here it is where
-    // a bottom bar belongs — no inset to compute and nothing to keep in step
-    // with it.
-    //
-    // Withdrawn while a web dialog is up. The bar floats ABOVE the webview, so
-    // it covered the PDF preview's Save button — the dialog rendered fine and
-    // simply could not be completed. Its commands would act on the canvas
-    // behind the dialog anyway.
-    .overlay(alignment: .bottom) {
-      if !snapshot.modalOpen { bottomBar }
-    }
-    // A SECOND overlay rather than a stack with the bar inside the first one:
-    // stacked, the bar would jump upwards by the notice's height the moment a
-    // background reconciliation finished, and a control moving out from under a
-    // reaching finger is exactly what "non-blocking" is supposed to rule out.
-    // Held clear of the bar by a fixed inset instead, so nothing already on
-    // screen moves at all.
-    //
-    // Withdrawn while a web dialog is up for the same reason the bar is — it
-    // floats above the webview and would cover the dialog's own buttons. The
-    // cost is a notice that expires unseen behind one, which is the right way
-    // round: the dialog is what the person is doing, and the parked version is
-    // in Version history either way.
-    .overlay(alignment: .bottom) {
-      ZStack(alignment: .bottom) {
-        if let notice = model.conflictNotice, !snapshot.modalOpen {
-          conflictNotice(notice)
-            .padding(.bottom, Self.conflictNoticeInset)
-            .transition(.opacity)
-        }
-      }
-      .animation(.snappy(duration: 0.3), value: model.conflictNotice)
-    }
+    .background(Color(.systemBackground).ignoresSafeArea())
     // Pull whatever another device changed while this one was away. Nothing
     // waits on it and no failure surfaces — sync is background reconciliation.
     //
@@ -4296,10 +4266,8 @@ private struct ShellView: View {
 
   /// Hand the picked résumé's TEXT to the page, or say it could not be read.
   ///
-  /// Extracted from the `fileImporter` closure rather than written inline, for
-  /// the same reason `avatar` below is: adding the failure branch tipped this
-  /// view's expression over the type-checker's budget, and the failure is a
-  /// build timeout rather than a wrong shape.
+  /// Extracted from the `fileImporter` closure to keep this view's expression
+  /// within the older supported compiler's type-checking budget.
   ///
   /// Only the TEXT crosses. The parse, the employer-grouping question and the
   /// write all stay in JS, so the native picker and the web one end in the same
@@ -4326,55 +4294,9 @@ private struct ShellView: View {
     model.send("importVariantText", ["text": picked.text, "name": picked.name])
   }
 
-  /// The initials, as an actual circle.
-  ///
-  /// Extracted from the menu's label because inlining it tipped the toolbar
-  /// expression over the type-checker's budget — the failure is a build timeout,
-  /// not a wrong shape, and it comes back the moment this is folded in again.
-  private var avatar: some View {
-    // THE BAR'S OWN GLASS, not a circle drawn here. That is what makes this a
-    // Liquid Glass button in the same sense the share button is one — the same
-    // material, the same size, the same inset from its edge — and all three of
-    // those came free the moment this stopped fighting the toolbar for the
-    // background.
-    //
-    // Hiding the shared background and drawing the shape by hand cost exactly
-    // those: the item left the bar's background group, so it was laid out with
-    // its own margins and sat ~20pt further in than the share button opposite.
-    //
-    // The frame is what keeps it ROUND. The toolbar sizes its glass to the
-    // content plus symmetric padding, so square content gives a circle and two
-    // letters at their natural width give a capsule. Sized like the 17pt
-    // symbols beside it, with the initials scaled to fit rather than allowed to
-    // push it wider.
-    // A SQUARE that cannot be argued with, and the initials drawn OVER it.
-    //
-    // The toolbar sizes its glass to the content's layout size plus symmetric
-    // padding, so the content must measure exactly square or the glass comes
-    // out a capsule. Text is the wrong thing to ask: `.frame` on it still let
-    // the natural width leak into the measurement (4pt of it), and constraining
-    // the width instead just shrank the letters.
-    //
-    // `Color.clear` at a fixed size has no opinion and no intrinsic width, and
-    // an `.overlay` draws without contributing to layout at all — so the bar
-    // measures 17×17 exactly, whatever the initials happen to be.
-    Color.clear
-      .frame(width: 17, height: 17)
-      .overlay {
-        Text(snapshot.profiles.first(where: \.isActive)?.initials ?? "?")
-          .font(.system(size: 14, weight: .semibold))
-          .lineLimit(1)
-          .fixedSize()
-          .foregroundStyle(Color.accentColor)
-      }
-  }
-
   private var actionsMenu: some View {
     Menu {
-      // WORKSPACES FIRST, because the button is now the workspace's initials
-      // and this is what it claims to be about. Switching is inline rather than
-      // behind the sheet: it is the one thing done often enough to deserve a
-      // single tap, and the sheet exists for the rest.
+      // Keep workspace switching directly available from the profile menu.
       // ONE ROW that opens a submenu, rather than the whole profile list spilling
       // into the main menu. With three or four profiles the list pushed File and
       // Tools off the bottom, so the menu opened on a scroll — and everything a
@@ -4475,73 +4397,33 @@ private struct ShellView: View {
         Button { sheet = .settings } label: { Label("Settings", systemImage: "gearshape") }
       }
     } label: {
-      // The initials, not an ellipsis: the same identity the desktop header
-      // carries, so the corner answers "whose workspace is this" before it is
-      // asked. `?` only before the first snapshot lands.
-      // A REAL circle, drawn here, with the toolbar's own glass switched off
-      // beneath it (`sharedBackgroundVisibility(.hidden)` on the item).
-      //
-      // The toolbar's automatic capsule cannot be a circle for this label: it is
-      // 44pt tall and pads the content horizontally, so two letters always come
-      // out wider than tall. Every attempt to size the label into a circle ends
-      // up shrinking the initials to fit somebody else's arithmetic. Drawing the
-      // shape means the shape is the shape.
-      avatar
+      // Supply both title and symbol for native horizontal/vertical bars.
+      Label("Profile and actions", systemImage: "person.crop.circle")
     }
     .accessibilityLabel("Profile and actions")
+    .accessibilityValue(snapshot.profiles.first(where: \.isActive)?.name ?? "")
   }
 
   private var pdfButton: some View {
     Button {
       model.send("exportPdf")
     } label: {
-      if snapshot.pdfBusy {
-        ProgressView()
-      } else {
-        Image(systemName: "square.and.arrow.up")
-      }
+      Label(snapshot.pdfBusy ? "Generating PDF" : "Share", systemImage: snapshot.pdfBusy ? "hourglass" : "square.and.arrow.up")
     }
     .disabled(snapshot.pdfBusy)
     .accessibilityLabel(snapshot.pdfBusy ? "Generating PDF" : "Export PDF")
   }
 
-  /// The bottom bar, ours rather than the system's.
-  ///
-  /// It was a `ToolbarItemGroup` until the zoom controls needed to take its
-  /// place, and a system toolbar item cannot morph — swapping the bar for an
-  /// overlay read as one thing vanishing and another appearing. Ours can: the
-  /// zoom capsule is never unmounted, so animating its frame carries its glass
-  /// with it, from the trailing readout to the centred control.
-  ///
-  /// Deliberately NOT a `GlassEffectContainer`. One around both capsules merges
-  /// them into a single hazy shape spanning the bar; the morph here comes from
-  /// the capsule staying put, not from matched effect ids.
-  ///
-  /// It keeps the system's own shape deliberately — 44pt glass capsules at the
-  /// bottom safe area, the same metrics the toolbar used — because the point is
-  /// that it still reads as the standard bottom bar.
-  private var bottomBar: some View {
-    barRow
-      .padding(.horizontal, 12)
-      .padding(.bottom, 4)
+  /// A transient sync notice occupies content space, independently of the
+  /// system bars. It never uses a guessed bottom-bar height or side-rail inset.
+  @ViewBuilder
+  private var conflictBanner: some View {
+    if let notice = model.conflictNotice, !snapshot.modalOpen {
+      conflictNotice(notice)
+        .padding(.vertical, 8)
+    }
   }
 
-  /// Clears the bottom bar: its 44pt capsules (`BarCapsule`), the 4pt that holds
-  /// them off the home indicator, and 8pt of air between the two.
-  private static let conflictNoticeInset: CGFloat = 56
-
-  /// What sync says when it has resolved a conflict — see
-  /// `ShellModel.conflictNotice` for the rule and the copy.
-  ///
-  /// A button, because the sentence ends at Version history and that sheet is
-  /// one tap away from here: the notice is then a route rather than a statement
-  /// about somewhere else in the app. It opens the history of the résumé ON
-  /// SCREEN, which is the one that produces very nearly every conflict — the
-  /// copy names no résumé precisely so that this is a shortcut and not a claim.
-  ///
-  /// Glass on a rounded rect rather than `BarCapsule`: it is the same floating
-  /// chrome as the bar below it, but a capsule around three lines of text draws
-  /// a lozenge with enormous empty ends.
   private func conflictNotice(_ text: String) -> some View {
     Button {
       model.send("setHistoryOpen", ["value": "true"])
@@ -4575,278 +4457,48 @@ private struct ShellView: View {
     .accessibilityHint("Opens Version history")
   }
 
-  private var barRow: some View {
-    HStack(spacing: 12) {
-      if !zoomExpanded {
-        // `spacing: 0` because BarButtonStyle's 40pt slots now carry the gap —
-        // see there. Keeping 20 on top of them would push the bar off a 390pt
-        // screen, which is the clipping this bar was already once redesigned to
-        // avoid.
-        HStack(spacing: 0) {
-          // UNDO AND REDO FIRST, and in the bar rather than the menu they used
-          // to sit in. They are document actions used constantly while editing,
-          // and two taps into an overflow menu is the wrong price for the one
-          // pair of controls a person reaches for mid-sentence. Leading, where
-          // a thumb already is.
-          // DISABLED DURING A CAPTURE, like the two menus above. The
-          // main-window export yields between pages, and an undo landing in one
-          // of those gaps puts a different revision of the document in the
-          // later pages than the earlier ones — one file, two résumés, and
-          // nothing in it says so.
-          Button { model.send("undo") } label: {
-            Image(systemName: "arrow.uturn.backward")
-          }
-          .accessibilityLabel("Undo")
-          .disabled(snapshot.pdfBusy)
-
-          Button { model.send("redo") } label: {
-            Image(systemName: "arrow.uturn.forward")
-          }
-          .accessibilityLabel("Redo")
-          .disabled(snapshot.pdfBusy)
-
-          Button {
-            model.send("setChatOpen", ["value": "true"])
-            sheet = .chat
-          } label: {
-            Image(systemName: "bubble.left.and.text.bubble.right")
-          }
-          .accessibilityLabel("Assistant")
-
-          Button {
-            model.send("setStructureOpen", ["value": "true"])
-            sheet = .structure
-          } label: {
-            Image(systemName: "list.bullet.rectangle")
-          }
-          .accessibilityLabel("Edit structure")
-          // The other two ways into the document from this bar. Same reason as
-          // undo and redo: what they change lands between the pages a capture
-          // is still taking.
-          .disabled(snapshot.pdfBusy)
-
-          styleButton.disabled(snapshot.pdfBusy)
-        }
-        .modifier(BarCapsule())
-        // Scale rather than slide: the zoom capsule is growing into the space
-        // this leaves, and two things travelling in different directions reads
-        // as a swap. Shrinking in place reads as making room.
-        .transition(.scale(scale: 0.9).combined(with: .opacity))
-
-        Spacer(minLength: 0)
-      }
-
-      zoomControl
-    }
-    .font(.system(size: 17))
-    .buttonStyle(BarButtonStyle())
-    .foregroundStyle(.primary)
-  }
-
-  /// Three separate items (−, readout, +) is what ran the bar out of room once
-  /// Design joined it: seven capsules on a 390pt screen, and the last was
-  /// clipped off the edge. As one item it is one capsule, and even expanded it
-  /// leaves the four tools their room.
-  ///
-  /// Zoom is also not a thing you use continuously, which is what Safari's zoom
-  /// UI is built around: a percentage at rest, and the controls only while you
-  /// are actually changing it. `keepZoomOpen` runs that clock.
-  ///
-  /// The branch lives INSIDE this view rather than in the toolbar builder. A
-  /// `ToolbarItemGroup` whose item COUNT changes is not reliably re-diffed by
-  /// SwiftUI — the first version of this flipped its state and never redrew —
-  /// but ordinary view content inside one item diffs normally.
-  private var zoomControl: some View {
-    HStack(spacing: 0) {
-      if zoomExpanded {
-        Button {
-          model.send("zoomOut")
-          keepZoomOpen()
-        } label: {
-          Image(systemName: "minus")
-        }
-        .accessibilityLabel("Zoom out")
-        .transition(.opacity)
-      }
-
-      zoomMenu
-
-      if zoomExpanded {
-        Button {
-          model.send("zoomIn")
-          keepZoomOpen()
-        } label: {
-          Image(systemName: "plus")
-        }
-        .accessibilityLabel("Zoom in")
-      .transition(.opacity)
-      }
-    }
-    // The SAME id in both states — that is the morph. The capsule grows from
-    // the corner readout into the centred control instead of one being
-    // replaced by the other.
-    .modifier(BarCapsule())
-    // Centred while open, trailing while not: with the tools gone the leading
-    // spacer goes with them, so this one is what balances it.
-    .frame(maxWidth: zoomExpanded ? .infinity : nil)
-  }
-
-  // shell hides. Routing them here is what keeps hiding it from being a
-  // functional regression.
-  /// Text formatting and Design, behind ONE button.
-  ///
-  /// They were two buttons, side by side, and the pair could not be told apart:
-  /// the bar's `textformat` glyph opened selection formatting, while the Design
-  /// sheet's own Typography row carries the SAME glyph for document fonts. Two
-  /// icons, one symbol, adjacent — and the honest answer to "which one changes
-  /// the text" was "both, differently".
-  ///
-  /// Merging them made this a MENU whose first half was formatting and whose
-  /// last item opened the sheet — a menu in front of a panel that had room for
-  /// both. Now formatting is that panel's first tab, so the button opens the
-  /// panel: one tap to the thing, instead of a tap to a list of things.
   private var styleButton: some View {
     Button {
-      // The keyboard lives in its own window ABOVE any presented sheet, so a
-      // panel opened while inline editing is running is drawn entirely behind
-      // it — measured: nothing of the sheet was visible but its top corner.
-      // Notes does what this does, and for the same reason.
-      //
-      // ORDER MATTERS. `formatHold` has to be in flight before the keyboard
-      // goes, because dismissing it blurs the résumé's editor, and an unheld
-      // blur commits and re-renders — which detaches the node the panel's
-      // buttons are aimed at and leaves every one of them a silent no-op.
+      // Hold the DOM selection before dismissing its keyboard. The shared
+      // formatter must continue addressing the selected node after presentation.
       model.send("formatHold")
       webView.endEditing(true)
       model.send("setDesignOpen", ["value": "true"])
       sheet = .design
     } label: {
-      Image(systemName: "paintbrush")
+      Label("Design and format", systemImage: "paintbrush")
     }
-    .accessibilityLabel("Style")
+    .accessibilityLabel("Design and format")
   }
 
-  /// Open the zoom controls, and restart the clock on closing them again.
-  ///
-  /// Called by the readout, by every zoom button, and by a pinch. Each call
-  /// restarts the delay, so a run of taps or a long pinch keeps the controls up
-  /// throughout and they leave once, together, when the user stops.
-  private func keepZoomOpen() {
-    zoomInteraction += 1
-    let generation = zoomInteraction
-    withAnimation(.snappy(duration: 0.25)) { zoomExpanded = true }
-    Task { @MainActor in
-      try? await Task.sleep(for: .seconds(2.5))
-      guard generation == zoomInteraction else { return }
-      // A menu is up and the person is reading it. Collapsing now would take
-      // the control the menu is anchored to out from under it.
-      guard !zoomMenuOpen else { return }
-      withAnimation(.snappy(duration: 0.3)) { zoomExpanded = false }
-    }
-  }
-
-  /// An action was chosen, so the menu is gone: resume the ordinary timeout.
-  private func releaseZoomMenu() {
-    zoomMenuOpen = false
-    keepZoomOpen()
-  }
-
-  /// Hold the controls open while a zoom menu is, and let go afterwards.
-  ///
-  /// The backstop is what makes the flag safe: a menu dismissed with a tap
-  /// outside it tells us nothing, so the guard is released on a timer and the
-  /// ordinary collapse resumes.
-  private func holdZoomForMenu() {
-    zoomMenuOpen = true
-    keepZoomOpen()
-    Task { @MainActor in
-      try? await Task.sleep(for: .seconds(12))
-      zoomMenuOpen = false
-      keepZoomOpen()
-    }
-  }
-
-  /// Fit and Actual size — the zoom commands that are not a step.
-  ///
-  /// ONE definition, reached two ways, because they are the same commands and a
-  /// second copy is how the collapsed pill and the expanded one come to offer
-  /// different things.
-  ///
-  /// `finish` is the part the two callers do not share. Opened from the
-  /// expanded control, the menu is holding the auto-collapse off, so choosing
-  /// something has to let go of it. Opened from the collapsed pill there is
-  /// nothing to release — and nothing to open either: growing the bar into the
-  /// −/+ controls after the command has already run answers a question nobody
-  /// asked, and then tidies itself away again 2.5s later.
-  @ViewBuilder
-  private func zoomActions(finish: @escaping () -> Void) -> some View {
-    Button { model.send("zoomFit"); finish() } label: {
-      Label("Fit to view", systemImage: "arrow.up.left.and.arrow.down.right")
-    }
-    // Fills the width and lets the page run off the bottom. On a phone this is
-    // the one you actually want while READING: a portrait page fitted whole is
-    // mostly margin, and on a multi-page résumé the whole-page fit is bound by
-    // a height several screens tall.
-    Button { model.send("zoomFitWidth"); finish() } label: {
-      Label("Fit to width", systemImage: "arrow.left.and.right")
-    }
-    Button { model.send("zoomReset"); finish() } label: {
-      Label("Actual size", systemImage: "1.magnifyingglass")
-    }
-  }
-
-  /// The centre of the control: always the live percentage.
-  ///
-  /// Collapsed it is the button that opens the controls. Expanded it carries
-  /// the two commands that are not a step — Fit and Actual size — because by
-  /// then there is a control to hang them off.
-  @ViewBuilder
+  /// Individual native items can move to Duo's vertical bar and overflow.
+  /// The percentage belongs in this menu instead of a permanently wide pill.
   private var zoomMenu: some View {
-    if zoomExpanded {
-      Menu { zoomActions(finish: releaseZoomMenu) } label: {
-        zoomReadout
+    Menu {
+      Section("Zoom: \(snapshot.zoomPercent)%") {
+        Button { model.send("zoomIn") } label: {
+          Label("Zoom in", systemImage: "plus.magnifyingglass")
+        }
+        Button { model.send("zoomOut") } label: {
+          Label("Zoom out", systemImage: "minus.magnifyingglass")
+        }
       }
-      // The controls were timing out from UNDER the open menu. `keepZoomOpen`
-      // collapses them 2.5s after the last interaction, and opening a menu was
-      // not one — so the bar tidied itself away mid-decision and took the menu
-      // with it. Simultaneous, because the tap still has to reach the Menu.
-      .simultaneousGesture(TapGesture().onEnded { holdZoomForMenu() })
-      .accessibilityLabel("Zoom, \(snapshot.zoomPercent) percent")
-    } else {
-      // Collapsed, the readout OPENS the controls. It was a Menu in both
-      // states for a moment, and tapping the percentage offered Fit and Actual
-      // size instead of the −/+ the tap is asking for.
-      //
-      // A LONG PRESS still gets them, though, which is the point of this pair:
-      // the tap does the common thing and the hold does the rarer one, so Fit
-      // and Actual size stop being two taps away behind a control that has to
-      // be opened first — and the pill offers the same two commands whichever
-      // state it happens to be in.
-      // `Menu(content:label:primaryAction:)`, not a Button with a
-      // `.contextMenu`. Both give tap-one-thing / hold-another, but the context
-      // menu had to win an arbitration against the button's own tap and the
-      // bar's interactive glass, and lost often enough that a hold sometimes
-      // did nothing at all. This pairing is the API for exactly this: the tap
-      // runs `primaryAction`, the hold opens the menu, and neither has to beat
-      // the other to it.
-      Menu { zoomActions(finish: {}) } label: {
-        zoomReadout
-      } primaryAction: {
-        keepZoomOpen()
+      Section {
+        Button { model.send("zoomFit") } label: {
+          Label("Fit to view", systemImage: "arrow.up.left.and.arrow.down.right")
+        }
+        Button { model.send("zoomFitWidth") } label: {
+          Label("Fit to width", systemImage: "arrow.left.and.right")
+        }
+        Button { model.send("zoomReset") } label: {
+          Label("Actual size", systemImage: "1.magnifyingglass")
+        }
       }
-      .accessibilityLabel("Zoom, \(snapshot.zoomPercent) percent. Opens the zoom controls.")
+    } label: {
+      Label("Zoom", systemImage: "plus.magnifyingglass")
     }
-  }
-
-  private var zoomReadout: some View {
-    Text("\(snapshot.zoomPercent)%")
-      .font(.subheadline)
-      .monospacedDigit()
-      // Fixed, or the capsule resizes on 99% → 100%.
-      .frame(minWidth: 46)
-      // Text is only hit-testable where its glyphs are; without this the pill
-      // has a live centre and dead corners.
-      .contentShape(.rect)
+    .accessibilityLabel("Zoom")
+    .accessibilityValue("\(snapshot.zoomPercent) percent")
   }
 }
 
@@ -5612,50 +5264,143 @@ private struct NativeContactLayoutEditor: View {
   }
 }
 
-private struct NativeSectionCard<Content: View>: View {
+struct NativeEditorSelectionCandidate: Equatable {
+  let key: String
+  let groupIds: [String]
+}
+
+/// Positional legacy keys may change only after a known native presentation
+/// edit materializes their identity. Unexplained replacements never get a
+/// positional fallback, even if another section now occupies the old path.
+func resolveNativeEditorSelection(
+  selectedKey: String?,
+  candidates: [NativeEditorSelectionCandidate],
+  remappingKey: String?,
+  remappingGroupIds: [String],
+  contextMatches: Bool
+) -> String? {
+  guard contextMatches, let selectedKey else { return nil }
+  if candidates.contains(where: { $0.key == selectedKey }) { return selectedKey }
+  guard selectedKey.hasPrefix("section:@"), remappingKey == selectedKey,
+    !remappingGroupIds.isEmpty else { return nil }
+  let matches = candidates.filter { $0.groupIds == remappingGroupIds }
+  return matches.count == 1 ? matches[0].key : nil
+}
+
+enum NativeEditorNavigationValue: Hashable {
+  case section(String)
+  case displaced(String)
+}
+
+/// The command key can materialize while a nested editor is open. Its original
+/// presentation key must remain the List selection, link value and row identity
+/// together, or NavigationSplitView replaces the branch and pops its stack.
+struct NativeEditorDestination: Equatable {
+  let key: String
+  private let presentationKey: String
+
+  init(key: String) {
+    self.key = key
+    presentationKey = key
+  }
+
+  private init(key: String, presentationKey: String) {
+    self.key = key
+    self.presentationKey = presentationKey
+  }
+
+  var navigationValue: NativeEditorNavigationValue { .section(presentationKey) }
+
+  func navigationValue(for key: String) -> NativeEditorNavigationValue {
+    if key == self.key { return navigationValue }
+    // A different legacy row may reuse the old position after a known move.
+    // Keep it distinct from the still-open destination, never an alias for it.
+    return key == presentationKey ? .displaced(key) : .section(key)
+  }
+
+  func resolving(
+    candidates: [NativeEditorSelectionCandidate],
+    remappingKey: String?,
+    remappingGroupIds: [String],
+    contextMatches: Bool
+  ) -> NativeEditorDestination? {
+    let liveKey = resolveNativeEditorSelection(
+      selectedKey: key, candidates: candidates,
+      remappingKey: remappingKey, remappingGroupIds: remappingGroupIds,
+      contextMatches: contextMatches
+    )
+    return liveKey.map { NativeEditorDestination(key: $0, presentationKey: presentationKey) }
+  }
+}
+
+/// Each pushed destination owns its completion controls. Split/stack boundary
+/// toolbar preferences do not persist through every native destination.
+private struct NativeEditorCompletionToolbar: ToolbarContent {
+  let onDone: () -> Void
+  let onFinishEditing: () -> Void
+
+  var body: some ToolbarContent {
+    ToolbarItem(placement: .confirmationAction) {
+      Button(action: onDone) { Label("Done", systemImage: "checkmark") }
+    }
+    ToolbarItemGroup(placement: .keyboard) {
+      Spacer()
+      Button(action: onFinishEditing) { Label("Done editing", systemImage: "keyboard.chevron.compact.down") }
+    }
+  }
+}
+
+/// Secondary section administration is a real grouped form destination,
+/// rather than the first several controls of every writing row.
+private struct NativeSectionOptions: View {
   @ObservedObject var model: ShellModel
   let card: ShellSnapshot.DocumentOutline.Card
   let allCards: [ShellSnapshot.DocumentOutline.Card]
-  @Binding var expanded: Bool
   let onFailure: () -> Void
   let onDelete: () -> Void
-  let startDrag: () -> NSItemProvider
-  let drop: () -> Bool
-  @ViewBuilder let content: () -> Content
+  let onWillEdit: () -> Void
+  let onDone: () -> Void
+  let onFinishEditing: () -> Void
   @State private var heading = ""
   @FocusState private var headingFocused: Bool
   @State private var headingFrom: ShellSnapshot.Where?
   @State private var headingRevision = -1
 
   var body: some View {
-    DisclosureGroup(isExpanded: $expanded) {
-      VStack(alignment: .leading, spacing: 14) {
+    Group {
+      Section("Heading") {
         TextField("Heading", text: $heading).focused($headingFocused)
           .onSubmit { commitHeading(); headingFocused = false }
           .accessibilityLabel("\(card.title) heading")
+      }
+      Section("Placement") {
         placementControls
-        DisclosureGroup("Typography") {
-          NativeSectionTypography(model: model, card: card, part: "title", onFailure: onFailure)
-          if !card.isGroup { NativeSectionTypography(model: model, card: card, part: "content", onFailure: onFailure) }
-        }.font(.subheadline)
-        content()
+      }
+      Section("Appearance") {
+        NavigationLink {
+          Form {
+            Section("Heading") {
+              NativeSectionTypography(model: model, card: card, part: "title", onFailure: onFailure, onWillEdit: onWillEdit)
+            }
+            if !card.isGroup {
+              Section("Content") {
+                NativeSectionTypography(model: model, card: card, part: "content", onFailure: onFailure, onWillEdit: onWillEdit)
+              }
+            }
+          }
+          .navigationTitle("Typography")
+          .navigationBarTitleDisplayMode(.inline)
+          .toolbar { NativeEditorCompletionToolbar(onDone: onDone, onFinishEditing: onFinishEditing) }
+        } label: {
+          Label("Typography", systemImage: "textformat.size")
+        }
+      }
+      Section {
         Button(card.isGroup ? "Remove group" : "Delete section", role: .destructive, action: onDelete)
-      }.padding(.vertical, 8)
-    } label: {
-      HStack {
-        Label(card.title, systemImage: card.isGroup ? "folder" : "doc.text")
-          .font(.subheadline.weight(.semibold))
-        Spacer()
-        Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
-          .padding(8).contentShape(.rect).onDrag(startDrag)
-          .accessibilityLabel("Drag \(card.title) to reorder")
       }
     }
-    // All controls share one Form row. Automatic picker/button styles can
-    // promote a nested picker to the whole row, stealing Typography's taps.
     .pickerStyle(.menu)
     .buttonStyle(.borderless)
-    .onDrop(of: ["public.text"], isTargeted: nil) { _ in drop() }
     .onAppear { heading = card.title }
     .onChange(of: card.title) { _, value in if !headingFocused { heading = value } }
     .onChange(of: headingFocused) { _, focused in
@@ -5674,11 +5419,7 @@ private struct NativeSectionCard<Content: View>: View {
   private var placementControls: some View {
     let renderedIn = model.snapshot.whereAmI
     let revision = model.snapshot.document?.revision ?? -1
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        Button("Move up", systemImage: "arrow.up") { send("sectionMove", ["direction": "-1"], renderedIn, revision) }.disabled(!card.canMoveUp)
-        Button("Move down", systemImage: "arrow.down") { send("sectionMove", ["direction": "1"], renderedIn, revision) }.disabled(!card.canMoveDown)
-      }.buttonStyle(.borderless)
+    return Group {
       Picker("Area", selection: Binding(get: { card.area }, set: { area in
         guard area != card.area else { return }
         send("sectionRelocate", ["area": area, "parentKey": ""], renderedIn, revision)
@@ -5695,11 +5436,14 @@ private struct NativeSectionCard<Content: View>: View {
           ForEach(allCards.filter { $0.isGroup && $0.area == card.area }) { group in Text(group.title).tag(group.key) }
         }
       }
+      Button("Move up", systemImage: "arrow.up") { send("sectionMove", ["direction": "-1"], renderedIn, revision) }.disabled(!card.canMoveUp)
+      Button("Move down", systemImage: "arrow.down") { send("sectionMove", ["direction": "1"], renderedIn, revision) }.disabled(!card.canMoveDown)
     }
   }
 
   private func send(_ type: String, _ payload: [String: String], _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
     guard renderedIn == model.snapshot.whereAmI else { onFailure(); return }
+    onWillEdit()
     model.send(type, payload.merging(["key": card.key, "revision": String(revision)]) { current, _ in current }) { ok in if !ok { onFailure() } }
   }
 
@@ -5715,6 +5459,7 @@ private struct NativeSectionTypography: View {
   let card: ShellSnapshot.DocumentOutline.Card
   let part: String
   let onFailure: () -> Void
+  let onWillEdit: () -> Void
 
   private var title: Bool { part == "title" }
   private var scale: Double { (title ? card.style.titleScale : card.style.contentScale) ?? 1 }
@@ -5723,20 +5468,17 @@ private struct NativeSectionTypography: View {
   var body: some View {
     let renderedIn = model.snapshot.whereAmI
     let revision = model.snapshot.document?.revision ?? -1
-    return VStack(alignment: .leading, spacing: 8) {
-      Text(title ? "Heading" : "Content").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-      NativeSectionScaleInput(model: model, key: card.key, part: part, scale: scale, onFailure: onFailure)
+    return Group {
+      NativeSectionScaleInput(model: model, key: card.key, part: part, scale: scale, onFailure: onFailure, onWillEdit: onWillEdit)
       Picker("Font", selection: Binding(get: { font }, set: { send("Font", $0, renderedIn, revision) })) {
         Text("Template default").tag("default")
         Text("Heading font").tag("display")
         Text("Body font").tag("body")
       }
-      HStack {
-        stylePicker("Bold", value: title ? card.style.titleBold : card.style.contentBold, renderedIn: renderedIn, revision: revision)
-        stylePicker("Italic", value: title ? card.style.titleItalic : card.style.contentItalic, renderedIn: renderedIn, revision: revision)
-        stylePicker("Underline", value: title ? card.style.titleUnderline : card.style.contentUnderline, renderedIn: renderedIn, revision: revision)
-      }
-    }.padding(.vertical, 6)
+      stylePicker("Bold", value: title ? card.style.titleBold : card.style.contentBold, renderedIn: renderedIn, revision: revision)
+      stylePicker("Italic", value: title ? card.style.titleItalic : card.style.contentItalic, renderedIn: renderedIn, revision: revision)
+      stylePicker("Underline", value: title ? card.style.titleUnderline : card.style.contentUnderline, renderedIn: renderedIn, revision: revision)
+    }
   }
 
   private func stylePicker(_ name: String, value: Bool?, renderedIn: ShellSnapshot.Where, revision: Int) -> some View {
@@ -5749,6 +5491,7 @@ private struct NativeSectionTypography: View {
 
   private func send(_ suffix: String, _ value: String, _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
     guard renderedIn == model.snapshot.whereAmI else { onFailure(); return }
+    onWillEdit()
     model.send("sectionStyle", ["key": card.key, "field": part + suffix, "value": value, "revision": String(revision)]) { ok in if !ok { onFailure() } }
   }
 }
@@ -5759,6 +5502,7 @@ private struct NativeSectionScaleInput: View {
   let part: String
   let scale: Double
   let onFailure: () -> Void
+  let onWillEdit: () -> Void
   @State private var draft = "100"
   @State private var startedIn: ShellSnapshot.Where?
   @State private var startedRevision = -1
@@ -5797,6 +5541,7 @@ private struct NativeSectionScaleInput: View {
     let percent = min(200, max(50, Double(draft) ?? scale * 100))
     draft = String(Int(percent.rounded()))
     guard percent / 100 != scale else { return }
+    onWillEdit()
     model.send("sectionStyle", ["key": key, "field": part + "Scale", "value": String(percent / 100), "revision": String(startedRevision)]) { ok in if !ok { onFailure() } }
   }
 }
@@ -5805,9 +5550,19 @@ private struct StructureSheet: View {
   @ObservedObject var model: ShellModel
   @Environment(\.dismiss) private var dismiss
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
   @FocusState private var focusedPath: String?
   @State private var drafts: [String: String] = [:]
+  @State private var selectedDestination: NativeEditorDestination?
+  @State private var selectedIn: ShellSnapshot.Where?
+  @State private var selectedRevision = -1
+  @State private var identityChangeKey: String?
+  @State private var identityChangeGroups: [String] = []
+  @State private var showingOptions = false
+  @State private var isArranging = false
+  @State private var columnVisibility: NavigationSplitViewVisibility = .all
+  @State private var selectedRole: RoleSelection?
   /// A whole role or section awaiting confirmation. Asked NATIVELY and before
   /// the command is sent — the web's `confirmDestructive()` renders a Radix
   /// dialog inside the webview, behind this sheet, where nobody would see it
@@ -5821,6 +5576,17 @@ private struct StructureSheet: View {
   @State private var groupArea = "sidebar"
   @State private var groupFrom: ShellSnapshot.Where?
   @State private var groupRevision = -1
+
+  private struct RoleSelection {
+    let identity: String
+    let renderedIn: ShellSnapshot.Where
+    let revision: Int
+  }
+
+  private struct OutlineCard: Identifiable {
+    let card: ShellSnapshot.DocumentOutline.Card
+    let id: NativeEditorNavigationValue
+  }
 
   private struct CardRemoval {
     let signature: String
@@ -5879,7 +5645,8 @@ private struct StructureSheet: View {
   private func currentIndex(for removal: Removal) -> Int? {
     let candidates = groups.filter { $0.removePath == removal.path }
     if !removal.identity.isEmpty {
-      return candidates.first { $0.removeId == removal.identity }?.removeIndex
+      let matching = candidates.filter { $0.removeId == removal.identity }
+      return matching.count == 1 ? matching[0].removeIndex : nil
     }
     // Older documents have no ids, so the title at the same position is the only
     // check left — and it is only a check while the title is UNIQUE. Two roles
@@ -5899,143 +5666,42 @@ private struct StructureSheet: View {
   }
 
   var body: some View {
-    NavigationStack {
-      Group {
-        if model.snapshot.document == nil {
-          // The first outline lands a frame after the sheet opens; an empty
-          // form would read as "this résumé has no content".
-          ProgressView()
-        } else if groups.isEmpty {
-          ContentUnavailableView(
-            "No resume open", systemImage: "doc",
-            description: Text("Create or open a resume to edit its structure.")
-          )
-        } else {
-          Form {
-            // FIRST, and a standing state rather than a notice: a full disk
-            // stays full. The web's toast is the only other warning and it
-            // renders UNDER this sheet, so without this someone can type here,
-            // watch the canvas behind the sheet update, and quit believing the
-            // work was saved.
-            if model.snapshot.document?.saveFailed == true {
-              Section { DocumentSaveWarning() }
-            }
-            if let cards = model.snapshot.document?.cards {
-              if let header = groups.first(where: { $0.id == "header" }) {
-                Section("Contact layout") {
-                  if let contactLayout = model.snapshot.document?.contactLayout {
-                    NativeContactLayoutEditor(model: model, layout: contactLayout, onFailure: { staleAction = movedMessage })
-                  }
-                }
-                Section("Header and contact values") { groupFields(header) }
-              }
-              ForEach(["main", "sidebar"], id: \.self) { area in
-                Section(area == "main" ? "Main content" : "Sidebar") {
-                  ForEach(cards.filter { $0.area == area && ($0.parentKey.isEmpty || !collapsedCards.contains($0.parentKey)) }) { card in
-                    let renderedIn = model.snapshot.whereAmI
-                    let renderedRevision = model.snapshot.document?.revision ?? -1
-                    NativeSectionCard(
-                      model: model, card: card, allCards: cards,
-                      expanded: Binding(get: { !collapsedCards.contains(card.key) }, set: { if $0 { collapsedCards.remove(card.key) } else { collapsedCards.insert(card.key) } }),
-                      onFailure: { staleAction = movedMessage },
-                      onDelete: { pendingCardRemoval = CardRemoval(signature: card.signature, key: card.key, title: card.title, renderedIn: renderedIn, revision: renderedRevision) },
-                      startDrag: {
-                        draggingCard = CardRemoval(signature: card.signature, key: card.key, title: card.title, renderedIn: renderedIn, revision: renderedRevision)
-                        return NSItemProvider(object: card.key as NSString)
-                      },
-                      drop: { dropSection(on: card) }
-                    ) {
-                      ForEach(card.fields) { fieldRow($0) }
-                      ForEach(groups.filter { card.groupIds.contains($0.id) }) { group in
-                        if card.key == "experience" { Text(group.title).font(.subheadline.weight(.semibold)) }
-                        groupFields(group)
-                      }
-                    }
-                    .padding(.leading, card.parentKey.isEmpty ? 0 : 12)
-                  }
-                }
-              }
-              Section("Arrange sections") {
-                ForEach(["main", "sidebar"], id: \.self) { area in
-                  let renderedIn = model.snapshot.whereAmI
-                  let renderedRevision = model.snapshot.document?.revision ?? -1
-                  Button("Add \(area == "main" ? "main" : "sidebar") group", systemImage: "folder.badge.plus") {
-                    groupArea = area
-                    groupTitle = ""
-                    groupFrom = renderedIn
-                    groupRevision = renderedRevision
-                    addingGroup = true
-                  }
-                  if let options = model.snapshot.document?.restorable, !options.isEmpty {
-                    Menu("Restore section in \(area == "main" ? "main content" : "sidebar")") {
-                      ForEach(options) { option in
-                        let renderedIn = model.snapshot.whereAmI
-                        let revision = model.snapshot.document?.revision ?? -1
-                        Button(option.name) {
-                          guard renderedIn == model.snapshot.whereAmI else { staleAction = movedMessage; return }
-                          model.send("sectionRestore", ["key": option.id, "area": area, "revision": String(revision)]) { ok in if !ok { staleAction = movedMessage } }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            } else {
-              ForEach(groups) { group in Section(group.title) { groupFields(group) } }
-            }
-
-            if let additions = model.snapshot.document?.additions, !additions.isEmpty {
-              Section {
-                ForEach(additions) { addition in
-                  let renderedIn = model.snapshot.whereAmI
-                  let renderedRevision = model.snapshot.document?.revision ?? -1
-                  if let areas = addition.areas, let templates = addition.templates {
-                    Menu {
-                      ForEach(areas) { area in
-                        Menu(area.name) {
-                          ForEach(templates) { template in
-                            Button(template.name) {
-                              addSection(addition, area: area.id, template: template.id, renderedIn: renderedIn, revision: renderedRevision)
-                            }
-                          }
-                        }
-                      }
-                    } label: {
-                      Label(addition.label, systemImage: "plus")
-                    }
-                    .deleteDisabled(true)
-                    .moveDisabled(true)
-                  } else {
-                    Button {
-                      guard renderedIn == model.snapshot.whereAmI else {
-                        staleAction = movedMessage
-                        return
-                      }
-                      model.send("addItem", [
-                        "path": addition.path,
-                        "revision": String(renderedRevision),
-                      ]) { ok in if !ok { staleAction = movedMessage } }
-                    } label: {
-                      Label(addition.label, systemImage: "plus")
-                    }
-                    .deleteDisabled(true)
-                    .moveDisabled(true)
-                  }
-                }
-              }
-            }
+    NavigationSplitView(columnVisibility: $columnVisibility) {
+      outline
+        .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
+    } detail: {
+      NavigationStack {
+        focusedEditor
+          .navigationDestination(isPresented: $showingOptions) {
+            sectionOptions.toolbar { editorCompletionToolbar }
           }
-        }
+          .navigationDestination(isPresented: rolePresented) {
+            roleEditor.toolbar { editorCompletionToolbar }
+          }
       }
-      .navigationTitle("Edit resume")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
-        }
-      }
+      .toolbar { editorCompletionToolbar }
+      .environment(\.editMode, Binding(
+        get: { isArranging ? .active : .inactive },
+        set: { isArranging = $0.isEditing }
+      ))
     }
-    .environment(\.editMode, .constant(.active))
+    .navigationSplitViewStyle(.balanced)
+    .presentationSizing(.page)
+    .presentationDetents([.large])
+    .presentationDragIndicator(.visible)
+    .onChange(of: model.snapshot.document?.cards) { _, _ in reconcileSelection() }
+    .onChange(of: model.snapshot.document?.revision) { previous, current in
+      if previous != current { clearSelection() }
+    }
+    .onChange(of: model.snapshot.whereAmI) { _, _ in
+      clearSelection()
+      drafts = [:]
+      isArranging = false
+    }
+    .onDisappear {
+      finishEditing()
+      model.send("setNativeEditing", ["scope": "document", "holder": "field", "value": "false"])
+    }
     .onChange(of: focusedPath) { previous, current in
       // Drop the draft once focus leaves, so the field goes back to rendering
       // the store's value — including any normalisation the store applied.
@@ -6074,6 +5740,7 @@ private struct StructureSheet: View {
           if removal.renderedIn != model.snapshot.whereAmI {
             staleAction = movedMessage
           } else if let at = currentIndex(for: removal) {
+            selectedRole = nil
             model.send("removeItem", [
               "path": removal.path,
               "index": String(at),
@@ -6087,13 +5754,14 @@ private struct StructureSheet: View {
       }
       Button("Cancel", role: .cancel) { pendingRemoval = nil }
     } message: {
-      Text("This cannot be undone from here.")
+      Text("You can undo this change from the resume editor.")
     }
     .alert("New section group", isPresented: $addingGroup) {
       TextField("Group heading", text: $groupTitle)
       Button("Cancel", role: .cancel) {}
       Button("Add") {
         guard groupFrom == model.snapshot.whereAmI else { staleAction = movedMessage; return }
+        prepareIdentityChange()
         model.send("sectionAddGroup", ["area": groupArea, "title": groupTitle, "revision": String(groupRevision)]) { ok in if !ok { staleAction = movedMessage } }
       }.disabled(groupTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
@@ -6103,7 +5771,10 @@ private struct StructureSheet: View {
       Button("Remove", role: .destructive) {
         if let removal = pendingCardRemoval {
           if removal.renderedIn != model.snapshot.whereAmI { staleAction = movedMessage }
-          else { model.send("sectionRemove", ["key": removal.key, "signature": removal.signature, "revision": String(removal.revision)]) { ok in if !ok { staleAction = movedMessage } } }
+          else {
+            clearSelection()
+            model.send("sectionRemove", ["key": removal.key, "signature": removal.signature, "revision": String(removal.revision)]) { ok in if !ok { staleAction = movedMessage } }
+          }
         }
         pendingCardRemoval = nil
       }
@@ -6123,10 +5794,481 @@ private struct StructureSheet: View {
     }
   }
 
+  private var cards: [ShellSnapshot.DocumentOutline.Card] { model.snapshot.document?.cards ?? [] }
+
+  @ToolbarContentBuilder
+  private var editorCompletionToolbar: some ToolbarContent {
+    NativeEditorCompletionToolbar(onDone: { finishEditing(); dismiss() }, onFinishEditing: finishEditing)
+  }
+
+  private var selectedCard: ShellSnapshot.DocumentOutline.Card? {
+    cards.first { $0.key == selectedKey }
+  }
+
+  /// Resolve during body evaluation as well as onChange: the first snapshot
+  /// with a materialized key must never briefly remove the pushed source link.
+  private var liveDestination: NativeEditorDestination? {
+    selectedDestination?.resolving(
+      candidates: selectionCandidates,
+      remappingKey: identityChangeKey, remappingGroupIds: identityChangeGroups,
+      contextMatches: selectedIn == model.snapshot.whereAmI && selectedRevision == model.snapshot.document?.revision
+    )
+  }
+
+  private var selectedKey: String? { liveDestination?.key }
+
+  private func navigationValue(for key: String) -> NativeEditorNavigationValue {
+    liveDestination?.navigationValue(for: key) ?? .section(key)
+  }
+
+  private var selection: Binding<NativeEditorNavigationValue?> {
+    Binding(get: { liveDestination?.navigationValue }, set: { value in
+      guard value != liveDestination?.navigationValue else { return }
+      guard let value else { clearSelection(); return }
+      let matches = selectionCandidates.filter { navigationValue(for: $0.key) == value }
+      guard matches.count == 1 else { clearSelection(); return }
+      select(matches[0].key)
+    })
+  }
+
+  private var rolePresented: Binding<Bool> {
+    Binding(get: { selectedRole != nil }, set: { if !$0 { selectedRole = nil } })
+  }
+
+  private func select(_ key: String?) {
+    finishEditing()
+    showingOptions = false
+    selectedRole = nil
+    selectedDestination = key.map { NativeEditorDestination(key: $0) }
+    selectedIn = model.snapshot.whereAmI
+    selectedRevision = model.snapshot.document?.revision ?? -1
+    identityChangeKey = nil
+    identityChangeGroups = []
+  }
+
+  private func clearSelection() {
+    select(nil)
+  }
+
+  private func finishEditing() {
+    focusedPath = nil
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+  }
+
+  private func prepareIdentityChange() {
+    guard let card = selectedCard, card.key.hasPrefix("section:@") else { return }
+    identityChangeKey = card.key
+    identityChangeGroups = card.groupIds
+  }
+
+  private var selectionCandidates: [NativeEditorSelectionCandidate] {
+    var candidates = cards.map { NativeEditorSelectionCandidate(key: $0.key, groupIds: $0.groupIds) }
+    if groups.contains(where: { $0.id == "header" }) {
+      candidates.append(NativeEditorSelectionCandidate(key: "header", groupIds: ["header"]))
+    }
+    if model.snapshot.document?.cards == nil {
+      candidates += groups.map { NativeEditorSelectionCandidate(key: "legacy:" + $0.id, groupIds: [$0.id]) }
+    }
+    return candidates
+  }
+
+  private func reconcileSelection() {
+    guard selectedDestination != nil else { return }
+    let resolved = liveDestination
+    identityChangeKey = nil
+    identityChangeGroups = []
+    if resolved == nil { clearSelection() }
+    else { selectedDestination = resolved }
+  }
+
+  private var outline: some View {
+    Group {
+      if model.snapshot.document == nil {
+        ProgressView("Loading resume")
+      } else if groups.isEmpty {
+        ContentUnavailableView("No resume open", systemImage: "doc", description: Text("Create or open a resume to edit it."))
+      } else {
+        outlineList
+      }
+    }
+    .navigationTitle("Edit resume")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbar {
+      if horizontalSizeClass == .compact { editorCompletionToolbar }
+      ToolbarItemGroup(placement: .primaryAction) {
+        Button { finishEditing(); isArranging.toggle() } label: {
+          Label(isArranging ? "Finish arranging" : "Arrange", systemImage: isArranging ? "checkmark" : "arrow.up.arrow.down")
+        }
+        addMenu
+      }
+    }
+  }
+
+  private var outlineList: some View {
+    List(selection: selection) {
+      if model.snapshot.document?.saveFailed == true {
+        Section { DocumentSaveWarning() }
+      }
+      if let header = groups.first(where: { $0.id == "header" }) {
+        Section {
+          NavigationLink(value: navigationValue(for: "header")) {
+            outlineLabel(title: "Header & Contact", symbol: "person.crop.rectangle", preview: "Name, professional title and contact details", isGroup: false, isSelected: selectedKey == "header")
+          }
+          .accessibilityHint("Edit \(header.title) and contact information")
+        }
+      }
+      if model.snapshot.document?.cards != nil {
+        ForEach(["main", "sidebar"], id: \.self) { area in
+          Section(area == "main" ? "Main content" : "Sidebar") {
+            ForEach(visibleCards(in: area).map { OutlineCard(card: $0, id: navigationValue(for: $0.key)) }) { row in
+              outlineRow(row.card)
+            }
+          }
+        }
+      } else {
+        Section("Sections") {
+          ForEach(groups.filter { $0.id != "header" }) { group in
+            NavigationLink(value: navigationValue(for: "legacy:" + group.id)) {
+              outlineLabel(title: group.title, symbol: "doc.text", preview: preview(fields: group.fields), isGroup: false, isSelected: selectedKey == "legacy:" + group.id)
+            }
+          }
+        }
+      }
+    }
+    .listStyle(.insetGrouped)
+    // Section drags use our explicit handles; native list editing would clear
+    // selection and disable the links needed to reach item reordering.
+    .environment(\.editMode, .constant(.inactive))
+    .scrollDismissesKeyboard(.interactively)
+  }
+
+  private func visibleCards(in area: String) -> [ShellSnapshot.DocumentOutline.Card] {
+    cards.filter { $0.area == area && ($0.parentKey.isEmpty || !collapsedCards.contains($0.parentKey)) }
+  }
+
+  private func outlineLabel(title: String, symbol: String, preview: String, isGroup: Bool, isSelected: Bool = false) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: symbol)
+        .font(.body.weight(.medium))
+        .foregroundStyle(isSelected ? AnyShapeStyle(HierarchicalShapeStyle.primary) : AnyShapeStyle(isGroup ? Color.secondary : Color.accentColor))
+        .frame(width: 28, height: 28)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(title).font(.body.weight(isGroup ? .semibold : .medium)).foregroundStyle(.primary)
+        if !preview.isEmpty {
+          Text(preview).font(.subheadline)
+            .foregroundStyle(isSelected ? AnyShapeStyle(HierarchicalShapeStyle.primary) : AnyShapeStyle(HierarchicalShapeStyle.secondary)).lineLimit(2)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(.vertical, 6)
+    .frame(minHeight: 44)
+  }
+
+  private func cardSymbol(_ card: ShellSnapshot.DocumentOutline.Card) -> String {
+    if card.isGroup { return "folder" }
+    switch card.key {
+    case "summary": return "text.alignleft"
+    case "experience": return "briefcase"
+    case "education": return "graduationcap"
+    case "tools": return "wrench.and.screwdriver"
+    default: return "list.bullet"
+    }
+  }
+
+  private func preview(fields: [ShellSnapshot.DocumentOutline.Field]) -> String {
+    fields.filter { $0.label != "Heading" }.map { stripMarkdownForPreview($0.value) }
+      .first(where: { !$0.isEmpty })?.replacingOccurrences(of: "\n", with: " ") ?? "Add content"
+  }
+
+  private func cardPreview(_ card: ShellSnapshot.DocumentOutline.Card) -> String {
+    if card.isGroup {
+      let count = cards.filter { $0.parentKey == card.key }.count
+      return "\(count) section\(count == 1 ? "" : "s")"
+    }
+    let related = groups.filter { card.groupIds.contains($0.id) }
+    if card.key == "experience" {
+      return related.isEmpty ? "Add your work experience" : "\(related.count) role\(related.count == 1 ? "" : "s")"
+    }
+    return preview(fields: card.fields + related.flatMap(\.fields))
+  }
+
+  private func outlineRow(_ card: ShellSnapshot.DocumentOutline.Card) -> some View {
+    let renderedIn = model.snapshot.whereAmI
+    let revision = model.snapshot.document?.revision ?? -1
+    return HStack(spacing: 0) {
+      if card.isGroup {
+        Button {
+          if collapsedCards.contains(card.key) { collapsedCards.remove(card.key) }
+          else { collapsedCards.insert(card.key) }
+        } label: {
+          Image(systemName: collapsedCards.contains(card.key) ? "chevron.right" : "chevron.down")
+            .font(.caption.weight(.semibold)).frame(width: 44, height: 44)
+            .foregroundStyle(selectedKey == card.key ? AnyShapeStyle(HierarchicalShapeStyle.primary) : AnyShapeStyle(Color.accentColor))
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("\(collapsedCards.contains(card.key) ? "Expand" : "Collapse") \(card.title)")
+      }
+      NavigationLink(value: navigationValue(for: card.key)) {
+        outlineLabel(title: card.title, symbol: cardSymbol(card), preview: cardPreview(card), isGroup: card.isGroup, isSelected: selectedKey == card.key)
+      }
+      if isArranging {
+        Image(systemName: "line.3.horizontal")
+          .foregroundStyle(selectedKey == card.key ? AnyShapeStyle(HierarchicalShapeStyle.primary) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+          .frame(width: 44, height: 44).contentShape(.rect)
+          .onDrag { startSectionDrag(card, renderedIn: renderedIn, revision: revision) }
+          .accessibilityLabel("Drag \(card.title) to reorder")
+      }
+    }
+    .padding(.leading, card.parentKey.isEmpty ? 0 : 20)
+    .onDrop(of: ["public.text"], isTargeted: nil) { _ in isArranging && dropSection(on: card) }
+    .contextMenu {
+      Button {
+        guard renderedIn == model.snapshot.whereAmI, revision == model.snapshot.document?.revision else { staleAction = movedMessage; return }
+        select(card.key); showingOptions = true
+      } label: { Label("Section options", systemImage: "slider.horizontal.3") }
+      Button { moveSection(card, direction: -1, renderedIn: renderedIn, revision: revision) } label: { Label("Move up", systemImage: "arrow.up") }.disabled(!card.canMoveUp)
+      Button { moveSection(card, direction: 1, renderedIn: renderedIn, revision: revision) } label: { Label("Move down", systemImage: "arrow.down") }.disabled(!card.canMoveDown)
+      Button(role: .destructive) { requestCardRemoval(card, renderedIn: renderedIn, revision: revision) } label: { Label(card.isGroup ? "Remove group" : "Delete section", systemImage: "trash") }
+    }
+    .accessibilityActions {
+      if card.canMoveUp { Button("Move up") { moveSection(card, direction: -1, renderedIn: renderedIn, revision: revision) } }
+      if card.canMoveDown { Button("Move down") { moveSection(card, direction: 1, renderedIn: renderedIn, revision: revision) } }
+    }
+  }
+
+  @ViewBuilder
+  private var focusedEditor: some View {
+    if selectedKey == "header", let header = groups.first(where: { $0.id == "header" }) {
+      headerEditor(header)
+    } else if let card = selectedCard {
+      cardEditor(card)
+    } else if let key = selectedKey, key.hasPrefix("legacy:"), let group = groups.first(where: { "legacy:" + $0.id == key }) {
+      Form { Section { groupFields(group) } }.navigationTitle(group.title)
+    } else {
+      ContentUnavailableView("Choose a section", systemImage: "doc.text", description: Text("Edit your resume one section at a time."))
+        .navigationTitle("Edit resume")
+    }
+  }
+
+  private func headerEditor(_ header: ShellSnapshot.DocumentOutline.Group) -> some View {
+    Form {
+      if model.snapshot.document?.saveFailed == true { Section { DocumentSaveWarning() } }
+      Section("Identity") { ForEach(fixedFields(of: header)) { fieldRow($0) } }
+      Section("Contact information") {
+        ForEach(Array(listFields(of: header).enumerated()), id: \.element.id) { index, field in
+          if model.snapshot.document?.contactLayout == nil {
+            contactFieldRow(field, index: index, count: listFields(of: header).count, renderedIn: model.snapshot.whereAmI, revision: model.snapshot.document?.revision ?? -1)
+          } else { fieldRow(field) }
+        }
+      }
+      if let layout = model.snapshot.document?.contactLayout {
+        Section {
+          NavigationLink {
+            Form { NativeContactLayoutEditor(model: model, layout: layout, onFailure: { staleAction = movedMessage }) }
+              .navigationTitle("Contact layout").navigationBarTitleDisplayMode(.inline)
+              .toolbar { editorCompletionToolbar }
+          } label: { Label("Contact layout", systemImage: "rectangle.split.2x1") }
+        } footer: { Text("Choose how contact details flow in the current resume template.") }
+      }
+    }
+    .navigationTitle("Header & Contact")
+    .navigationBarTitleDisplayMode(.inline)
+    .scrollDismissesKeyboard(.interactively)
+  }
+
+  private func cardEditor(_ card: ShellSnapshot.DocumentOutline.Card) -> some View {
+    Form {
+      if model.snapshot.document?.saveFailed == true { Section { DocumentSaveWarning() } }
+      if card.isGroup {
+        Section("Sections") {
+          ForEach(cards.filter { $0.parentKey == card.key }) { child in
+            Button { select(child.key) } label: {
+              HStack {
+                outlineLabel(title: child.title, symbol: cardSymbol(child), preview: cardPreview(child), isGroup: false)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+              }
+            }.buttonStyle(.plain)
+          }
+          if !cards.contains(where: { $0.parentKey == card.key }) { Text("Move sections into this group from Section options.").foregroundStyle(.secondary) }
+        }
+      } else if card.key == "experience" {
+        experienceRows(card)
+      } else {
+        if !card.fields.isEmpty { Section { ForEach(card.fields) { fieldRow($0) } } }
+        ForEach(groups.filter { card.groupIds.contains($0.id) }) { group in Section { groupFields(group) } }
+      }
+      if let addition = model.snapshot.document?.additions.first(where: { $0.path == card.key && $0.path != "sections" }) {
+        Section { addItemButton(addition) }
+      }
+      Section {
+        Button { finishEditing(); showingOptions = true } label: {
+          Label(card.isGroup ? "Group options" : "Section options", systemImage: "slider.horizontal.3")
+        }
+      }
+    }
+    .navigationTitle(card.title)
+    .navigationBarTitleDisplayMode(.inline)
+    .scrollDismissesKeyboard(.interactively)
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button { finishEditing(); showingOptions = true } label: { Label("Section options", systemImage: "slider.horizontal.3") }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func experienceRows(_ card: ShellSnapshot.DocumentOutline.Card) -> some View {
+    let roles = groups.filter { card.groupIds.contains($0.id) }
+    let navigable = roles.filter { role in !role.removeId.isEmpty && roles.filter { $0.removeId == role.removeId }.count == 1 }
+    let renderedIn = model.snapshot.whereAmI
+    let revision = model.snapshot.document?.revision ?? -1
+    Section("Roles") {
+      if roles.isEmpty { Text("Add a role to tell your work story.").foregroundStyle(.secondary) }
+      ForEach(navigable) { group in
+        Button {
+          guard renderedIn == model.snapshot.whereAmI, revision == model.snapshot.document?.revision else { staleAction = movedMessage; return }
+          finishEditing()
+          selectedRole = RoleSelection(identity: group.removeId, renderedIn: renderedIn, revision: revision)
+        } label: {
+          HStack {
+            outlineLabel(title: group.title, symbol: "briefcase", preview: group.fields.first(where: { $0.label == "Company" })?.value ?? "", isGroup: false)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+          }
+        }.buttonStyle(.plain)
+        .contextMenu {
+          Button(role: .destructive) { requestRoleRemoval(group, renderedIn: renderedIn, revision: revision) } label: { Label("Delete role", systemImage: "trash") }
+        }
+      }
+    }
+    // Older roles have no durable identity. Keep their fields in the current
+    // section rather than pinning a long-lived destination to an array index.
+    ForEach(roles.filter { role in !navigable.contains(where: { $0.id == role.id }) }) { group in Section(group.title) { groupFields(group) } }
+  }
+
+  @ViewBuilder
+  private var roleEditor: some View {
+    if let selectedRole,
+      selectedRole.renderedIn == model.snapshot.whereAmI,
+      selectedRole.revision == model.snapshot.document?.revision,
+      let group = groups.first(where: { $0.removePath == "experience" && $0.removeId == selectedRole.identity }) {
+      Form {
+        if model.snapshot.document?.saveFailed == true { Section { DocumentSaveWarning() } }
+        Section { groupFields(group) }
+      }
+      .navigationTitle(group.title)
+      .navigationBarTitleDisplayMode(.inline)
+      .scrollDismissesKeyboard(.interactively)
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Menu {
+            Button(role: .destructive) { requestRoleRemoval(group, renderedIn: selectedRole.renderedIn, revision: selectedRole.revision) } label: { Label("Delete role", systemImage: "trash") }
+          } label: { Label("Role options", systemImage: "ellipsis") }
+        }
+      }
+    } else {
+      ContentUnavailableView("This role changed", systemImage: "briefcase", description: Text("Return to Experience to choose a role from the refreshed resume."))
+    }
+  }
+
+  @ViewBuilder
+  private var sectionOptions: some View {
+    if let card = selectedCard {
+      let renderedIn = model.snapshot.whereAmI
+      let revision = model.snapshot.document?.revision ?? -1
+      Form {
+        NativeSectionOptions(model: model, card: card, allCards: cards,
+          onFailure: { staleAction = movedMessage },
+          onDelete: { requestCardRemoval(card, renderedIn: renderedIn, revision: revision) },
+          onWillEdit: prepareIdentityChange,
+          onDone: { finishEditing(); dismiss() },
+          onFinishEditing: finishEditing)
+      }
+      .navigationTitle(card.isGroup ? "Group options" : "Section options")
+      .navigationBarTitleDisplayMode(.inline)
+    } else { ContentUnavailableView("Section unavailable", systemImage: "doc") }
+  }
+
+  private var addMenu: some View {
+    let renderedIn = model.snapshot.whereAmI
+    let revision = model.snapshot.document?.revision ?? -1
+    return Menu {
+      ForEach(["main", "sidebar"], id: \.self) { area in
+        Menu(area == "main" ? "Main content" : "Sidebar") {
+          if let addition = model.snapshot.document?.additions.first(where: { $0.path == "sections" }), let templates = addition.templates {
+            ForEach(templates) { template in
+              let renderedIn = model.snapshot.whereAmI
+              let revision = model.snapshot.document?.revision ?? -1
+              Button(template.name) { addSection(addition, area: area, template: template.id, renderedIn: renderedIn, revision: revision) }
+            }
+          }
+          Button { beginGroup(in: area, renderedIn: renderedIn, revision: revision) } label: { Label("New group", systemImage: "folder.badge.plus") }
+          if let options = model.snapshot.document?.restorable, !options.isEmpty {
+            Menu("Restore section") {
+              ForEach(options) { option in
+                let renderedIn = model.snapshot.whereAmI
+                let revision = model.snapshot.document?.revision ?? -1
+                Button(option.name) {
+                  guard renderedIn == model.snapshot.whereAmI else { staleAction = movedMessage; return }
+                  prepareIdentityChange()
+                  model.send("sectionRestore", ["key": option.id, "area": area, "revision": String(revision)]) { ok in if !ok { staleAction = movedMessage } }
+                }
+              }
+            }
+          }
+        }
+      }
+    } label: { Label("Add", systemImage: "plus") }
+  }
+
+  private func addItemButton(_ addition: ShellSnapshot.DocumentOutline.Addition) -> some View {
+    let renderedIn = model.snapshot.whereAmI
+    let revision = model.snapshot.document?.revision ?? -1
+    return Button {
+      guard renderedIn == model.snapshot.whereAmI else { staleAction = movedMessage; return }
+      model.send("addItem", ["path": addition.path, "revision": String(revision)]) { ok in if !ok { staleAction = movedMessage } }
+    } label: { Label(addition.label, systemImage: "plus.circle") }
+  }
+
+  private func beginGroup(in area: String, renderedIn: ShellSnapshot.Where, revision: Int) {
+    guard renderedIn == model.snapshot.whereAmI, revision == model.snapshot.document?.revision else { staleAction = movedMessage; return }
+    finishEditing()
+    groupArea = area
+    groupTitle = ""
+    groupFrom = renderedIn
+    groupRevision = revision
+    addingGroup = true
+  }
+
+  private func requestCardRemoval(_ card: ShellSnapshot.DocumentOutline.Card, renderedIn: ShellSnapshot.Where, revision: Int) {
+    guard renderedIn == model.snapshot.whereAmI, revision == model.snapshot.document?.revision else { staleAction = movedMessage; return }
+    finishEditing()
+    pendingCardRemoval = CardRemoval(signature: card.signature, key: card.key, title: card.title, renderedIn: renderedIn, revision: revision)
+  }
+
+  private func requestRoleRemoval(_ group: ShellSnapshot.DocumentOutline.Group, renderedIn: ShellSnapshot.Where, revision: Int) {
+    guard renderedIn == model.snapshot.whereAmI, revision == model.snapshot.document?.revision else { staleAction = movedMessage; return }
+    finishEditing()
+    pendingRemoval = Removal(path: group.removePath ?? "experience", index: group.removeIndex, title: group.removeTitle, identity: group.removeId, renderedIn: renderedIn)
+  }
+
+  private func startSectionDrag(_ card: ShellSnapshot.DocumentOutline.Card, renderedIn: ShellSnapshot.Where, revision: Int) -> NSItemProvider {
+    draggingCard = CardRemoval(signature: card.signature, key: card.key, title: card.title, renderedIn: renderedIn, revision: revision)
+    return NSItemProvider(object: card.key as NSString)
+  }
+
+  private func moveSection(_ card: ShellSnapshot.DocumentOutline.Card, direction: Int, renderedIn: ShellSnapshot.Where, revision: Int) {
+    guard direction < 0 ? card.canMoveUp : card.canMoveDown else { return }
+    prepareIdentityChange()
+    guard renderedIn == model.snapshot.whereAmI, revision == model.snapshot.document?.revision else { staleAction = movedMessage; return }
+    model.send("sectionMove", ["key": card.key, "direction": String(direction), "revision": String(revision)]) { ok in if !ok { staleAction = movedMessage } }
+  }
+
   private func dropSection(on card: ShellSnapshot.DocumentOutline.Card) -> Bool {
     guard let source = draggingCard else { return false }
     draggingCard = nil
     guard source.renderedIn == model.snapshot.whereAmI else { staleAction = movedMessage; return false }
+    prepareIdentityChange()
     model.send("sectionDrop", ["key": source.key, "targetKey": card.key, "revision": String(source.revision)]) { ok in if !ok { staleAction = movedMessage } }
     return true
   }
@@ -6202,7 +6344,7 @@ private struct StructureSheet: View {
                   .deleteDisabled(true)
                   .moveDisabled(true)
                 }
-                if let removePath = group.removePath, removePath == "experience" || model.snapshot.document?.cards == nil {
+                if isArranging, let removePath = group.removePath, removePath == "experience" || model.snapshot.document?.cards == nil {
                   Button(role: .destructive) {
                     pendingRemoval = Removal(
                       path: removePath, index: group.removeIndex, title: group.removeTitle,
@@ -6222,20 +6364,25 @@ private struct StructureSheet: View {
 
   @ViewBuilder
   private func fieldRow(_ field: ShellSnapshot.DocumentOutline.Field) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(field.label)
-        .font(.caption)
-        .foregroundStyle(.secondary)
+    VStack(alignment: .leading, spacing: 8) {
+      if field.path != "summary" {
+        Text(field.label).font(.subheadline).foregroundStyle(.secondary)
+      }
       if field.multiline {
-        TextField(field.label, text: binding(for: field), axis: .vertical)
-          .lineLimit(2...8)
+        TextEditor(text: binding(for: field))
+          .font(.body)
+          .scrollContentBackground(.hidden)
+          .frame(minHeight: field.path == "summary" ? 240 : 120)
           .focused($focusedPath, equals: field.path)
+          .accessibilityLabel(field.label)
       } else {
         TextField(field.label, text: binding(for: field))
           .focused($focusedPath, equals: field.path)
+          .accessibilityLabel(field.label)
       }
     }
-    .padding(.vertical, 2)
+    .padding(.vertical, 4)
+    .frame(minHeight: 44)
   }
 
   private func contactFieldRow(
@@ -6309,29 +6456,11 @@ private struct StructureSheet: View {
       staleAction = movedMessage
       return
     }
+    prepareIdentityChange()
     model.send("addItem", [
       "path": addition.path, "area": area, "template": template,
       "revision": String(revision),
     ]) { ok in if !ok { staleAction = movedMessage } }
-  }
-
-  private func sectionAreaBinding(
-    _ area: ShellSnapshot.DocumentOutline.Group.Area,
-    renderedIn: ShellSnapshot.Where,
-    revision: Int
-  ) -> Binding<String> {
-    Binding(
-      get: { area.value },
-      set: { value in
-        guard renderedIn == model.snapshot.whereAmI else {
-          staleAction = movedMessage
-          return
-        }
-        model.send("setSectionArea", ["path": area.path, "value": value, "revision": String(revision)]) {
-          ok in if !ok { staleAction = movedMessage }
-        }
-      }
-    )
   }
 
   /// The rows above the list: a section's heading, a role's title/company/dates.
@@ -7140,64 +7269,6 @@ private struct ComposerSurface: ViewModifier {
     // synthetic touch, including real HID paths, so the failure only exists
     // under a finger.
     content.glassEffect(.regular, in: shape)
-  }
-}
-
-/// One capsule of the bottom bar.
-///
-/// 44pt and `.regular.interactive()`, matching what the system bottom bar drew
-/// before this replaced it — the bar moved into our hands so the zoom control
-/// could morph, not so it could look different.
-private struct BarCapsule: ViewModifier {
-  func body(content: Content) -> some View {
-    let sized = content
-      .padding(.horizontal, 20)
-      .frame(height: 44)
-
-    sized
-      // THE WHOLE CAPSULE SWALLOWS TOUCHES. The bar is an `.overlay` over the
-      // webview, and a tap that lands inside the capsule but not on a control
-      // used to fall straight through to the résumé — which put the canvas into
-      // inline edit and selected whatever word was underneath. Glass draws a
-      // background; it does not make one hit-testable.
-      //
-      // `contentShape` does not make one hit-testable either. It SHAPES hit
-      // testing for an interaction the view already has, and a padded HStack has
-      // none of its own — so on its own it left the 20pt of horizontal padding
-      // exactly as porous as before, which is the half of this the glyph slots
-      // below do not cover.
-      //
-      // So the capsule carries an inert interaction, and it lives in the
-      // BACKGROUND on purpose: the controls sit in front of it and therefore
-      // still win every touch that lands on one, while this takes only what
-      // would otherwise have reached the résumé.
-      .background {
-        Color.clear
-          .contentShape(.capsule)
-          .onTapGesture { }
-      }
-      .glassEffect(.regular.interactive(), in: .capsule)
-      .contentShape(.capsule)
-  }
-}
-
-/// The bar's controls are SF Symbols, and `.plain` makes a button's hit area
-/// exactly its label — a ~17pt glyph. Every near miss fell through to the
-/// webview underneath, so tapping "next to" a control started an inline edit
-/// instead, and the smaller glyphs read as buttons that simply did not work.
-///
-/// 40pt of hit area, and the spacing the glyphs used to carry is now the padding
-/// inside each slot: with `spacing: 0`, adjacent glyphs still sit ~20pt apart,
-/// so the bar looks the same and grows by about 20pt overall.
-///
-/// `minWidth`/`minHeight`, not a fixed frame: the zoom readout is text and has
-/// to be allowed to be wider than a glyph.
-private struct BarButtonStyle: ButtonStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .frame(minWidth: 40, minHeight: 40)
-      .contentShape(.rect)
-      .opacity(configuration.isPressed ? 0.4 : 1)
   }
 }
 
