@@ -11,4 +11,5 @@ op_ios_ci_check_tools
 op_info="$OP_IOS_APPLE_PROJECT/resume-designer_iOS/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 1.0.0' "$op_info"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CI_BUILD_NUMBER" "$op_info"
+node "$OP_IOS_APP_ROOT/scripts/ios-testflight-notes.mjs" "$OP_IOS_APPLE_PROJECT"
 test -f "$OP_IOS_APP_ROOT/dist/index.html"

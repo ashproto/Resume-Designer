@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify } from 'node:crypto';
+import { assertCloudOrdering } from './ios-cloud-order.mjs';
 import {
   validateInput, createAscJwt, safeApiUrl, createApi, ensureTrustedCommit,
   ensureReleaseTag, selectTag, validateWorkflow, cloudState, betaState, release, parseArgs,
@@ -18,11 +19,151 @@ const run = (overrides = {}) => ({ id: 'run', type: 'ciBuildRuns', attributes: {
 const build = { id: 'build', attributes: { version: '4', processingState: 'VALID', buildAudienceType: 'APP_STORE_ELIGIBLE', expired: false } };
 const fail404 = () => { throw Object.assign(new Error('missing'), { status: 404 }); };
 
+const previewInput = { ...input, branch: undefined, kind: 'preview', prNumber: 158, commentId: 2468 };
+const previewTag = `ios-testflight/pr/158/2468/${sha}`;
+
 test('only full SHAs in the canonical repo and trusted branches are accepted', () => {
   assert.equal(validateInput(input).tag, tag);
-  for (const bad of [{ branch: 'feature' }, { sha: 'abc' }, { repository: 'fork/Resume-Designer' }, { workflowId: '../escape' }]) {
+  for (const bad of [{ branch: 'feature' }, { sha: 'abc' }, { sha: `${sha}\n` }, { workflowId: 'workflow\n' }, { repository: 'fork/Resume-Designer' }, { workflowId: '../escape' }]) {
     assert.throws(() => validateInput({ ...input, ...bad }));
   }
+});
+
+test('preview identity derives a fixed internal-only tag and rejects caller-selected audiences', () => {
+  const result = validateInput(previewInput);
+  assert.equal(result.tag, previewTag);
+  assert.equal(result.audience, 'INTERNAL_ONLY');
+  assert.equal(validateInput(input).audience, 'APP_STORE_ELIGIBLE');
+  for (const bad of [{ prNumber: 0 }, { prNumber: '158' }, { commentId: -1 }, { kind: 'other' }, { audience: 'APP_STORE_ELIGIBLE' }]) {
+    assert.throws(() => validateInput({ ...previewInput, ...bad }));
+  }
+  assert.throws(() => validateInput({ ...input, audience: 'INTERNAL_ONLY' }));
+});
+
+test('preview dispatch cannot run without live source and app-ordering checks', async () => {
+  const s = scenario();
+  await assert.rejects(release(previewInput, s.options), /preview.*checks/i);
+  await assert.rejects(release(previewInput, { ...s.options, authorizeSource: async () => true }), /preview.*checks/i);
+  assert.deepEqual(s.writes, []);
+});
+
+function previewScenario() {
+  const s = scenario();
+  const request = s.gh.request;
+  s.gh.request = async (path, options) => {
+    const value = await request(path, options);
+    if (path.includes('/git/ref/') || options?.method === 'POST') return { ...value, ref: `refs/tags/${previewTag}` };
+    return value;
+  };
+  const ascRequest = s.asc.request;
+  s.asc.request = async (path, options) => {
+    const value = structuredClone(await ascRequest(path, options));
+    if (path.startsWith('/v1/ciWorkflows/workflow?')) value.data.attributes.actions[0].buildDistributionAudience = 'INTERNAL_ONLY';
+    return value;
+  };
+  const collection = s.asc.collection;
+  s.asc.collection = async path => {
+    const values = structuredClone(await collection(path));
+    if (path.includes('/gitReferences')) values[0].attributes = { ...values[0].attributes, name: previewTag, canonicalName: `refs/tags/${previewTag}` };
+    if (path.includes('/builds?')) values.forEach(item => { item.attributes.buildAudienceType = 'INTERNAL_ONLY'; });
+    return values;
+  };
+  s.trace = [];
+  s.options.authorizeSource = async purpose => { s.trace.push(`source:${purpose}`); return true; };
+  s.options.beforeStart = async () => { s.trace.push('ordering'); };
+  s.options.recordState = async state => { s.trace.push(`journal:${state}`); };
+  return s;
+}
+
+test('preview verifies internal-only delivery and journals before its one start', async () => {
+  const s = previewScenario();
+  const result = await release(previewInput, s.options);
+  assert.equal(result.tag, previewTag);
+  assert.equal(result.state, 'testflight_available');
+  assert.deepEqual(s.writes, ['tag', 'start']);
+  assert.ok(s.trace.indexOf('ordering') < s.trace.indexOf('journal:post-attempted'));
+  assert.ok(s.trace.includes('journal:reserved'));
+  assert.ok(s.trace.includes('journal:delivered'));
+  assert.equal(s.trace.at(-2), 'source:monitor');
+});
+
+test('preview live checks remain the final awaited gate before POST', async () => {
+  const s = previewScenario();
+  s.options.authorizeSource = async purpose => { s.trace.push(`source:${purpose}`); return purpose !== 'start'; };
+  const result = await release(previewInput, s.options);
+  assert.equal(result.state, 'superseded');
+  assert.deepEqual(s.writes, ['tag']);
+  assert.ok(s.trace.includes('journal:not-started'));
+});
+
+test('ordering or journal failures cannot start a Cloud build', async () => {
+  for (const fail of ['ordering', 'journal']) {
+    const s = previewScenario();
+    if (fail === 'ordering') s.options.beforeStart = async () => { throw new Error('Unfinished earlier upload'); };
+    else s.options.recordState = async state => { s.trace.push(`journal:${state}`); if (state === 'post-attempted') throw new Error('Journal unavailable'); };
+    await assert.rejects(release(previewInput, s.options), /Unfinished|Journal/);
+    assert.ok(!s.writes.includes('start'));
+    assert.ok(s.trace.includes('journal:not-started'));
+  }
+});
+
+test('recovery-only requests cannot create a reservation or start a run', async () => {
+  const s = previewScenario();
+  await assert.rejects(release({ ...previewInput, recoveryOnly: true }, s.options), /existing release tag/);
+  assert.deepEqual(s.writes, []);
+});
+
+test('observed Cloud work is never journaled as not-started even when this controller did not POST', async () => {
+  const s = previewScenario();
+  const collection = s.asc.collection;
+  s.asc.collection = async path => path.includes('/buildRuns?') ? [run({completionStatus:'FAILED'})] : collection(path);
+  const request = s.asc.request;
+  s.asc.request = async (path, options) => path.startsWith('/v1/ciBuildRuns/run?')
+    ? {data:run({completionStatus:'FAILED'})} : request(path, options);
+  await assert.rejects(release(previewInput,s.options),/FAILED/);
+  assert.deepEqual(s.writes,['tag']);
+  assert.ok(!s.trace.includes('journal:not-started'));
+});
+
+test('real ordering observes a current run missed by the controller without false no-start evidence', async () => {
+  const s = previewScenario();
+  const ghRequest = s.gh.request;
+  s.gh.request = async (path, options) => path === `/repos/${input.repository}/git/matching-refs/tags/ios-testflight/`
+    ? [{ ref: `refs/tags/${previewTag}`, object: { type: 'commit', sha } }]
+    : ghRequest(path, options);
+  const ascRequest = s.asc.request;
+  s.asc.request = async (path, options) => {
+    if (path === '/v1/ciWorkflows/production?include=repository,product') return { data: { ...workflow, id: 'production' } };
+    if (path === '/v1/scmRepositories/repo') return { data: repository };
+    return ascRequest(path, options);
+  };
+  const collection = s.asc.collection;
+  let currentRunListings = 0;
+  s.asc.collection = async path => {
+    if (path.startsWith('/v1/ciWorkflows/workflow/buildRuns?')) {
+      return ++currentRunListings === 1 ? [] : [run({ executionProgress: 'RUNNING' })];
+    }
+    if (path.startsWith('/v1/ciWorkflows/production/buildRuns?')) return [];
+    return collection(path);
+  };
+  s.options.beforeStart = () => assertCloudOrdering({ gh: s.gh, asc: s.asc, repository: input.repository,
+    appId: input.appId, workflowIds: ['workflow', 'production'], currentTag: previewTag, forStart: true });
+  await assert.rejects(release(previewInput, s.options), /current reservation is already visible/);
+  assert.equal(currentRunListings, 2);
+  assert.deepEqual(s.writes, ['tag']);
+  assert.ok(s.trace.includes('journal:reserved'));
+  assert.ok(!s.trace.includes('journal:post-attempted'));
+  assert.ok(!s.trace.includes('journal:not-started'));
+});
+
+test('a run observation for another reservation does not suppress legitimate no-start evidence', async () => {
+  const s = previewScenario();
+  s.options.beforeStart = async () => { throw Object.assign(new Error('Other reservation has a Cloud run'), {
+    code: 'CLOUD_RUN_ALREADY_EXISTS', tag: `ios-testflight/pr/158/2469/${sha}`,
+  }); };
+  await assert.rejects(release(previewInput, s.options), /Other reservation/);
+  assert.deepEqual(s.writes, ['tag']);
+  assert.ok(s.trace.includes('journal:not-started'));
 });
 
 test('ASC JWT uses ES256 P1363, correct claims, and tolerates escaped PEM newlines', () => {

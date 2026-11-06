@@ -7,6 +7,28 @@ to the configured internal TestFlight group. App Store submission is separate.
 
 ## Current activation state
 
+As of **2026-11-06**, the protected-branch release lane is operational and
+`IOS_TESTFLIGHT_AUTOMATION_ENABLED=true`. Verified GitHub run
+[42160990194](https://github.com/ashproto/Resume-Designer/actions/runs/42160990194)
+delivered source `dd1ca63c1a3992ec50a8846c509b1551fa450415` as internal TestFlight
+build **6**. That evidence is for the existing main/next lane, not the new PR
+preview workflow below. The PR preview implementation has passed local tests and independent review.
+Its bootstrap is being reviewed in [PR #158](https://github.com/ashproto/Resume-Designer/pull/158). Preview mode remains off until the bootstrap lands and the controlled pilot below is verified.
+
+The PR Cloud workflow is saved with clean builds, restricted editing, manual
+`ios-testflight/pr/` tags, an internal-only archive and **On Paper Dev** as its
+sole TestFlight post-action group. That internal group has automatic all-build
+distribution disabled and one owner-authorized existing tester. The existing
+production workflow and recipients are unchanged. Both workflow IDs are saved
+in the main-only GitHub environment. The shared product counter was verified
+as **7**; it was not reset. These are account configuration checks, not proof
+of signed preview delivery or physical-device installation.
+
+### Historical account setup checkpoint
+
+The following September checkpoint is retained as history. Its pending-pilot,
+counter, toolchain and activation statements are not current account evidence.
+
 As of 2026-09-23, account setup is configured. PR #133 is merged with
 `skip-build`; promotion PR #134 is pending review fixes. Promotion to `main`
 and the first live pilot remain outstanding. Automatic dispatch is **off**
@@ -97,9 +119,9 @@ workflow cannot authorize delivery.
 
 ## Release ordering
 
-Delivery holds one concurrency slot for each source branch, from dispatch through
-Cloud completion and TestFlight monitoring. Different SHAs of the same branch
-cannot start releases concurrently. Automatic CI events for an older branch
+Delivery holds one app-wide concurrency slot, shared by main, next and PR
+previews, from dispatch through Cloud completion and TestFlight monitoring.
+Automatic CI events for an older branch
 revision are skipped as superseded, even if that revision is still an ancestor.
 The controller rechecks the protected branch head immediately before every new
 Cloud build request, including after a job waits for its slot or Cloud discovers
@@ -116,7 +138,8 @@ excluded; do not suppress other concurrency, expression, or shell errors:
 
 ```sh
 actionlint -ignore '^unexpected key "queue" for "concurrency" section\.' \
-  .github/workflows/ci.yml .github/workflows/ios-testflight.yml
+  .github/workflows/ci.yml .github/workflows/ios-testflight.yml \
+  .github/workflows/ios-testflight-pr.yml
 ```
 
 ## One-time account setup
@@ -270,6 +293,156 @@ workflow, and undeleted-reference checks still apply before any Cloud start.
 - Set `IOS_TESTFLIGHT_AUTOMATION_ENABLED=false` to stop new automatic dispatches.
   Existing Cloud runs continue and must be managed separately in App Store
   Connect. This does not affect desktop releases.
+
+## Owner-requested PR previews
+
+The implementation is `.github/workflows/ios-testflight-pr.yml` and the trusted
+`tools/ios-pr-*.mjs` controllers. The default mode is **off** until the bootstrap,
+account configuration and pilot are completed. This is an additional preview
+lane; the existing protected-branch release gate still requires successful push
+CI and protected ancestry.
+
+### Command and authorization
+
+Create a new PR comment whose whole trimmed body is exactly `/testflight-dev`.
+Only owner **ashproto**, numeric user ID **35086581**, with current repository
+admin access can request or rerun a preview. Public comments and other
+collaborators cannot enter the delivery queue or Apple environment. Edited
+comments and arguments do not authorize anything.
+
+The PR must be open (drafts are allowed), originate in repository ID
+**1163653093**, and target protected `next` or `main`. Fork PRs are refused even
+for an owner command. Successful upstream `CI` for that exact PR head must have
+completed `checks`, `rust-check` and `ios-native` jobs. Existing PR CI tests the
+synthetic merge; Cloud archives the pinned PR head, not that synthetic merge.
+After pending/failing CI, create a fresh command once CI passes.
+
+The authorization job runs trusted event-main code, verifies live GitHub
+identities and inspects candidate Git objects as data. It freezes native,
+dependency, build and CI configuration against that main revision. Changes to
+these inputs require a separate reviewed infrastructure bootstrap. Normal
+Swift/JS/CSS application changes remain previewable. This is defense in depth:
+the owner must trust the exact source, which Cloud compiles in its build/signing
+pipeline. It is not an untrusted-code sandbox.
+
+### Required bootstrap and account settings
+
+1. Land the infrastructure through feature → `next` → `main` using reviewed,
+   history-preserving merges. The comment workflow must exist on default main.
+   Keep preview mode off. Do not fold the unmerged UI feature into this bootstrap
+   just to activate previews.
+2. In the existing On Paper Cloud product/app, create **On Paper – PR TestFlight**
+   with the committed project/shared scheme and release configuration. Select
+   Xcode **27.1 or newer**, preferably **27.2**, managed signing, an iOS archive
+   with **internal-only** audience, and manual tags restricted to
+   `ios-testflight/pr/`. Disable every automatic start condition. Do not create
+   another app or reset the shared Cloud build-number counter.
+3. Create/select **On Paper Dev** as an internal tester group, using already
+   intended testers. Verify the Cloud TestFlight post-action selects only this
+   group, no external recipients. Disable automatic all-build access on every
+   app beta group; preflight refuses it because it could distribute previews to
+   unintended recipients. Make those account changes deliberately, rather than
+   silently modifying existing groups. Native recipient settings require UI
+   verification: Apple's workflow API does not expose them.
+4. Keep existing ASC secrets in main-only environment **ios-testflight**. Add
+   environment variables `XCODE_CLOUD_PR_WORKFLOW_ID` and
+   `APP_STORE_CONNECT_DEV_GROUP_ID`. Existing `XCODE_CLOUD_WORKFLOW_ID`, app ID
+   and production internal-group ID remain production configuration. No new PAT,
+   signing certificate export or private key in candidate build scripts is used.
+5. Extend the active update/delete tag ruleset, without bypass actors, to both
+   `refs/tags/ios-testflight/pr/**` and `refs/tags/ios-testflight/request/**`.
+   Preserve the main/next patterns. Allow creation only as required by the
+   trusted controller; never enable automatic Cloud builds for these tags.
+6. Merge the updated main into the feature branch, preserving history. The PR's
+   immutable commit must contain the new tag hook and match main's protected
+   build inputs. Never overlay main files onto the candidate during Cloud build.
+7. Reconcile existing Cloud history/reservations before activation. Unknown or
+   deleted source references and ambiguous prior starts must be resolved; an
+   Actions timeout is not proof that Cloud stopped. Confirm both workflows use
+   the same product's next `CI_BUILD_NUMBER`, above previous uploads.
+8. Set repository `IOS_PR_TESTFLIGHT_MODE=pilot`,
+   `IOS_PR_TESTFLIGHT_PILOT_PR=<number>` and
+   `IOS_PR_TESTFLIGHT_PILOT_SHA=<full lowercase SHA>` for one reviewed candidate.
+   Comment as the owner, verify the exact SHA/build reaches On Paper Dev, then
+   install and test on the physical Duo. Only after this succeeds set mode to
+   `enabled`. Unset/`off` prevents new preview starts while allowing recovery.
+
+Do not enable preview mode until **both** deployed release controllers include
+app-wide ordering. The production controller refuses active preview mode without
+the configured preview workflow ID. Once that ID is configured it coordinates
+even while preview mode is off, because an older preview could still be running.
+
+### Immutable requests, ordering and recovery
+
+Each owner comment has a permanent lightweight binding
+`ios-testflight/request/pr-<number>/comment-<id>`. Its original SHA survives full
+workflow reruns. Cloud uses a separate dispatch reservation
+`ios-testflight/pr/<number>/<comment-id>/<full-sha>`. A pushed commit makes an
+unstarted request stale; another comment is required. A new comment may
+deliberately rebuild the same SHA; rerunning the original comment cannot.
+If the original workflow failed before creating a binding, rerunning it cannot
+approve a later head; create a fresh command instead.
+
+Only an unambiguous fresh reservation creator may send one Cloud start POST.
+Existing reservations can only be reconciled/monitored. Both workflows share
+`ios-testflight-com-onpaper-app` concurrency through Apple processing. Before
+new starts, the controller additionally checks earlier Cloud runs and uploads;
+a departed Actions monitor cannot free an unfinished Cloud upload.
+
+Reservation outcome commit statuses are discovery pointers, not proof. Clearing
+an unused reservation requires the final matching structured outcome in the
+authenticated logs of a completed trusted-main release job. The controller uses
+the hosted runner's `gh` CLI with an isolated empty config and only its GitHub
+token to read those job logs; Apple credentials are excluded from that child
+environment. Missing logs/provenance, uncertain POST acceptance or unknown upload
+states keep ordering blocked. No timeout or general force-clear grants a retry.
+
+One pre-journal reservation is reconciled by `tools/ios-cloud-legacy.mjs`:
+`ios-testflight/next/52e1b799c03be084736a10c3ff7aa81d41b22a2c`. Its
+[original trusted-main run](https://github.com/ashproto/Resume-Designer/actions/runs/42157371938)
+completed tag discovery as `superseded` before the pinned controller could
+reach its only Cloud POST. The receipt pins the exact run, attempt, job, source
+files and authenticated raw-log digest. It applies only with no structured
+journal for that reservation, after all live Cloud/upload checks; missing or
+changed evidence remains blocked. It grants no start/retry authority, changes
+no status or tag, and cannot close any other reservation.
+
+For recovery, run **iOS PR TestFlight** from **main**, supplying its original
+`request_tag` and an optional known `resume_run_id`. Omitting the run ID scans for
+the exact reservation; it still cannot start a build or create another tag. The
+owner, original unchanged command and binding are verified again. Monitoring may
+continue after PR advancement/closure or after mode is off. A deleted/edited
+original command fails authorization and requires account-side operator
+reconciliation rather than authorizing another start.
+
+If no run is visible after an ambiguous POST, retain all refs and seek
+authoritative Apple reconciliation. A definitively recorded pre-POST failure or
+Apple rejection can close an unused reservation for ordering; absence from an
+API list alone cannot. Do not delete tags, restart ambiguous reservations or
+request another build to work around the block.
+
+An isolated feedback job updates one bot comment per owner request with the
+source SHA, Actions URL, Cloud run/build identity and verified state. Feedback
+cannot authorize delivery. `testflight_available` requires correct app, source,
+internal-only audience, processing, number and Dev group membership; a submitted
+run or local archive is not availability. A tested Cloud prebuild helper also
+writes PR/source/build metadata to `TestFlight/WhatToTest.en-US.txt` beside the
+Xcode project. Actual TestFlight note ingestion is part of the live pilot.
+
+The Dev build uses **com.onpaper.app** and **iCloud.com.onpaper.app**, with
+distribution CloudKit/APNs. It replaces the same app and accesses its existing
+data. A tester group does not provide a separate data sandbox or side-by-side app.
+
+### Local implementation evidence
+
+Local mocked policy/dispatch/recovery tests, tree-object tests and workflow lint
+are separate from hosted GitHub/Apple delivery evidence. The actual PR-tag Cloud
+hook has been exercised in an isolated copy, and unsigned simulator compilation
+and device Release archive pass with Node 24.13.0, Rust 1.92.0 and Xcode 27.2.
+Hosted bootstrap CI and the account configuration above are tracked separately
+from these local results. Signed preview upload, actual TestFlight note ingestion
+and physical-device installation remain pending the controlled pilot. See the
+implementation handoff for final local test counts and retained logs.
 
 ## References
 

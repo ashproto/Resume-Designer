@@ -7,10 +7,11 @@
 // The tag is a durable reservation. An existing reservation never authorizes a
 // second POST, including after a lost response or runner crash. Cloud must have
 // no automatic start conditions, and repository rules must forbid moving or
-// deleting ios-testflight/** tags. Workflow concurrency serializes each branch.
+// deleting ios-testflight/** tags. Workflow concurrency serializes this app.
 import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { attachReservationEvidence, coordinatedReleaseOptions } from './ios-cloud-evidence.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const BUNDLE_ID = 'com.onpaper.app';
@@ -25,11 +26,19 @@ const requireId = (value, label) => {
 
 export function validateInput(input) {
   if (input.repository !== REPOSITORY) throw new Error(`Only ${REPOSITORY} may dispatch this release`);
-  if (!['main', 'next'].includes(input.branch)) throw new Error('Release branch must be main or next');
+  const kind = input.kind ?? 'release';
+  if (!['release', 'preview'].includes(kind)) throw new Error('Unknown iOS delivery kind');
+  if (kind === 'release' && !['main', 'next'].includes(input.branch)) throw new Error('Release branch must be main or next');
+  if (kind === 'preview' && ![input.prNumber, input.commentId].every(value => Number.isSafeInteger(value) && value > 0)) {
+    throw new Error('Preview requires positive PR and comment identities');
+  }
   if (!SHA.test(input.sha || '')) throw new Error('A full lowercase 40-character commit SHA is required');
   for (const key of ['workflowId', 'appId', 'groupId']) requireId(input[key], key);
   if (input.resumeRunId) requireId(input.resumeRunId, 'resume run id');
-  return { ...input, tag: `ios-testflight/${input.branch}/${input.sha}` };
+  const audience = kind === 'preview' ? 'INTERNAL_ONLY' : 'APP_STORE_ELIGIBLE';
+  if (input.audience !== undefined && input.audience !== audience) throw new Error('Archive audience cannot override the delivery policy');
+  const tag = kind === 'preview' ? `ios-testflight/pr/${input.prNumber}/${input.commentId}/${input.sha}` : `ios-testflight/${input.branch}/${input.sha}`;
+  return { ...input, kind, audience, tag };
 }
 
 export function createAscJwt({ issuerId, keyId, privateKey }, now = Math.floor(Date.now() / 1000)) {
@@ -152,8 +161,9 @@ export function validateWorkflow(workflow, repository, app, input) {
   }
   if (!attrs.manualTagStartCondition) throw new Error('Cloud workflow must support manual tag builds');
   const archives = attrs.actions?.filter(action => action.actionType === 'ARCHIVE') || [];
-  if (archives.length !== 1 || archives[0].platform !== 'IOS' || archives[0].buildDistributionAudience !== 'APP_STORE_ELIGIBLE') {
-    throw new Error('Expected one App Store eligible iOS archive action; configure its internal TestFlight post-action in App Store Connect');
+  const audience = input.kind === 'preview' ? 'INTERNAL_ONLY' : 'APP_STORE_ELIGIBLE';
+  if (archives.length !== 1 || archives[0].platform !== 'IOS' || archives[0].buildDistributionAudience !== audience) {
+    throw new Error(`Expected one ${audience} iOS archive action; configure its internal TestFlight post-action in App Store Connect`);
   }
   const repo = repository?.attributes;
   const expectedUrl = `https://github.com/${input.repository}`;
@@ -193,12 +203,27 @@ export function betaState(build, detail) {
   throw new Error(`Unknown internal beta state: ${state}`);
 }
 
-export async function release(supplied, { gh, asc, output = () => {}, log = console.log, sleep = pause, pollAttempts = 180, discoveryAttempts = 120, pollMs = 30_000 }) {
+export async function release(supplied, { gh, asc, output = () => {}, log = console.log, sleep = pause, pollAttempts = 180, discoveryAttempts = 120, pollMs = 30_000,
+  authorizeSource, beforeStart, recordState = async () => {},
+}) {
   const input = validateInput(supplied);
-  const { workflowId, tag, sha, appId, groupId } = input;
-  const superseded = () => {
+  const { workflowId, tag, sha, appId, groupId, audience } = input;
+  let ownsReservation = false, mayHavePosted = false, cloudObserved = false;
+  if (input.kind === 'preview' && (typeof authorizeSource !== 'function' || typeof beforeStart !== 'function')) {
+    throw new Error('Preview requires trusted live source and app-ordering checks');
+  }
+  const sourceCurrent = async purpose => {
+    if (input.kind === 'preview') {
+      const result = await authorizeSource(purpose);
+      if (typeof result !== 'boolean') throw new Error('Preview source authorization must return a boolean');
+      return result;
+    }
+    return (purpose === 'monitor' ? await ensureTrustedCommit(gh, input) : await protectedBranchHead(gh, input)) === sha;
+  };
+  const superseded = async (ownsUnusedReservation = false) => {
+    if (ownsUnusedReservation) await recordState('not-started');
     output({ release_state: 'superseded' });
-    log(`Skipping new Cloud build for ${sha}: ${input.branch} has advanced. Any existing release tag is retained.`);
+    log(`Skipping new Cloud build for ${sha}: its source is no longer eligible. Any existing release tag is retained.`);
     return { state: 'superseded' };
   };
   async function poll(check, attempts, timeoutMessage) {
@@ -209,125 +234,145 @@ export async function release(supplied, { gh, asc, output = () => {}, log = cons
     }
     throw new Error(timeoutMessage);
   }
-  const wf = await asc.request(`/v1/ciWorkflows/${workflowId}?include=repository,product`);
-  const repoId = requireId(relationId(wf.data, 'repository'), 'workflow repository id');
-  const productId = requireId(relationId(wf.data, 'product'), 'workflow product id');
-  const repository = wf.included?.find(item => item.type === 'scmRepositories' && item.id === repoId);
-  const app = (await asc.request(`/v1/ciProducts/${productId}/app`)).data;
-  validateWorkflow(wf.data, repository, app, input);
-  const group = (await asc.request(`/v1/betaGroups/${groupId}?include=app`)).data;
-  if (group?.id !== groupId || group.attributes?.isInternalGroup !== true || relationId(group, 'app') !== appId) {
-    throw new Error('Configured TestFlight group must be an internal group belonging to this app');
-  }
-  const head = await ensureTrustedCommit(gh, input);
-  // Older reachable commits may still have a run to monitor, but cannot make
-  // a fresh reservation or start a higher-numbered build after newer code.
-  // Explicit recovery must never consume a new reservation before the supplied
-  // run can be checked. A wrong run ID otherwise strands the current head.
-  const reservation = await ensureReleaseTag(gh, input, { allowCreate: head === sha && !input.resumeRunId });
-  if (!reservation) {
-    if (input.resumeRunId) throw new Error('Resuming a Cloud run requires an existing release tag; no new reservation was created.');
-    return superseded();
-  }
-  output({ release_tag: tag });
-  // Apple can take longer than ten minutes to index a newly pushed tag. Keep
-  // this creator's sole start authorization alive while it becomes visible.
-  output({ release_state: 'discovering_tag' });
-  let reference;
-  for (let index = 0; index < discoveryAttempts; index++) {
-    // Do not hold a newer release in the queue while an obsolete tag indexes.
-    // Existing runs can still be monitored after their branch advances.
-    if (reservation.created && index > 0 && await protectedBranchHead(gh, input) !== sha) return superseded();
-    const references = await asc.collection(`/v1/scmRepositories/${repoId}/gitReferences?limit=200`);
-    reference = selectTag(references, tag);
-    if (reference) break;
-    const canonical = references.filter(item => item.attributes?.canonicalName === `refs/tags/${tag}`);
-    // Counts only: do not dump upstream payloads or unrelated reference names.
-    log(`Cloud tag discovery ${index + 1}/${discoveryAttempts}: scanned=${references.length}, name=${references.filter(item => item.attributes?.name === tag).length}, canonical=${canonical.length}, TAG=${canonical.filter(item => item.attributes?.kind === 'TAG').length}, undeleted=${canonical.filter(item => item.attributes?.isDeleted === false).length}.`);
-    if (index + 1 < discoveryAttempts) await sleep(pollMs);
-  }
-  if (!reference) throw new Error('Cloud has not discovered the release tag. Reservation retained; reconcile before starting a build manually.');
-  requireId(reference.id, 'Apple tag id');
-  const listRuns = () => asc.collection(`/v1/ciWorkflows/${workflowId}/buildRuns?include=sourceBranchOrTag,workflow&limit=200&sort=-number`);
-  const findRun = async () => {
-    const matches = (await listRuns()).filter(item => relationId(item, 'sourceBranchOrTag') === reference.id);
-    if (matches.length > 1) throw new Error('Multiple Cloud runs use this release tag; reconcile duplicates manually');
-    return matches[0];
-  };
-  let run = input.resumeRunId
-    ? (await asc.request(`/v1/ciBuildRuns/${input.resumeRunId}?include=workflow,sourceBranchOrTag`)).data
-    : await findRun();
-  if (!run && !reservation.created) {
-    run = await poll(findRun, discoveryAttempts,
-      'Existing release reservation has no visible Cloud run. Do not retry the POST; reconcile this tag in App Store Connect first.');
-  }
-  if (!run) {
-    // Recheck the immutable GitHub ref immediately before the non-idempotent POST.
-    assertTag(await gh.request(`/repos/${input.repository}/git/ref/tags/${tag}`), input);
-    // Discovery and queueing can outlive another push. Keep this protected-head
-    // read as the final awaited check before any new POST; existing runs above
-    // remain monitorable after their branch advances.
-    if (await protectedBranchHead(gh, input) !== sha) return superseded();
-    try {
-      run = (await asc.request('/v1/ciBuildRuns', { method: 'POST', body: { data: { type: 'ciBuildRuns', relationships: {
-        workflow: relation(workflowId, 'ciWorkflows'), sourceBranchOrTag: relation(reference.id, 'scmGitReferences'),
-      } } } })).data;
-      requireId(run?.id, 'created build run id');
-    } catch (error) {
-      if (error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) {
-        throw new Error(`Cloud refused the build (${error.status}); reservation retained for manual reconciliation.`);
-      }
-      log('Cloud start response was ambiguous; checking for an accepted run without posting again.');
+  try {
+    const wf = await asc.request(`/v1/ciWorkflows/${workflowId}?include=repository,product`);
+    const repoId = requireId(relationId(wf.data, 'repository'), 'workflow repository id');
+    const productId = requireId(relationId(wf.data, 'product'), 'workflow product id');
+    const repository = wf.included?.find(item => item.type === 'scmRepositories' && item.id === repoId);
+    const app = (await asc.request(`/v1/ciProducts/${productId}/app`)).data;
+    validateWorkflow(wf.data, repository, app, input);
+    const group = (await asc.request(`/v1/betaGroups/${groupId}?include=app`)).data;
+    if (group?.id !== groupId || group.attributes?.isInternalGroup !== true || relationId(group, 'app') !== appId) {
+      throw new Error('Configured TestFlight group must be an internal group belonging to this app');
+    }
+    const current = await sourceCurrent('monitor');
+    // Older reachable commits may still have a run to monitor, but cannot make
+    // a fresh reservation or start a higher-numbered build after newer code.
+    // Explicit recovery must never consume a new reservation before the supplied
+    // run can be checked. A wrong run ID otherwise strands the current head.
+    const reservation = await ensureReleaseTag(gh, input, { allowCreate: current && !input.resumeRunId && !input.recoveryOnly });
+    if (!reservation) {
+      if (input.resumeRunId || input.recoveryOnly) throw new Error('Resuming a Cloud run requires an existing release tag; no new reservation was created.');
+      return superseded();
+    }
+    ownsReservation = reservation.created;
+    if (reservation.created) await recordState('reserved');
+    output({ release_tag: tag });
+    // Apple can take longer than ten minutes to index a newly pushed tag. Keep
+    // this creator's sole start authorization alive while it becomes visible.
+    output({ release_state: 'discovering_tag' });
+    let reference;
+    for (let index = 0; index < discoveryAttempts; index++) {
+      // Do not hold a newer release in the queue while an obsolete tag indexes.
+      // Existing runs can still be monitored after their branch advances.
+      if (reservation.created && index > 0 && !await sourceCurrent('discover')) return superseded(true);
+      const references = await asc.collection(`/v1/scmRepositories/${repoId}/gitReferences?limit=200`);
+      reference = selectTag(references, tag);
+      if (reference) break;
+      const canonical = references.filter(item => item.attributes?.canonicalName === `refs/tags/${tag}`);
+      // Counts only: do not dump upstream payloads or unrelated reference names.
+      log(`Cloud tag discovery ${index + 1}/${discoveryAttempts}: scanned=${references.length}, name=${references.filter(item => item.attributes?.name === tag).length}, canonical=${canonical.length}, TAG=${canonical.filter(item => item.attributes?.kind === 'TAG').length}, undeleted=${canonical.filter(item => item.attributes?.isDeleted === false).length}.`);
+      if (index + 1 < discoveryAttempts) await sleep(pollMs);
+    }
+    if (!reference) throw new Error('Cloud has not discovered the release tag. Reservation retained; reconcile before starting a build manually.');
+    requireId(reference.id, 'Apple tag id');
+    const listRuns = () => asc.collection(`/v1/ciWorkflows/${workflowId}/buildRuns?include=sourceBranchOrTag,workflow&limit=200&sort=-number`);
+    const findRun = async () => {
+      const matches = (await listRuns()).filter(item => relationId(item, 'sourceBranchOrTag') === reference.id);
+      if (matches.length) cloudObserved = true;
+      if (matches.length > 1) throw new Error('Multiple Cloud runs use this release tag; reconcile duplicates manually');
+      return matches[0];
+    };
+    let run = input.resumeRunId
+      ? (await asc.request(`/v1/ciBuildRuns/${input.resumeRunId}?include=workflow,sourceBranchOrTag`)).data
+      : await findRun();
+    if (!run && !reservation.created) {
       run = await poll(findRun, discoveryAttempts,
-        'Cloud start may have been accepted. Reservation retained; check App Store Connect and reconcile before any new start.');
+        'Existing release reservation has no visible Cloud run. Do not retry the POST; reconcile this tag in App Store Connect first.');
     }
-  }
-  requireId(run?.id, 'build run id');
-  const runId = run.id;
-  // Emit immediately, before identity/completion polling can fail.
-  output({ build_run_id: runId, cloud_build_number: run.attributes?.number ?? '', release_state: 'submitted' });
-  if ((relationId(run, 'workflow') && relationId(run, 'workflow') !== workflowId)
-    || (relationId(run, 'sourceBranchOrTag') && relationId(run, 'sourceBranchOrTag') !== reference.id)) {
-    throw new Error('Initial build run workflow or tag does not match the authorized release');
-  }
-  if (run.attributes?.sourceCommit?.commitSha && run.attributes.sourceCommit.commitSha !== sha) {
-    throw new Error('Initial Cloud build source commit differs from the authorized commit');
-  }
-  log(`Cloud build ${runId} submitted or resumed for ${sha}. Waiting for completion.`);
-  const completed = await poll(async () => {
-    const current = (await asc.request(`/v1/ciBuildRuns/${runId}?include=workflow,sourceBranchOrTag`)).data;
-    if (current?.id !== runId) throw new Error('Cloud returned a different build run id');
-    return cloudState(current, input, reference.id) === 'succeeded' && current;
-  }, pollAttempts, `Cloud build ${runId} is still incomplete; resume its run id, do not start another build.`);
-  output({ release_state: 'cloud_succeeded', cloud_build_number: completed.attributes.number ?? '' });
-  const delivered = await poll(async () => {
-    const builds = await asc.collection(`/v1/ciBuildRuns/${runId}/builds?filter[app]=${appId}&filter[preReleaseVersion.platform]=IOS&limit=200`);
-    if (builds.length === 0) return false;
-    if (builds.length !== 1) throw new Error('Cloud run has multiple iOS builds for this app; cannot identify the release');
-    const build = builds[0];
-    const buildId = requireId(build.id, 'App Store Connect build id');
-    output({ asc_build_id: buildId });
-    const owner = (await asc.request(`/v1/builds/${buildId}/app`)).data;
-    if (owner?.id !== appId) throw new Error('Uploaded build belongs to a different app');
-    if (build.attributes?.buildAudienceType !== 'APP_STORE_ELIGIBLE') throw new Error('Uploaded build audience differs from the configured archive');
-    if (build.attributes?.processingState !== 'VALID') {
-      betaState(build, {});
-      return false;
+    if (!run) {
+      if (input.recoveryOnly) throw new Error('Recovery cannot start a new Cloud build; reconcile the existing reservation.');
+      if (beforeStart) await beforeStart(input);
+      // Recheck the immutable GitHub ref immediately before the non-idempotent POST.
+      assertTag(await gh.request(`/repos/${input.repository}/git/ref/tags/${tag}`), input);
+      // Persist that a request may be sent before the final authorization read.
+      // A crash afterward must remain ambiguous, never authorize a second POST.
+      await recordState('post-attempted');
+      // Discovery and queueing can outlive another push. Keep this protected-head
+      // read as the final awaited check before any new POST; existing runs above
+      // remain monitorable after their branch advances.
+      if (!await sourceCurrent('start')) return superseded(reservation.created);
+      mayHavePosted = true;
+      try {
+        run = (await asc.request('/v1/ciBuildRuns', { method: 'POST', body: { data: { type: 'ciBuildRuns', relationships: {
+          workflow: relation(workflowId, 'ciWorkflows'), sourceBranchOrTag: relation(reference.id, 'scmGitReferences'),
+        } } } })).data;
+        requireId(run?.id, 'created build run id');
+      } catch (error) {
+        if (error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) {
+          await recordState('rejected');
+          throw new Error(`Cloud refused the build (${error.status}); reservation retained for manual reconciliation.`);
+        }
+        log('Cloud start response was ambiguous; checking for an accepted run without posting again.');
+        run = await poll(findRun, discoveryAttempts,
+          'Cloud start may have been accepted. Reservation retained; check App Store Connect and reconcile before any new start.');
+      }
     }
-    const detail = (await asc.request(`/v1/builds/${buildId}/buildBetaDetail`)).data?.attributes || {};
-    if (betaState(build, detail) !== 'available') return false;
-    // Apple offers GET group/builds, not GET build/betaGroups. Follow all pages
-    // so a newer build cannot hide an older resumed release from this check.
-    const groupBuilds = await asc.collection(`/v1/betaGroups/${groupId}/builds?limit=200&fields[builds]=version`);
-    if (!groupBuilds.some(item => item.id === buildId)) return false;
-    if (!Number.isInteger(completed.attributes.number) || String(completed.attributes.number) !== build.attributes.version) {
-      throw new Error('Uploaded CFBundleVersion does not match the Xcode Cloud build number');
+    requireId(run?.id, 'build run id');
+    const runId = run.id;
+    // Emit immediately, before identity/completion polling can fail.
+    output({ build_run_id: runId, cloud_build_number: run.attributes?.number ?? '', release_state: 'submitted' });
+    if ((relationId(run, 'workflow') && relationId(run, 'workflow') !== workflowId)
+      || (relationId(run, 'sourceBranchOrTag') && relationId(run, 'sourceBranchOrTag') !== reference.id)) {
+      throw new Error('Initial build run workflow or tag does not match the authorized release');
     }
-    return build;
-  }, pollAttempts, `Cloud succeeded, but internal TestFlight availability for build run ${runId} is unconfirmed. Check processing, export compliance and the workflow's internal tester group.`);
-  output({ release_state: 'testflight_available', asc_build_id: delivered.id, build_number: delivered.attributes.version });
-  log(`Build ${delivered.id} is available to the configured internal TestFlight group. App Store submission remains manual.`);
-  return { state: 'testflight_available', runId, buildId: delivered.id, tag };
+    if (run.attributes?.sourceCommit?.commitSha && run.attributes.sourceCommit.commitSha !== sha) {
+      throw new Error('Initial Cloud build source commit differs from the authorized commit');
+    }
+    log(`Cloud build ${runId} submitted or resumed for ${sha}. Waiting for completion.`);
+    const completed = await poll(async () => {
+      const current = (await asc.request(`/v1/ciBuildRuns/${runId}?include=workflow,sourceBranchOrTag`)).data;
+      if (current?.id !== runId) throw new Error('Cloud returned a different build run id');
+      return cloudState(current, input, reference.id) === 'succeeded' && current;
+    }, pollAttempts, `Cloud build ${runId} is still incomplete; resume its run id, do not start another build.`);
+    output({ release_state: 'cloud_succeeded', cloud_build_number: completed.attributes.number ?? '' });
+    if (input.kind === 'preview') await sourceCurrent('monitor');
+    const delivered = await poll(async () => {
+      const builds = await asc.collection(`/v1/ciBuildRuns/${runId}/builds?filter[app]=${appId}&filter[preReleaseVersion.platform]=IOS&limit=200`);
+      if (builds.length === 0) return false;
+      if (builds.length !== 1) throw new Error('Cloud run has multiple iOS builds for this app; cannot identify the release');
+      const build = builds[0];
+      const buildId = requireId(build.id, 'App Store Connect build id');
+      output({ asc_build_id: buildId });
+      const owner = (await asc.request(`/v1/builds/${buildId}/app`)).data;
+      if (owner?.id !== appId) throw new Error('Uploaded build belongs to a different app');
+      if (build.attributes?.buildAudienceType !== audience) throw new Error('Uploaded build audience differs from the configured archive');
+      if (build.attributes?.processingState !== 'VALID') {
+        betaState(build, {});
+        return false;
+      }
+      const detail = (await asc.request(`/v1/builds/${buildId}/buildBetaDetail`)).data?.attributes || {};
+      if (betaState(build, detail) !== 'available') return false;
+      // Apple offers GET group/builds, not GET build/betaGroups. Follow all pages
+      // so a newer build cannot hide an older resumed release from this check.
+      const groupBuilds = await asc.collection(`/v1/betaGroups/${groupId}/builds?limit=200&fields[builds]=version`);
+      if (!groupBuilds.some(item => item.id === buildId)) return false;
+      if (!Number.isInteger(completed.attributes.number) || String(completed.attributes.number) !== build.attributes.version) {
+        throw new Error('Uploaded CFBundleVersion does not match the Xcode Cloud build number');
+      }
+      return build;
+    }, pollAttempts, `Cloud succeeded, but internal TestFlight availability for build run ${runId} is unconfirmed. Check processing, export compliance and the workflow's internal tester group.`);
+    await recordState('delivered');
+    output({ release_state: 'testflight_available', asc_build_id: delivered.id, build_number: delivered.attributes.version });
+    log(`Build ${delivered.id} is available to the configured internal TestFlight group. App Store submission remains manual.`);
+    return { state: 'testflight_available', runId, buildId: delivered.id, tag };
+  } catch (error) {
+    if (error.code === 'CLOUD_RUN_ALREADY_EXISTS' && error.tag === tag) cloudObserved = true;
+    // The creator can prove no POST was attempted in this process. Never make
+    // this claim about an existing reservation, observed run, or possibly accepted POST.
+    if (ownsReservation && !mayHavePosted && !cloudObserved) await recordState('not-started');
+    throw error;
+  }
 }
 
 function relation(id, type) { return { data: { type, id } }; }
@@ -351,10 +396,10 @@ async function main() {
   const input = validateInput({ ...parseArgs(process.argv.slice(2)), repository: env('GITHUB_REPOSITORY'), workflowId: env('XCODE_CLOUD_WORKFLOW_ID'), appId: env('APP_STORE_CONNECT_APP_ID'), groupId: env('APP_STORE_CONNECT_INTERNAL_GROUP_ID') });
   const credentials = { issuerId: env('APP_STORE_CONNECT_ISSUER_ID'), keyId: env('APP_STORE_CONNECT_KEY_ID'), privateKey: env('APP_STORE_CONNECT_PRIVATE_KEY') };
   const githubToken = env('GITHUB_TOKEN');
-  const gh = createApi({ origin: 'https://api.github.com', token: () => githubToken });
+  const gh = attachReservationEvidence(createApi({ origin: 'https://api.github.com', token: () => githubToken }), { token: githubToken });
   // A new short-lived JWT per request avoids expiring during long Cloud builds.
   const asc = createApi({ origin: 'https://api.appstoreconnect.apple.com', token: () => createAscJwt(credentials) });
-  await release(input, { gh, asc, output: values => {
+  await release(input, { gh, asc, ...coordinatedReleaseOptions({ env: process.env, gh, asc, input }), output: values => {
     for (const [key, value] of Object.entries(values)) {
       if (/[\r\n]/.test(String(value))) throw new Error('Unsafe workflow output');
       if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
