@@ -22,7 +22,8 @@ const status = (state = 'not-started') => ({ id: 100, context, description: `ios
 
 function fixture() {
   const data = { refs: [], appleRefs: [appleRef(), appleRef(ownTag, 'own-tag-id')], runs: { production: [], preview: [] }, builds: [], runBuilds: {}, statuses: [], controller: controllerRun(), workflowPath: '.github/workflows/ios-testflight.yml', app: '123', post: [], requests: [], beta: 'IN_BETA_TESTING' };
-  const gh = { verifyReservationEvidence: async evidence => { data.evidence = evidence; return data.evidenceTrusted !== false; }, request: async (path, options = {}) => {
+  const gh = { verifyReservationEvidence: async evidence => { data.evidence = evidence; return data.evidenceTrusted !== false
+    && (evidence.state !== 'delivered' || data.deliveredTrusted === true); }, request: async (path, options = {}) => {
     data.requests.push(['gh', path, options]);
     if (options.method === 'POST') { data.post.push({ path, body: options.body }); return { id: 101, ...options.body }; }
     const url = new URL(path, 'https://api.github.com');
@@ -45,7 +46,9 @@ function fixture() {
       const match = url.pathname.match(/^\/v1\/ciWorkflows\/(production|preview)$/);
       if (match) return { data: { id: match[1], relationships: { repository: relation('scm-repo'), product: relation('product') } } };
       if (url.pathname === '/v1/scmRepositories/scm-repo') return { data: { id: 'scm-repo', attributes: { ownerName: 'ashproto', repositoryName: 'Resume-Designer', httpCloneUrl: `https://github.com/${repository}.git` } } };
-      if (url.pathname === '/v1/ciProducts/product/app' || /\/builds\/[^/]+\/app$/.test(url.pathname)) return { data: { id: data.app, attributes: { bundleId: 'com.onpaper.app' } } };
+      if (url.pathname === '/v1/ciProducts/product/app' || /\/builds\/[^/]+\/app$/.test(url.pathname)) return { data: { id: url.pathname.includes('/builds/') ? data.buildApp ?? data.app : data.app, attributes: { bundleId: 'com.onpaper.app' } } };
+      if (/^\/v1\/builds\/[^/]+$/.test(url.pathname)) return { data: data.specificBuild ?? build() };
+      if (/\/builds\/[^/]+\/preReleaseVersion$/.test(url.pathname)) return { data: { id: 'version', attributes: { platform: data.platform ?? 'IOS' } } };
       if (/\/builds\/[^/]+\/buildBetaDetail$/.test(url.pathname)) return { data: { attributes: { internalBuildState: data.beta } } };
       throw new Error(`Unexpected ASC request ${path}`);
     },
@@ -470,5 +473,117 @@ test('malformed preview reservation formats fail before any ordering I/O', async
     const f = fixture();
     await assert.rejects(f.check({ currentTag }), /reservation/i);
     assert.deepEqual(f.data.requests, []);
+  }
+});
+
+function retainedDeliveryFixture() {
+  const f = fixture(); f.data.refs = [ref()];
+  f.data.receipt = { repository, tag, sha, appId: '123', workflowId: 'production', cloudRunId: 'retired-cloud', buildId: 'build-id', buildNumber: 4 };
+  f.data.receiptCalls = 0;
+  f.gh.verifyLegacyDeliveredEvidence = async expected => {
+    f.data.receiptCalls++;
+    assert.deepEqual(expected, { repository, tag, sha });
+    assert.ok(f.data.requests.some(([kind, path]) => kind === 'collection' && path.startsWith('/v1/builds?')));
+    return f.data.receipt;
+  };
+  return f;
+}
+
+test('authenticated legacy delivery receipt reconciles a retained upload after Cloud run removal', async () => {
+  const f = retainedDeliveryFixture(); await f.check();
+  assert.equal(f.data.receiptCalls, 1);
+  for (const path of ['/v1/builds/build-id', '/v1/builds/build-id/app', '/v1/builds/build-id/preReleaseVersion', '/v1/builds/build-id/buildBetaDetail']) {
+    assert.ok(f.data.requests.some(([kind, value]) => kind === 'asc' && value === path), path);
+  }
+  assert.deepEqual(f.data.post, []);
+});
+
+test('legacy delivered receipt is bound to configured app workflow source and exact live build', async () => {
+  const cases = [
+    f => { f.data.receipt.repository = 'fork/repo'; }, f => { f.data.receipt.tag = ownTag; },
+    f => { f.data.receipt.sha = otherSha; }, f => { f.data.receipt.appId = 'other'; },
+    f => { f.data.receipt.workflowId = 'unmanaged'; }, f => { f.data.receipt.buildNumber = '4'; },
+    f => { f.data.receipt.buildNumber = 0; }, f => { f.data.receipt.cloudRunId = '../escape'; },
+    f => { f.data.receipt.buildId = '../escape'; }, f => { f.data.specificBuild = build({}, 'other-build'); },
+    f => { f.data.specificBuild = build({ version: '5' }); }, f => { f.data.buildApp = 'other-app'; },
+    f => { f.data.platform = 'MAC_OS'; }, f => { f.data.specificBuild = build({ processingState: 'PROCESSING' }); },
+    f => { f.data.beta = 'IN_EXPORT_COMPLIANCE_REVIEW'; },
+  ];
+  for (const mutate of cases) { const f = retainedDeliveryFixture(); mutate(f); await assert.rejects(f.check()); assert.deepEqual(f.data.post, []); }
+});
+
+test('missing proof or unavailable exact retained upload does not imply a historical delivery', async () => {
+  for (const outcome of [undefined, false, {}, { ...retainedDeliveryFixture().data.receipt, buildId: undefined }]) {
+    const f = retainedDeliveryFixture(); f.data.receipt = outcome;
+    await assert.rejects(f.check());
+  }
+  const f = retainedDeliveryFixture(), request = f.asc.request;
+  f.asc.request = async path => { if (path === '/v1/builds/build-id') throw Object.assign(new Error('Expired Cloud record is not upload proof'), { status: 404 }); return request(path); };
+  await assert.rejects(f.check());
+});
+
+test('legacy delivery evidence never skips a newer structured state or live Cloud/upload blocker', async () => {
+  for (const state of ['reserved', 'post-attempted', 'delivered', 'unknown']) {
+    const f = retainedDeliveryFixture(); f.data.statuses = [status(state)];
+    await assert.rejects(f.check()); assert.equal(f.data.receiptCalls, 0);
+  }
+  for (const blocker of ['cloud', 'upload']) {
+    const f = retainedDeliveryFixture();
+    if (blocker === 'cloud') f.data.runs.preview = [run({ executionProgress: 'RUNNING' }, 'preview')];
+    else f.data.builds = [build({ processingState: 'PROCESSING' })];
+    await assert.rejects(f.check(), /unfinished|processing/i); assert.equal(f.data.receiptCalls, 0);
+  }
+});
+
+test('an authenticated delivered structured journal closes a retained reservation after live barriers', async () => {
+  const f = retainedDeliveryFixture(); f.data.statuses = [status('delivered')]; f.data.deliveredTrusted = true;
+  await f.check();
+  assert.equal(f.data.receiptCalls, 0);
+  assert.deepEqual(f.data.evidence, { repository, tag, sha, state: 'delivered', runId: '900', runUrl });
+  assert.deepEqual(f.data.post, []);
+});
+
+test('delivered status alone cannot bypass creator provenance timestamp or authenticated log checks', async () => {
+  for (const mutate of [
+    f => { f.data.statuses[0].creator.id = 1; }, f => { f.data.controller.head_branch = 'feature'; },
+    f => { f.data.statuses[0].created_at = '2026-11-07T00:00:00Z'; }, f => { f.data.evidenceTrusted = false; },
+    f => { f.data.statuses.unshift({ ...status('post-attempted'), id: 102 }); },
+  ]) {
+    const f = retainedDeliveryFixture(); f.data.statuses = [status('delivered')]; f.data.deliveredTrusted = true; mutate(f);
+    await assert.rejects(f.check()); assert.equal(f.data.receiptCalls, 0);
+  }
+});
+
+test('real authenticated delivered evidence reconciles retained history despite unrelated feedback failure', async () => {
+  const f = fixture(); f.data.refs = [ref()]; f.data.statuses = [status('delivered')];
+  f.data.controller.conclusion = 'failure'; f.data.controller.run_attempt = 1;
+  const request = f.gh.request;
+  f.gh.request = async (path, options) => path.includes('/actions/runs/900/jobs?')
+    ? { jobs: [{ id: 901, name: 'Release iOS TestFlight', status: 'completed', conclusion: 'success', run_attempt: 1,
+      run_id: 900, head_sha: f.data.controller.head_sha,
+      run_url: `https://api.github.com/repos/${repository}/actions/runs/900` }] } : request(path, options);
+  attachReservationEvidence(f.gh, { token: 'test-token', exec: (_command, args) => {
+    assert.equal(args.at(-1), `repos/${repository}/actions/jobs/901/logs`);
+    assert.ok(f.data.requests.some(([kind, path]) => kind === 'collection' && path.startsWith('/v1/builds?')));
+    return `OP_IOS_RESERVATION_STATE=${JSON.stringify({ version: 1, repository, tag, sha, state: 'delivered' })}`;
+  } });
+  f.gh.verifyLegacyDeliveredEvidence = async () => assert.fail('structured journal cannot fall back to legacy evidence');
+  await f.check(); assert.deepEqual(f.data.post, []);
+});
+
+test('real retained-delivery closure fails for wrong final source or a rerun begun during log fetch', async () => {
+  for (const outcome of ['wrong-sha', 'rerun']) {
+    const f = fixture(); f.data.refs = [ref()]; f.data.statuses = [status('delivered')]; f.data.controller.run_attempt = 1;
+    const request = f.gh.request;
+    f.gh.request = async (path, options) => path.includes('/actions/runs/900/jobs?')
+      ? { jobs: [{ id: 901, name: 'Release iOS TestFlight', status: 'completed', conclusion: 'success', run_attempt: 1,
+        run_id: 900, head_sha: f.data.controller.head_sha,
+        run_url: `https://api.github.com/repos/${repository}/actions/runs/900` }] } : request(path, options);
+    attachReservationEvidence(f.gh, { token: 'test-token', exec: () => {
+      if (outcome === 'rerun') { f.data.controller.run_attempt = 2; f.data.controller.status = 'in_progress'; }
+      const marker = source => `OP_IOS_RESERVATION_STATE=${JSON.stringify({ version: 1, repository, tag, sha: source, state: 'delivered' })}`;
+      return marker(sha) + (outcome === 'wrong-sha' ? `\n${marker(otherSha)}` : '');
+    } });
+    await assert.rejects(f.check(), /authenticated controller log evidence/); assert.deepEqual(f.data.post, []);
   }
 });

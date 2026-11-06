@@ -124,8 +124,11 @@ tags. Keep all Cloud automatic start conditions disabled.
 The authorization job has only read permissions. Request binding and Cloud
 dispatch receive `contents: write` only where tags are created; this token scope
 is repository-wide, so trusted code must restrict every created ref to the
-defined namespaces. A separate trusted feedback job may receive issue-comment
-write permission. Do not expose Apple credentials to binding/feedback jobs.
+defined namespaces. Only separate trusted feedback jobs receive
+`pull-requests: write` for PR timeline comments, with `issues: read`. The live
+Actions token returned 403 with the previous issue-write/PR-read combination.
+Authorization, binding and delivery keep PR read access. Do not expose Apple
+credentials to binding/feedback jobs.
 
 ## Candidate validation and Cloud trust
 

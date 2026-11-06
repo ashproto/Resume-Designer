@@ -5,8 +5,22 @@ import { runInNewContext } from 'node:vm';
 
 const preview = readFileSync(new URL('../.github/workflows/ios-testflight-pr.yml', import.meta.url), 'utf8');
 const production = readFileSync(new URL('../.github/workflows/ios-testflight.yml', import.meta.url), 'utf8');
+const repair = readFileSync(new URL('../.github/workflows/ios-pr-testflight-feedback.yml', import.meta.url), 'utf8');
 const jobs = Object.fromEntries(preview.slice(preview.indexOf('\njobs:\n') + 7).split(/(?=^  [a-z][a-z-]*:\n)/m)
   .filter(Boolean).map(text => [text.match(/^  ([a-z][a-z-]*):/)[1], text]));
+const permissions = body => body.match(/^    permissions:\n((?:      [a-z-]+: (?:read|write|none)\n)+)/m)[1]
+  .trim().split('\n').map(line => line.trim());
+
+test('only isolated PR feedback jobs receive the exact PR timeline comment write scope', () => {
+  for (const body of [jobs['queued-feedback'], jobs['final-feedback'], repair.slice(repair.indexOf('\njobs:\n') + 7)]) {
+    assert.deepEqual(permissions(body), ['contents: read', 'issues: read', 'pull-requests: write']);
+    assert.doesNotMatch(body, /secrets\.|environment:|concurrency:|contents: write|statuses: write|actions:/);
+  }
+  assert.deepEqual(permissions(jobs.authorize), ['contents: read', 'actions: read', 'issues: read', 'pull-requests: read']);
+  assert.deepEqual(permissions(jobs.bind), ['contents: write', 'actions: read', 'issues: read', 'pull-requests: read']);
+  assert.deepEqual(permissions(jobs.deliver), ['contents: write', 'actions: read', 'issues: read', 'pull-requests: read', 'statuses: write']);
+  for (const workflow of [preview, repair]) assert.match(workflow, /^permissions:\n  contents: read\n\njobs:/m);
+});
 
 test('public comments cannot allocate the privileged queue and only created commands are considered', () => {
   assert.match(preview, /issue_comment:\n\s+types: \[created\]/);
@@ -76,7 +90,7 @@ test('metadata-only dispatch cannot accept delivery outcomes or allocate any bui
   assert.match(jobs, /timeout-minutes: 5/);
   assert.doesNotMatch(jobs, /secrets\.|environment:|concurrency:|needs:|contents: write|statuses: write|actions:|APP_STORE|XCODE_CLOUD|npm (?:ci|install)/);
   const permissions = jobs.match(/^    permissions:\n([\s\S]*?)^    steps:/m)[1];
-  assert.deepEqual(permissions.trim().split('\n').map(line => line.trim()), ['contents: read', 'issues: write', 'pull-requests: read']);
+  assert.deepEqual(permissions.trim().split('\n').map(line => line.trim()), ['contents: read', 'issues: read', 'pull-requests: write']);
   assert.match(jobs, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(jobs, /persist-credentials: false/);
   assert.match(jobs, /package-manager-cache: false/);
