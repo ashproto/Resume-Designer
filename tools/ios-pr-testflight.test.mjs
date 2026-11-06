@@ -29,9 +29,12 @@ test('feedback shows verified outcomes and safely renders failed or unconfirmed 
   assert.match(body, /Build \*\*9\*\* is available/);
   assert.match(body, /on-paper-testflight-request:2468/);
   assert.match(body, new RegExp(sha));
-  const failure = formatFeedback({ request, error: '<script>@everyone</script>\n`oops`', values: { release_state: 'submitted' }, runUrl: 'https://github.com/ashproto/Resume-Designer/actions/runs/42' });
-  assert.doesNotMatch(failure, /<script>|@everyone|`oops`/);
-  assert.match(failure, /unconfirmed/i);
+  for (const tag of ['script', 'SCRIPT', 'ScRiPt data-note="test"']) {
+    const failure = formatFeedback({ request, error: `<${tag}>@everyone</script>\n\`oops\``, values: { release_state: 'submitted' }, runUrl: 'https://github.com/ashproto/Resume-Designer/actions/runs/42' });
+    assert.ok(failure.includes(`&lt;${tag}&gt;`));
+    assert.doesNotMatch(failure, /<\/?script\b|@everyone|`oops`/i);
+    assert.match(failure, /unconfirmed/i);
+  }
   assert.throws(() => formatFeedback({ request, runUrl: 'https://evil.test/' }));
   assert.throws(() => formatFeedback({ request:{...request,prNumber:'158\n'}, runUrl:'https://github.com/ashproto/Resume-Designer/actions/runs/42' }));
 });
