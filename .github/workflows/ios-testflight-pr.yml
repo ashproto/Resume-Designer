@@ -1,0 +1,224 @@
+name: iOS PR TestFlight
+
+# Comments run the trusted default-branch workflow, never the PR's workflow.
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      request_tag:
+        description: Original ios-testflight/request/pr-N/comment-ID binding (recovery only)
+        required: true
+        type: string
+      resume_run_id:
+        description: Known Xcode Cloud run ID, if available (never starts a new build)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    if: >-
+      github.repository_id == '1163653093' &&
+      github.repository_owner_id == '35086581' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.sender.id == 35086581 &&
+      github.triggering_actor == 'ashproto' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.issue.pull_request && github.event.comment.user.id == 35086581 &&
+        contains(github.event.comment.body, '/testflight-dev')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: read
+    outputs:
+      skip: ${{ steps.gate.outputs.skip }}
+      sha: ${{ steps.gate.outputs.sha }}
+      pr_number: ${{ steps.gate.outputs.pr_number }}
+      comment_id: ${{ steps.gate.outputs.comment_id }}
+      request_tag: ${{ steps.gate.outputs.request_tag }}
+      monitor_only: ${{ steps.gate.outputs.monitor_only }}
+    steps:
+      - name: Check out trusted main controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js without caches
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Verify owner, immutable request, PR CI and build inputs
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          IOS_PR_TESTFLIGHT_MODE: ${{ vars.IOS_PR_TESTFLIGHT_MODE }}
+          IOS_PR_TESTFLIGHT_PILOT_PR: ${{ vars.IOS_PR_TESTFLIGHT_PILOT_PR }}
+          IOS_PR_TESTFLIGHT_PILOT_SHA: ${{ vars.IOS_PR_TESTFLIGHT_PILOT_SHA }}
+        run: node tools/ios-pr-testflight.mjs authorize
+
+  bind:
+    needs: authorize
+    if: needs.authorize.outputs.skip == 'false' && needs.authorize.outputs.monitor_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No Apple environment or credentials. Only trusted code can create a
+    # request binding after reauthorizing the frozen source and build inputs.
+    permissions:
+      contents: write
+      actions: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted main controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js without caches
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Bind this owner command to its original full SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_SHA: ${{ needs.authorize.outputs.sha }}
+          IOS_PR_TESTFLIGHT_MODE: ${{ vars.IOS_PR_TESTFLIGHT_MODE }}
+          IOS_PR_TESTFLIGHT_PILOT_PR: ${{ vars.IOS_PR_TESTFLIGHT_PILOT_PR }}
+          IOS_PR_TESTFLIGHT_PILOT_SHA: ${{ vars.IOS_PR_TESTFLIGHT_PILOT_SHA }}
+        run: node tools/ios-pr-testflight.mjs bind
+
+  queued-feedback:
+    needs: [authorize, bind]
+    if: needs.authorize.outputs.skip == 'false' && needs.bind.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Show the queued request on the PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_STATE: queued
+        run: node tools/ios-pr-testflight.mjs feedback
+
+  deliver:
+    name: Release iOS preview
+    needs: [authorize, bind]
+    if: >-
+      always() && needs.authorize.result == 'success' &&
+      needs.authorize.outputs.skip == 'false' &&
+      (needs.authorize.outputs.monitor_only == 'true' || needs.bind.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    environment: ios-testflight
+    permissions:
+      contents: write
+      actions: read
+      issues: read
+      pull-requests: read
+      statuses: write
+    concurrency:
+      # Shared with protected main/next delivery, not a public comment queue.
+      group: ios-testflight-com-onpaper-app
+      queue: max
+      cancel-in-progress: false
+    outputs:
+      release_state: ${{ steps.cloud.outputs.release_state }}
+      build_number: ${{ steps.cloud.outputs.build_number }}
+      build_run_id: ${{ steps.cloud.outputs.build_run_id }}
+    steps:
+      - name: Check out trusted main controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js without caches
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      # No candidate checkout, dependency installation, cache/artifact restore,
+      # certificate export or execution of candidate scripts in this job.
+      - name: Dispatch or recover the exact approved revision
+        id: cloud
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_COMMAND: ${{ github.event_name == 'workflow_dispatch' && 'recover' || 'release' }}
+          PREVIEW_SHA: ${{ needs.authorize.outputs.sha }}
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
+          COMMENT_ID: ${{ needs.authorize.outputs.comment_id }}
+          IOS_PR_TESTFLIGHT_MODE: ${{ vars.IOS_PR_TESTFLIGHT_MODE }}
+          IOS_PR_TESTFLIGHT_PILOT_PR: ${{ vars.IOS_PR_TESTFLIGHT_PILOT_PR }}
+          IOS_PR_TESTFLIGHT_PILOT_SHA: ${{ vars.IOS_PR_TESTFLIGHT_PILOT_SHA }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          APP_STORE_CONNECT_APP_ID: ${{ vars.APP_STORE_CONNECT_APP_ID }}
+          APP_STORE_CONNECT_DEV_GROUP_ID: ${{ vars.APP_STORE_CONNECT_DEV_GROUP_ID }}
+          XCODE_CLOUD_WORKFLOW_ID: ${{ vars.XCODE_CLOUD_WORKFLOW_ID }}
+          XCODE_CLOUD_PR_WORKFLOW_ID: ${{ vars.XCODE_CLOUD_PR_WORKFLOW_ID }}
+        run: node tools/ios-pr-testflight.mjs "$PREVIEW_COMMAND"
+      - name: Retain recovery identity in the run summary
+        if: always()
+        env:
+          REQUEST_TAG: ${{ needs.authorize.outputs.request_tag }}
+          SOURCE_SHA: ${{ needs.authorize.outputs.sha }}
+          RELEASE_TAG: ${{ steps.cloud.outputs.release_tag }}
+          CLOUD_RUN_ID: ${{ steps.cloud.outputs.build_run_id }}
+          BUILD_NUMBER: ${{ steps.cloud.outputs.build_number }}
+          RELEASE_STATE: ${{ steps.cloud.outputs.release_state }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const values = ['REQUEST_TAG', 'SOURCE_SHA', 'RELEASE_TAG', 'CLOUD_RUN_ID', 'BUILD_NUMBER', 'RELEASE_STATE'];
+          const lines = values.map(key => `- ${key}: ${String(process.env[key] || 'unconfirmed').replace(/[\r\n<>`]/g, '')}`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## On Paper PR TestFlight\n\n${lines.join('\n')}\n\nA timeout does not stop Cloud. Recover this request rather than starting another build.\n`);
+          NODE
+
+  final-feedback:
+    needs: [authorize, bind, queued-feedback, deliver]
+    if: >-
+      always() && github.repository_id == '1163653093' &&
+      github.ref == 'refs/heads/main' && github.event.sender.id == 35086581 &&
+      github.triggering_actor == 'ashproto' && needs.authorize.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Report verified availability or the unconfirmed outcome
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_STATE: ${{ needs.deliver.outputs.release_state }}
+          PREVIEW_BUILD_NUMBER: ${{ needs.deliver.outputs.build_number }}
+          PREVIEW_CLOUD_RUN_ID: ${{ needs.deliver.outputs.build_run_id }}
+          PREVIEW_ERROR: ${{ ((needs.authorize.result == 'failure' || needs.authorize.result == 'cancelled') && 'Authorization or source checks did not pass. See the Actions log.') || ((needs.bind.result == 'failure' || needs.bind.result == 'cancelled') && 'The request binding or source checks did not pass. See the Actions log.') || ((needs.deliver.result == 'failure' || needs.deliver.result == 'cancelled') && 'Delivery or monitoring did not finish. Cloud may still be running; recover the original request.') || '' }}
+        run: node tools/ios-pr-testflight.mjs feedback

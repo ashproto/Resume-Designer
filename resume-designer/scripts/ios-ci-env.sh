@@ -10,9 +10,11 @@ OP_IOS_APPLE_PROJECT="$OP_IOS_APP_ROOT/src-tauri/gen/apple"
 OP_IOS_TOOLS_DIR="$OP_IOS_APPLE_PROJECT/build/ci-tools"
 
 op_ios_ci_cloud_gate() {
-  local op_tag_pattern='^ios-testflight/(main|next)/([0-9a-f]{40})$'
+  # PR previews use a manually dispatched tag, never Cloud's native PR trigger.
+  # Request-binding tags intentionally cannot enter the signing/build pipeline.
+  local op_tag_pattern='^ios-testflight/(main|next|pr/[1-9][0-9]*/[1-9][0-9]*)/([0-9a-f]{40})$'
   if [[ "${CI_XCODE_CLOUD:-}" != TRUE || ! "${CI_TAG:-}" =~ $op_tag_pattern ]]; then
-    echo 'Refusing Xcode Cloud build: requires ios-testflight/main|next/<full commit SHA> tag.' >&2
+    echo 'Refusing Xcode Cloud build: requires an exact main/next or PR dispatch tag.' >&2
     return 1
   fi
   if [[ "${BASH_REMATCH[2]}" != "${CI_COMMIT:-}" || -n "${CI_PULL_REQUEST_NUMBER:-}" ]]; then
@@ -20,7 +22,7 @@ op_ios_ci_cloud_gate() {
     return 1
   fi
   if [[ -n "${CI_GIT_REF:-}" && "$CI_GIT_REF" != "refs/tags/$CI_TAG" ]]; then
-    echo 'Refusing Xcode Cloud build: CI_GIT_REF does not match the release tag.' >&2
+    echo 'Refusing Xcode Cloud build: CI_GIT_REF does not match the dispatch tag.' >&2
     return 1
   fi
   if [[ ! "${CI_BUILD_NUMBER:-}" =~ ^[1-9][0-9]*$ ]]; then
