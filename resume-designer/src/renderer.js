@@ -734,7 +734,7 @@ function renderExperience(exp, index, group = null, isLead = false, isLast = fal
     if (isLast) classes.push('is-group-last');
   }
   return `
-    <article class="${classes.join(' ')}" data-experience-id="${exp.id || index}">
+    <article class="${classes.join(' ')}" data-experience-id="${escapeHtmlRaw(String(exp.id || index))}">
       ${grouped && isLead ? renderGroupHeader(group) : ''}
       <div class="experience-header">
         <h3 class="experience-title" data-editable="experience[${index}].title">${escapeHtml(exp.title)}</h3>
@@ -752,18 +752,32 @@ function renderExperience(exp, index, group = null, isLead = false, isLast = fal
   `;
 }
 
+const LEGACY_INLINE_TAGS = new Map(
+  ['<strong>', '</strong>', '<em>', '</em>', '<u>', '</u>'].map(tag => [tag, tag]),
+);
+
+// Legacy parser output supports only these bare formatting tags. Escape every
+// other token instead of trusting an entire string because one tag is present.
+// Existing entities stay encoded text; the HTML parser never re-tokenizes their
+// decoded characters as markup. This path stays usable without a browser DOM.
+function formatLegacyInlineHtml(text) {
+  return text.split(/(<\/?(?:strong|em|u)>)/gi)
+    .map(part => LEGACY_INLINE_TAGS.get(part.toLowerCase()) ?? escapeHtmlRaw(part)
+      .replace(/&amp;((?:[A-Za-z][A-Za-z0-9]*|#(?:[0-9]+|[xX][0-9A-Fa-f]+)));/g, '&$1;'))
+    .join('');
+}
+
 // Format bullet text - handle both raw markdown and pre-converted HTML
 function formatBullet(text) {
   if (!text) return '';
   
-  // If text already contains supported formatting tags, just return it
-  // (data from parser already has HTML)
+  // Preserve legacy formatting without allowing arbitrary HTML beside it.
   if (
     text.includes('<strong>') || text.includes('</strong>') ||
     text.includes('<em>') || text.includes('</em>') ||
     text.includes('<u>') || text.includes('</u>')
   ) {
-    return text;
+    return formatLegacyInlineHtml(text);
   }
 
   return formatInlineMarkdown(text);
@@ -1233,7 +1247,7 @@ function renderTimelineExperience(exp, index, group = null, isLead = false, isLa
     if (isLast) classes.push('is-group-last');
   }
   return `
-    <div class="${classes.join(' ')}" data-experience-id="${exp.id || index}">
+    <div class="${classes.join(' ')}" data-experience-id="${escapeHtmlRaw(String(exp.id || index))}">
       <div class="timeline-marker">
         <span class="timeline-dot"></span>
         <span class="timeline-line"></span>
