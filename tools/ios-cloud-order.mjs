@@ -93,17 +93,36 @@ export async function recordReservationState({ gh, repository, sha, tag, state, 
   return { version: 1, repository, tag, sha, state };
 }
 
-async function unusedReservationEvidence(gh, repository, tag, sha) {
+async function closedReservationEvidence(gh, asc, repository, tag, sha, appId, workflowIds) {
   const statuses = await githubCollection(gh, `/repos/${repository}/commits/${sha}/statuses`);
   // GitHub returns newest first. Never fall back to an older closed outcome
   // after a newer pending/unknown record for the same reservation context.
   const status = statuses.find(value => value?.context === reservationStatusContext(tag));
-  // The one reviewed pre-journal receipt is checked only when this reservation
-  // has no structured journal at all. Never override a newer or invalid record.
-  if (!status) return typeof gh.verifyLegacyReservationEvidence === 'function'
-    && await gh.verifyLegacyReservationEvidence({ repository, tag, sha }) === true;
-  const state = status.description?.match(/^ios-cloud:(not-started|rejected)$/)?.[1];
-  if (!['not-started', 'rejected'].includes(state)) return false;
+  // Reviewed pre-journal receipts apply only when no structured journal exists.
+  // A newer pending or invalid record can never fall back to historical proof.
+  if (!status) {
+    if (typeof gh.verifyLegacyReservationEvidence === 'function'
+      && await gh.verifyLegacyReservationEvidence({ repository, tag, sha }) === true) return true;
+    const receipt = typeof gh.verifyLegacyDeliveredEvidence === 'function'
+      ? await gh.verifyLegacyDeliveredEvidence({ repository, tag, sha }) : undefined;
+    if (!receipt) return false;
+    if (receipt.repository !== repository || receipt.tag !== tag || receipt.sha !== sha || receipt.appId !== appId
+      || !workflowIds.includes(receipt.workflowId) || !Number.isSafeInteger(receipt.buildNumber) || receipt.buildNumber <= 0) {
+      throw new Error('Legacy delivery receipt differs from the configured app, workflow or reservation');
+    }
+    requireId(receipt.cloudRunId, 'legacy Cloud run id');
+    const buildId = requireId(receipt.buildId, 'legacy upload id');
+    const build = (await asc.request(`/v1/builds/${buildId}`))?.data;
+    if (build?.id !== buildId || build.type !== 'builds' || build.attributes?.version !== String(receipt.buildNumber)) {
+      throw new Error('Legacy delivery receipt does not identify the exact retained upload');
+    }
+    const version = (await asc.request(`/v1/builds/${buildId}/preReleaseVersion`))?.data;
+    if (version?.attributes?.platform !== 'IOS') throw new Error('Legacy delivery upload is not an iOS build');
+    await verifyUpload(asc, build, appId, { attributes: { number: receipt.buildNumber } });
+    return true;
+  }
+  const state = status.description?.match(/^ios-cloud:(not-started|rejected|delivered)$/)?.[1];
+  if (!['not-started', 'rejected', 'delivered'].includes(state)) return false;
   if (status.creator?.id !== 41898282 || status.creator.login !== 'github-actions[bot]'
     || status.creator.type !== 'Bot' || status.state !== 'success') throw new Error('Untrusted reservation journal creator or state');
   const { runId, run } = await trustedControllerRun(gh, repository, status.target_url, { completed: true });
@@ -250,7 +269,7 @@ export async function assertCloudOrdering({ gh, asc, repository, appId, workflow
   }
   for (const [tag, sha] of reservations) {
     if (tag === currentTag || closed.has(tag)) continue;
-    if (!await unusedReservationEvidence(gh, repository, tag, sha)) {
+    if (!await closedReservationEvidence(gh, asc, repository, tag, sha, appId, workflowIds)) {
       throw new Error(`Unresolved reservation ${tag}; no visible run is not proof that no POST was accepted`);
     }
   }
