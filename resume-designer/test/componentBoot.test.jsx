@@ -17,6 +17,7 @@ import ProfileDialog from '../src/components/profile/ProfileDialog.jsx';
 import JobsDialog from '../src/components/jobs/JobsDialog.jsx';
 import LibraryDialog from '../src/components/library/LibraryDialog.jsx';
 import OnboardingWizard from '../src/components/onboarding/OnboardingWizard.jsx';
+import GenerationReviewDialog from '../src/components/GenerationReviewDialog.jsx';
 
 /**
  * Every component App.jsx mounts at startup, rendered once.
@@ -39,6 +40,7 @@ import OnboardingWizard from '../src/components/onboarding/OnboardingWizard.jsx'
  */
 const MOUNTED_AT_STARTUP = [
   ['OnboardingWizard', OnboardingWizard],
+  ['GenerationReviewDialog', GenerationReviewDialog],
   ['Header', Header],
   ['SettingsDialog', SettingsDialog],
   ['HistoryDialog', HistoryDialog],

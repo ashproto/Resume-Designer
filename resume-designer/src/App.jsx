@@ -17,6 +17,7 @@ import ProfileDialog from './components/profile/ProfileDialog.jsx';
 import JobsDialog from './components/jobs/JobsDialog.jsx';
 import LibraryDialog from './components/library/LibraryDialog.jsx';
 import OnboardingWizard from './components/onboarding/OnboardingWizard.jsx';
+import GenerationReviewDialog from './components/GenerationReviewDialog.jsx';
 import { init } from './main.js';
 import { whenStorageReady } from './appStorage.js';
 
@@ -99,6 +100,7 @@ export default function App() {
       {storageReady && <JobsDialog />}
       {storageReady && <LibraryDialog />}
       {storageReady && <OnboardingWizard />}
+      {storageReady && <GenerationReviewDialog />}
       {storageReady && <DiffDialog />}
       {storageReady && <PdfDialog />}
       <Toaster />

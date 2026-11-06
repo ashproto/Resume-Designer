@@ -515,6 +515,7 @@ struct OnboardingJobStep: View {
   @State private var inputMode = "jobs"
   @State private var prompt = ""
   @State private var targetPages = 1.0
+  @State private var verbosity = "concise"
   @State private var seeded = false
   @State private var selectedModel = ""
   @State private var selectedReasoning = "medium"
@@ -522,7 +523,7 @@ struct OnboardingJobStep: View {
   private var draft: [String: String] {
     let encoded = (try? JSONEncoder().encode(jobs)) ?? Data("[]".utf8)
     return [
-      "inputMode": inputMode, "prompt": prompt, "targetPages": String(Int(targetPages)),
+      "inputMode": inputMode, "prompt": prompt, "targetPages": String(Int(targetPages)), "verbosity": verbosity,
       "jobDescriptions": String(decoding: encoded, as: UTF8.self),
     ]
   }
@@ -593,6 +594,7 @@ struct OnboardingJobStep: View {
               text: $prompt
             )
             OnboardingLengthControl(pages: $targetPages)
+            OnboardingWritingControl(verbosity: $verbosity)
           }
           .padding(.horizontal, 22)
 
@@ -630,6 +632,7 @@ struct OnboardingJobStep: View {
       inputMode = view.generationBrief?.inputMode ?? "jobs"
       prompt = view.generationBrief?.prompt ?? ""
       targetPages = Double(view.generationBrief?.targetPages ?? 1)
+      verbosity = view.generationBrief?.verbosity ?? "concise"
       let savedJobs = view.generationBrief?.jobDescriptions ?? view.targetJob.map { [$0] } ?? []
       if !savedJobs.isEmpty {
         jobs = savedJobs.map { OnboardingJobDraft(title: $0.title, company: $0.company, description: $0.description) }
@@ -698,7 +701,7 @@ private struct OnboardingPromptEditor: View {
 private struct OnboardingLengthControl: View {
   @Binding var pages: Double
 
-  private var value: String { Int(pages) == 1 ? "1 page · Concise" : "\(Int(pages)) pages" }
+  private var value: String { Int(pages) == 1 ? "1 page" : "\(Int(pages)) pages" }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -711,6 +714,81 @@ private struct OnboardingLengthControl: View {
         .font(.footnote)
         .foregroundStyle(.secondary)
     }
+  }
+}
+
+private struct OnboardingWritingControl: View {
+  @Binding var verbosity: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Writing detail").font(.subheadline.weight(.medium))
+      Picker("Writing detail", selection: $verbosity) {
+        Text("Concise").tag("concise")
+        Text("Balanced").tag("balanced")
+        Text("Detailed").tag("detailed")
+      }
+      .pickerStyle(.segmented)
+      Text("Choose how much detail to include, independently of the page target.")
+        .font(.footnote).foregroundStyle(.secondary)
+    }
+  }
+}
+
+private struct OnboardingDraftFeedback: View {
+  @ObservedObject var model: ShellModel
+  let view: OnboardingView
+  @State private var instruction = ""
+  @State private var pages = 1.0
+  @State private var verbosity = "concise"
+
+  private var working: Bool { view.revision != nil || !view.busy.isEmpty }
+  private var preferencesChanged: Bool {
+    Int(pages) != (view.generationBrief?.targetPages ?? 1)
+      || verbosity != (view.generationBrief?.verbosity ?? "concise")
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      if let review = view.generationReview { GenerationNotesContent(review: review) }
+      if view.canRevise == true {
+        OnboardingPromptEditor(
+          title: "Corrections or changes",
+          placeholder: "Correct an assumption, add missing context, or ask for different wording.",
+          text: $instruction
+        ).disabled(working)
+        OnboardingLengthControl(pages: $pages).disabled(working)
+        OnboardingWritingControl(verbosity: $verbosity).disabled(working)
+        if let revision = view.revision {
+          Label { Text("Updating draft…") } icon: { ProgressView().controlSize(.small) }
+          if !revision.reasoning.isEmpty {
+            DisclosureGroup("AI progress") { Text(revision.reasoning).font(.caption).foregroundStyle(.secondary) }
+          }
+          Button("Cancel update") { model.send("onboardingCancelRevision") }.buttonStyle(.bordered)
+        } else {
+          Button("Update draft", systemImage: "sparkles") {
+            model.send("onboardingRevise", ["revisionInstruction": instruction, "targetPages": String(Int(pages)), "verbosity": verbosity])
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(working || (instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !preferencesChanged))
+          if view.canUndoRevision == true {
+            Button("Undo last update", systemImage: "arrow.uturn.backward") { model.send("onboardingUndoRevision") }
+              .buttonStyle(.bordered).disabled(working)
+          }
+        }
+      }
+      OnboardingNoticeLabel(notice: view.notice)
+    }
+    .padding(16)
+    .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
+    .onAppear(perform: seedPreferences)
+    .onChange(of: view.draftRevision) { _, _ in seedPreferences() }
+    .onChange(of: view.revisionCompletions) { _, _ in instruction = "" }
+  }
+
+  private func seedPreferences() {
+    pages = Double(view.generationBrief?.targetPages ?? 1)
+    verbosity = view.generationBrief?.verbosity ?? "concise"
   }
 }
 
@@ -804,11 +882,11 @@ struct OnboardingGeneratingView: View {
             icon: generating.done ? "checkmark.circle" : "sparkles",
             title: generating.done ? "Your resume is ready" : "Writing your resume",
             description: generating.done
-              ? "Have a look before it is saved."
+              ? "Read the generation notes, correct any assumptions, then open your resume in the editor."
               : "\(elapsed)s"
           )
 
-          if !generating.reasoning.isEmpty {
+          if !generating.done && !generating.reasoning.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
               Text("Reasoning")
                 .font(.caption.weight(.semibold))
@@ -823,20 +901,8 @@ struct OnboardingGeneratingView: View {
             .padding(.horizontal, 22)
           }
 
-          if generating.done && !view.jobGaps.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-              Label("Worth filling in", systemImage: "exclamationmark.circle")
-                .font(.subheadline.weight(.semibold))
-              ForEach(view.jobGaps, id: \.self) { gap in
-                Text("• \(gap)")
-                  .font(.footnote)
-                  .foregroundStyle(.secondary)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-            }
-            .padding(14)
-            .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
-            .padding(.horizontal, 22)
+          if generating.done {
+            OnboardingDraftFeedback(model: model, view: view).padding(.horizontal, 22)
           }
         }
         .padding(.bottom, 24)
@@ -847,10 +913,12 @@ struct OnboardingGeneratingView: View {
           Button("Edit brief") { model.send("onboardingEditBrief") }
             .buttonStyle(.bordered)
             .controlSize(.large)
+            .disabled(view.canRevise != true || view.revision != nil || !view.busy.isEmpty)
           Spacer(minLength: 0)
-          Button("Review") { model.send("onboardingNext") }
+          Button(view.busy == "save" ? "Saving…" : "Open in editor") { model.send("onboardingNext") }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .disabled(view.revision != nil || !view.busy.isEmpty || view.resume == nil)
         } else {
           Button("Cancel") { model.send("onboardingCancelGenerate") }
             .buttonStyle(.bordered)

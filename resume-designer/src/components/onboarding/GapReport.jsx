@@ -24,11 +24,11 @@ export function GapReport({ gaps }) {
     <div className="space-y-2.5 rounded-[12px] border bg-muted/30 p-[14px]">
       <div className="flex items-center gap-2">
         <AlertTriangle className="size-4 shrink-0 text-warning" />
-        <h4 className="text-[13px] font-semibold">Not covered by your profile</h4>
+        <h4 className="text-[13px] font-semibold">Details to clarify</h4>
       </div>
       <p className="text-[12px] text-muted-foreground">
-        These came up in the job description but aren’t supported by anything in your profile,
-        so they were left out rather than invented. Add them to your profile if they apply.
+        These job requirements weren’t supported by the source material used for this draft.
+        Correct an assumption or add missing context if they apply to you.
       </p>
       <ul className="space-y-2">
         {gaps.map((gap, i) => (

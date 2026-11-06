@@ -52,3 +52,15 @@ describe('setByPath', () => {
     expectWarnedAbout(warnSpy, '__proto__.polluted');
   });
 });
+
+describe('changed string arrays', () => {
+  it('emits only the bullet that changed, excluding identical neighbors', () => {
+    const result = createChangeSet({ experience: [{ id: 'role-1', bullets: ['Unchanged first', 'Old second', 'Unchanged third'] }] }, {
+      'experience[0].bullets[1]': 'New second',
+    });
+    expect(result.changes).toEqual([
+      expect.objectContaining({ path: 'experience[0].bullets[1]', oldValue: 'Old second', newValue: 'New second' }),
+    ]);
+    expect(result.getSummary()).toEqual({ added: 0, removed: 0, modified: 1, total: 1 });
+  });
+});

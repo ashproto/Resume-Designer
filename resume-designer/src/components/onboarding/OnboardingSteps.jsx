@@ -568,8 +568,22 @@ function ResumeLengthControl({ value, onChange, disabled = false, id = 'resume-l
         <span className="text-sm font-medium">{value} page{value === 1 ? '' : 's'}</span>
       </div>
       <Slider thumbProps={{ 'aria-labelledby': `${id}-label`, 'aria-valuetext': `${value} page${value === 1 ? '' : 's'}` }} min={1} max={3} step={1} value={[value]} onValueChange={([pages]) => onChange(pages)} disabled={disabled} />
-      <div className="flex justify-between text-xs text-muted-foreground"><span>Concise</span><span>More detail</span></div>
+      <div className="flex justify-between text-xs text-muted-foreground"><span>1 page</span><span>3 pages</span></div>
       <p className="text-xs text-muted-foreground">A writing target. Final page count depends on your layout and font size.</p>
+    </div>
+  );
+}
+
+function ResumeWritingControl({ value, onChange, disabled = false }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">Writing detail</p>
+      <Segmented className="flex w-full" aria-label="Writing detail">
+        <SegmentedItem active={value === 'concise'} onClick={() => onChange('concise')} className="flex-1" disabled={disabled}>Concise</SegmentedItem>
+        <SegmentedItem active={value === 'balanced'} onClick={() => onChange('balanced')} className="flex-1" disabled={disabled}>Balanced</SegmentedItem>
+        <SegmentedItem active={value === 'detailed'} onClick={() => onChange('detailed')} className="flex-1" disabled={disabled}>Detailed</SegmentedItem>
+      </Segmented>
+      <p className="text-xs text-muted-foreground">Choose how much context each achievement gets, within your page target.</p>
     </div>
   );
 }
@@ -590,7 +604,7 @@ function GenStat({ label, value }) {
  * (the now-hidden inputs), the live reasoning stream, and — on completion ('done')
  * — a prominent token-usage strip plus a Review button. Cancel aborts mid-flight.
  */
-export function JobGeneratingView({ job, modelLabel, reasoningLabel, reasoning, run, elapsed, phase, gaps, onCancel, onReview, onEdit }) {
+export function JobGeneratingView({ job, modelLabel, reasoningLabel, reasoning, notes, score, run, elapsed, phase, gaps, onCancel, onReview, onEdit, saving = false, revising = false, children }) {
   const done = phase === 'done';
   const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
   const totalTokens = run ? (run.promptTokens || 0) + (run.completionTokens || 0) : 0;
@@ -600,8 +614,8 @@ export function JobGeneratingView({ job, modelLabel, reasoningLabel, reasoning, 
         <StepHeader
           title={done ? 'Resume ready' : 'Generating your resume'}
           description={done
-            ? 'Your draft is ready. Review it and request any changes before saving.'
-            : 'Choosing relevant details from your profile and writing a concise draft.'}
+            ? 'Respond to the notes here, or open your full resume in the editor. These notes stay with it.'
+            : 'Choosing relevant details from your profile and writing your draft.'}
         />
 
         {/* Read-only representation of the target job + the model/reasoning used. */}
@@ -618,12 +632,16 @@ export function JobGeneratingView({ job, modelLabel, reasoningLabel, reasoning, 
         </div>
 
         {/* Reasoning summary — streams while generating, collapsible recap when done. */}
-        <LiveReasoning
+        {done && (notes || Number.isFinite(score)) && <div className="space-y-2 rounded-lg border p-4">
+          <div className="flex items-center justify-between gap-3"><p className="text-sm font-medium">Generation notes</p>{Number.isFinite(score) && <Badge variant="secondary">Fit assessment {score}/100</Badge>}</div>
+          {notes && <p className="whitespace-pre-wrap text-sm leading-relaxed">{notes}</p>}
+        </div>}
+        {(!done || reasoning !== notes) && <LiveReasoning
           reasoning={reasoning}
           reasoningTokens={run?.reasoningTokens || 0}
-          streaming={!done}
+          streaming={!done || revising}
           defaultOpen
-        />
+        />}
 
         {/* Token usage — prominent, appears on completion. */}
         {done && run && (
@@ -637,15 +655,16 @@ export function JobGeneratingView({ job, modelLabel, reasoningLabel, reasoning, 
         {/* Gap report — what the job asks for that the profile doesn't support.
             Renders nothing when there are no gaps. */}
         {done && <GapReport gaps={gaps} />}
+        {done && children}
       </StepBody>
       <StepFooter>
         {done ? (
           <>
-            <Button variant="ghost" onClick={onEdit}>
+            <Button variant="ghost" onClick={onEdit} disabled={!onEdit || saving || revising}>
               <ArrowLeft className="size-4" /> Back to edit
             </Button>
-            <Button onClick={onReview}>
-              Review your resume <ArrowRight className="size-4" />
+            <Button onClick={onReview} disabled={saving || revising}>
+              {saving ? 'Opening…' : 'Open in editor'} <ArrowRight className="size-4" />
             </Button>
           </>
         ) : (
@@ -677,12 +696,23 @@ export function JobInputStep({
   onReview,
   onBack,
   onOpenProfile,
+  onRevise,
+  onUndoRevision,
+  generationReview,
+  saving = false,
+  draftLocked = false,
+  notice,
 }) {
   const [jobs, setJobs] = useState(() => targetJob?.jobDescriptions?.length
     ? targetJob.jobDescriptions : [{ title: targetJob?.title || '', company: targetJob?.company || '', description: targetJob?.description || '' }]);
   const [inputMode, setInputMode] = useState(targetJob?.inputMode || 'jobs');
   const [prompt, setPrompt] = useState(targetJob?.prompt || '');
   const [targetPages, setTargetPages] = useState(targetJob?.targetPages || 1);
+  const [verbosity, setVerbosity] = useState(targetJob?.verbosity || 'concise');
+  const [correction, setCorrection] = useState('');
+  const [revising, setRevising] = useState(false);
+  const [revisionReasoning, setRevisionReasoning] = useState('');
+  const revisionAbortRef = useRef(null);
   const [model, setModel] = useState(defaultModel);
   const [reasoning, setReasoning] = useState(defaultReasoning);
   // Generation lifecycle: 'form' (inputs) → 'generating' (live screen) → 'done'
@@ -702,7 +732,12 @@ export function JobInputStep({
     fetchModelCatalog().then(() => setTick((t) => t + 1)).catch(() => {});
   }, [fetchModelCatalog]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => { abortRef.current?.abort(); revisionAbortRef.current?.abort(); }, []);
+  useEffect(() => {
+    if (!generationReview) return;
+    setTargetPages(generationReview.targetPages);
+    setVerbosity(generationReview.verbosity);
+  }, [generationReview]);
 
   // Elapsed-time ticker — runs only while generating; its value freezes on done.
   useEffect(() => {
@@ -754,7 +789,7 @@ export function JobInputStep({
   }
 
   const updateJob = (index, field, value) => setJobs((current) => current.map((job, i) => i === index ? { ...job, [field]: value } : job));
-  const draft = () => ({ ...jobs[0], jobDescriptions: jobs, prompt, targetPages, inputMode });
+  const draft = () => ({ ...jobs[0], jobDescriptions: jobs, prompt, targetPages, verbosity, inputMode });
 
   const handlePaste = async (index) => {
     try {
@@ -785,7 +820,7 @@ export function JobInputStep({
       // onGenerate sets the parsed resume in the wizard but does NOT advance — we
       // settle into the 'done' screen here; the user clicks through to review.
       await onGenerate({
-        ...jobDescriptions[0], jobDescriptions, prompt: prompt.trim(), targetPages, inputMode, model, reasoning,
+        ...jobDescriptions[0], jobDescriptions, prompt: prompt.trim(), targetPages, verbosity, inputMode, model, reasoning,
         signal: controller.signal,
         hooks: {
           onReasoning: (_x, full) => setLiveReasoning(full),
@@ -804,6 +839,27 @@ export function JobInputStep({
   };
 
   const handleCancel = () => abortRef.current?.abort();
+  const preferencesChanged = targetPages !== (generationReview?.targetPages || 1)
+    || verbosity !== (generationReview?.verbosity || 'concise');
+
+  const handleRevise = async () => {
+    if ((!correction.trim() && !preferencesChanged) || revising || saving || draftLocked) return;
+    const controller = new AbortController();
+    revisionAbortRef.current = controller;
+    setRevising(true);
+    setRevisionReasoning('');
+    try {
+      await onRevise({ revisionInstruction: correction.trim() || `Use ${verbosity} writing within a ${targetPages}-page target.`, recordCorrection: !!correction.trim(), targetPages, verbosity, signal: controller.signal,
+        hooks: { onReasoning: (_delta, full) => setRevisionReasoning(full) } });
+      if (!controller.signal.aborted) setCorrection('');
+    } catch (error) {
+      if (!controller.signal.aborted) toast.error(`Could not update your resume: ${error.message}`);
+    } finally {
+      revisionAbortRef.current = null;
+      setRevising(false);
+      setRevisionReasoning('');
+    }
+  };
 
   // Group the flat model list for the Select (JobsDialog/JobSelectionDialog pattern).
   const groupedModels = {};
@@ -823,15 +879,34 @@ export function JobInputStep({
         job={inputMode === 'prompt' ? { title: 'Your resume brief', company: prompt.trim() } : { title: jobs.length > 1 ? `${jobs.length} target jobs` : jobs[0].title.trim(), company: jobs.map((job) => job.company.trim()).filter(Boolean).join(' · ') }}
         modelLabel={modelLabel}
         reasoningLabel={reasoningLabel}
-        reasoning={liveReasoning}
+        reasoning={revising ? revisionReasoning : generationReview?.reasoning || liveReasoning}
+        notes={generationReview?.notes}
+        score={generationReview?.score}
         run={run}
         elapsed={elapsed}
         phase={phase}
         gaps={jobGaps}
         onCancel={handleCancel}
         onReview={onReview}
-        onEdit={() => setPhase('form')}
-      />
+        onEdit={draftLocked ? undefined : () => setPhase('form')}
+        saving={saving}
+        revising={revising}
+      >
+        {notice && <p role="alert" className="text-sm text-destructive">{notice.text}</p>}
+        {onRevise && !draftLocked && <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="generation-correction">Corrections or changes</Label>
+            <Textarea id="generation-correction" value={correction} onChange={(event) => setCorrection(event.target.value)} disabled={saving || revising} placeholder="Correct an assumption, add missing context, or ask for different wording." />
+          </div>
+          <ResumeLengthControl value={targetPages} onChange={setTargetPages} disabled={saving || revising} id="ready-length" />
+          <ResumeWritingControl value={verbosity} onChange={setVerbosity} disabled={saving || revising} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" onClick={handleRevise} disabled={(!correction.trim() && !preferencesChanged) || saving || revising}>{revising ? 'Updating draft…' : 'Update draft'}</Button>
+            {revising && <Button type="button" size="sm" variant="ghost" onClick={() => revisionAbortRef.current?.abort()}>Cancel update</Button>}
+            {onUndoRevision && !revising && <Button type="button" size="sm" variant="ghost" onClick={onUndoRevision} disabled={saving}>Undo last update</Button>}
+          </div>
+        </div>}
+      </JobGeneratingView>
     );
   }
 
@@ -896,6 +971,7 @@ export function JobInputStep({
           <Textarea id="resume-brief" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="For example: A concise product design resume that emphasizes research and my transition from engineering." className={inputMode === 'prompt' ? 'min-h-32' : 'min-h-20'} />
         </div>
         <ResumeLengthControl value={targetPages} onChange={setTargetPages} />
+        <ResumeWritingControl value={verbosity} onChange={setVerbosity} />
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">

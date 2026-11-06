@@ -41,8 +41,11 @@ import { TYPE_LABELS } from './historyEntryLabels.js';
 import { CHAT_THREADS_STATE_EVENT, threadsSaveFailed } from './chatThreads.js';
 import { DATA_SAVE_STATE_EVENT, dataSaveFailed, designSaveFailed } from './persistence.js';
 import { store } from './store.js';
-import { CONTACT_FIELDS, getContactOrder } from './contactFields.js';
+import { CONTACT_FIELDS, CONTACT_LAYOUTS, getContactOrder, getContactLayout, setContactLayoutRows, resetContactLayout } from './contactFields.js';
 import { SECTION_AREAS, SECTION_TEMPLATES } from './sectionTemplates.js';
+import { STANDARD_SECTIONS, getSectionLayout, sectionKey, sectionForKey, sectionNodeTitle, editableSectionData, findSectionNode, relocateSectionNode, updateSectionNodeStyle } from './sectionLayout.js';
+import { openChatWithContext } from './chatPanel.js';
+import { readRenderedContactRows } from './contactMeasurement.js';
 import {
   hasAIConsent, isAIConsentRevocationPending, requestAIConsent, revokeAIConsent, subscribeAIConsent,
 } from './aiConsent.js';
@@ -105,7 +108,7 @@ export function hasOpenModal(root = document) {
 export function buildSnapshot({
   currentId = null, list = [], zoom = 1, pdfBusy = false, modalOpen = false, settings,
   document: outline = null, chat = null, library = null, design = null, history = null,
-  jobs = null, profile = null, onboarding = null, diff = null,
+  jobs = null, profile = null, onboarding = null, diff = null, generationReview = null,
 } = {}) {
   const variants = (Array.isArray(list) ? list : [])
     .filter((v) => v && typeof v.id === 'string')
@@ -133,6 +136,7 @@ export function buildSnapshot({
     profile,
     onboarding,
     diff,
+    generationReview,
   };
 }
 
@@ -224,6 +228,7 @@ function onboardingBriefInput(input) {
   if (input.inputMode !== undefined) brief.inputMode = input.inputMode === 'prompt' ? 'prompt' : 'jobs';
   if (input.prompt !== undefined) brief.prompt = String(input.prompt ?? '');
   if (input.targetPages !== undefined) brief.targetPages = onboardingTargetPages(input.targetPages);
+  if (input.verbosity !== undefined) brief.verbosity = ['concise', 'balanced', 'detailed'].includes(input.verbosity) ? input.verbosity : 'concise';
   if (input.jobDescriptions !== undefined) {
     const jobs = typeof input.jobDescriptions === 'string' ? JSON.parse(input.jobDescriptions) : input.jobDescriptions;
     if (!Array.isArray(jobs)) throw new Error('Job descriptions must be a list.');
@@ -241,14 +246,14 @@ export function buildOnboarding({
   jobDescriptions = [], targetJob = null,
   jobGaps = [], models = [], model = '', reasoning = 'medium', generating = null,
   resume = null, busy = '', notice = null, hasProfileData = false,
-  revision = null, canRevise = false, canUndoRevision = false, draftRevision = 0, revisionCompletions = 0,
+  revision = null, canRevise = false, canUndoRevision = false, draftRevision = 0, revisionCompletions = 0, generationReview = null,
 } = {}) {
   const text = (v) => (typeof v === 'string' ? v : '');
   const list = (v) => (Array.isArray(v) ? v : []);
   // The wizard shows "Step N of M" and a bar; new-résumé mode has one fewer
   // because it never shows the key step. Computed here so the two renderers
   // cannot drift — getting this wrong shows "Step 6 of 5".
-  const totalSteps = isNewResumeMode ? 5 : 6;
+  const totalSteps = mode === 'job' ? (isNewResumeMode ? 2 : 3) : (isNewResumeMode ? 5 : 6);
   const displayStep = isNewResumeMode ? step : step + 1;
 
   const qs = list(questions).map((q, i) => ({
@@ -303,6 +308,7 @@ export function buildOnboarding({
       inputMode: targetJob?.inputMode === 'prompt' ? 'prompt' : 'jobs',
       prompt: text(targetJob?.prompt),
       targetPages: onboardingTargetPages(targetJob?.targetPages),
+      verbosity: ['concise', 'balanced', 'detailed'].includes(targetJob?.verbosity) ? targetJob.verbosity : 'concise',
       jobDescriptions: list(targetJob?.jobDescriptions ?? (targetJob?.description ? [targetJob] : [])).map((job) => ({
         title: text(job?.title), company: text(job?.company), description: text(job?.description),
       })),
@@ -347,8 +353,9 @@ export function buildOnboarding({
     // This draft is read-only and has not been saved/adopted into the editor.
     // The normal document publish adds these required Swift fields, but the
     // onboarding preview reaches the decoder directly through this builder.
-    resume: resume ? { ...buildDocumentOutline(resume), revision: 0, saveFailed: false } : null,
+    resume: resume ? { ...buildDocumentOutline(resume, { measureContacts: false }), revision: 0, saveFailed: false } : null,
     isTailored: list(jobDescriptions).length > 0,
+    generationReview: buildGenerationReview(generationReview),
     canRevise: !!canRevise,
     canUndoRevision: !!canUndoRevision,
     draftRevision: Number(draftRevision) || 0,
@@ -470,10 +477,10 @@ export function newListItem(path, makeId = () => `id-${Math.random().toString(36
   }
 }
 
-export function buildDocumentOutline(data, { layout = 'sidebar' } = {}) {
+export function buildDocumentOutline(data, { layout = 'sidebar', measureContacts = true } = {}) {
   // A fresh workspace has no document yet. Keep the complete native wire
   // shape without offering edits the store cannot persist until one is open.
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return { groups: [], additions: [] };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { groups: [], additions: [], cards: [], restorable: [] };
   const groups = [];
   const text = (v) => (typeof v === 'string' ? v : '');
   const list = (v) => (Array.isArray(v) ? v : []);
@@ -588,13 +595,14 @@ export function buildDocumentOutline(data, { layout = 'sidebar' } = {}) {
     });
   });
 
-  if (typeof data.tools === 'string' && data.tools) {
+  const tools = editableToolsText(data.tools);
+  if (tools) {
     groups.push({
       id: 'tools',
       title: 'Tools',
       listPath: null,
       listOffset: 0,
-      fields: [{ path: 'tools', label: 'Tools', value: data.tools, multiline: true }],
+      fields: [{ path: 'tools', label: 'Tools', value: tools, multiline: true }],
     });
   }
 
@@ -607,6 +615,9 @@ export function buildDocumentOutline(data, { layout = 'sidebar' } = {}) {
 
   return {
     groups: groups.map(withActions),
+    contactLayout: buildContactLayout(data, layout, measureContacts),
+    cards: buildSectionCards(data, groups),
+    restorable: Object.entries(STANDARD_SECTIONS).filter(([key]) => !findSectionNode(getSectionLayout(data), key)).map(([id, name]) => ({ id, name })),
     // Adding the FIRST of something has nowhere to live on a group, because a
     // group only exists once its array is non-empty — a résumé with no
     // education has no education group, and so had no way to ever gain one.
@@ -618,6 +629,61 @@ export function buildDocumentOutline(data, { layout = 'sidebar' } = {}) {
       },
     ],
   };
+}
+
+function buildContactLayout(data, layout, measureContacts) {
+  const key = CONTACT_LAYOUTS.includes(layout) ? layout : 'sidebar';
+  const current = getContactLayout(data, key);
+  const measured = measureContacts ? readRenderedContactRows() : null;
+  const rows = current.mode === 'custom' ? current.rows : measured || [];
+  return { layout: key, mode: current.mode, source: current.source, canCustomize: !!measured,
+    rows: rows.map(row => row.map(id => ({ id, name: CONTACT_FIELDS[id].label }))),
+    renderedRows: (measured || []).map(row => row.map(id => ({ id, name: CONTACT_FIELDS[id].label }))) };
+}
+
+/** One ordered section model, with existing field paths kept in `groups`. */
+function sectionSignature(data, key) {
+  const found = findSectionNode(getSectionLayout(data), key);
+  if (!found) return '';
+  const content = node => node.children ? node.children.map(content) : sectionForKey(data, node.key)?.section ?? data[node.key];
+  return JSON.stringify([found.node, content(found.node)]);
+}
+
+function editableToolsText(tools) {
+  return Array.isArray(tools) ? tools.join(' • ') : typeof tools === 'string' ? tools : '';
+}
+
+function buildSectionCards(data, groups) {
+  const layout = getSectionLayout(data);
+  const cards = [];
+  const visit = (nodes, area, parentKey = '') => nodes.forEach((node, index) => {
+    const custom = sectionForKey(data, node.key);
+    const groupIds = node.children ? [] : node.key === 'experience'
+      ? groups.filter(group => group.id.startsWith('experience-')).map(group => group.id)
+      : [custom ? `section-${custom.index}` : node.key].filter(id => groups.some(group => group.id === id));
+    const style = Object.fromEntries(Object.entries(node).filter(([key]) => /^(title|content)(Scale|Font|Bold|Italic|Underline)$/.test(key)));
+    cards.push({ key: node.key, title: sectionNodeTitle(data, node), area, parentKey,
+      isGroup: Array.isArray(node.children), groupIds, style,
+      signature: sectionSignature(data, node.key),
+      fields: node.key === 'tools' && !groupIds.length ? [{ path: 'tools', label: 'Tools', value: editableToolsText(data.tools), multiline: true }] : [],
+      canMoveUp: index > 0, canMoveDown: index < nodes.length - 1 });
+    if (node.children) visit(node.children, area, node.key);
+  });
+  visit(layout.main, 'main');
+  visit(layout.sidebar, 'sidebar');
+  return cards;
+}
+
+/** Durable feedback, shared by the generated ready screen and saved notes. */
+export function buildGenerationReview(review, open = false) {
+  if (!review || typeof review !== 'object') return null;
+  const text = value => typeof value === 'string' ? value : '';
+  return { open: !!open, notes: text(review.notes), reasoning: text(review.reasoning),
+    gaps: (Array.isArray(review.gaps) ? review.gaps : []).map(gap => typeof gap === 'string' ? gap : [text(gap?.requirement), text(gap?.note)].filter(Boolean).join(': ')).filter(Boolean),
+    corrections: (Array.isArray(review.corrections) ? review.corrections : []).filter(value => typeof value === 'string'),
+    targetPages: onboardingTargetPages(review.targetPages),
+    verbosity: ['concise', 'balanced', 'detailed'].includes(review.verbosity) ? review.verbosity : 'concise',
+    score: Number.isFinite(review.score) && review.score >= 0 && review.score <= 100 ? review.score : null };
 }
 
 /**
@@ -797,6 +863,7 @@ export function buildChatView({
   threads = [], currentThreadId = null, messages = [], loading = false,
   streamingMessage = null, configured = false, thinking = null,
   currentModel = '', models = [], reasoningEffort = 'medium', reasoningSupported = false,
+  activeChangeSet = null, currentVariantId = null,
 } = {}) {
   const text = (v) => (typeof v === 'string' ? v : '');
   const visible = (Array.isArray(messages) ? messages : [])
@@ -809,7 +876,8 @@ export function buildChatView({
       text: text(m.content),
       // The engine hands proposals to the web panel; say so rather than
       // silently dropping the part of the reply that matters.
-      hasChanges: Array.isArray(m.pendingChanges) && m.pendingChanges.length > 0,
+      hasChanges: (Array.isArray(m.pendingChanges) ? m.pendingChanges : m.pendingChanges?.changes)?.length > 0 || false,
+      reviewable: !!m.pendingChanges && m.pendingChanges === activeChangeSet && (!m.variantId || !currentVariantId || m.variantId === currentVariantId),
       // Raw reasoning summary. The native timeline splits and strips it — the
       // same job LiveReasoning.jsx does on the web — so it crosses unparsed.
       reasoning: text(m.reasoning),
@@ -829,7 +897,7 @@ export function buildChatView({
   if (streaming || streamingReasoning || (loading && !statusLine)) {
     visible.push({
       id: 'streaming', role: 'assistant', text: streaming,
-      hasChanges: false, reasoning: streamingReasoning,
+      hasChanges: false, reviewable: false, reasoning: streamingReasoning,
     });
   }
 
@@ -1477,6 +1545,7 @@ let onboardingView = null;
 // (App.jsx renders it once storage is ready) and merely renders null while
 // closed, so its handlers are always reachable.
 let onboardingHandlers = {};
+let generationNotesOpen = false;
 
 // The change-review dialog's last projection, and its handlers. Same
 // arrangement as the wizard, and available for the same reason: DiffDialog is
@@ -1526,6 +1595,12 @@ export function publishOnboarding(state, handlers) {
  *   ownership of the module graph.
  */
 export function initIOSShell(deps) {
+  const publishAfterCanvas = () => {
+    if (typeof requestAnimationFrame !== 'function') return;
+    const owner = window.__opShell;
+    requestAnimationFrame(() => { if (window.__opShell === owner) publish(); });
+  };
+
   const {
     subscribeVariants,
     getVariantsSnapshot,
@@ -1550,6 +1625,37 @@ export function initIOSShell(deps) {
       kind: 'syncDirty', units,
     });
   });
+
+  const editSection = (revision, key, change, description) => {
+    requireCurrentDocument(revision, description);
+    const data = store.getData();
+    if (!data) throw new Error('No resume is open');
+    const next = editableSectionData(data, deps.generateId);
+    const oldCustom = sectionForKey(data, key);
+    const currentKey = oldCustom ? sectionKey(next.sections[oldCustom.index], oldCustom.index, next.sections) : key;
+    change(next, currentKey);
+    for (const field of ['sections', 'summary', 'experience', 'education', 'tools']) {
+      if (next[field] !== undefined && JSON.stringify(next[field]) !== JSON.stringify(store.get(field))) store.updateSilent(field, next[field]);
+    }
+    store.setChangeMetadata(description);
+    store.update('sectionLayout', next.sectionLayout);
+  };
+  const sectionNode = (data, key) => {
+    const found = findSectionNode(data.sectionLayout, key);
+    if (!found) throw new Error('This section is no longer available');
+    return found;
+  };
+
+  const editContactLayout = (revision, layout, change) => {
+    requireCurrentDocument(revision, 'contact layout');
+    const active = deps.getSettings?.()?.layout || 'sidebar';
+    if (!CONTACT_LAYOUTS.includes(layout) || layout !== active) throw new Error('The resume template changed. Reopen contact layout and try again.');
+    const data = store.getData();
+    if (!data) throw new Error('No resume is open');
+    const next = change(data);
+    store.setChangeMetadata('Changed contact rows');
+    deps.updateField('contactLayouts', next.contactLayouts);
+  };
 
   const dispatch = createCommandDispatcher({
     // Résumé selection and CRUD. Rename, delete and import route back through
@@ -1627,8 +1733,9 @@ export function initIOSShell(deps) {
     onboardingRemoveJob: ({ index }) => onboardingHandlers.removeJob?.(Number(index)),
     onboardingCancelGenerate: () => onboardingHandlers.cancelGenerate?.(),
     onboardingEditBrief: () => onboardingHandlers.editBrief?.(),
-    onboardingRevise: ({ revisionInstruction, targetPages }) => onboardingHandlers.revise?.({
+    onboardingRevise: ({ revisionInstruction, targetPages, verbosity }) => onboardingHandlers.revise?.({
       revisionInstruction: String(revisionInstruction ?? ''), targetPages: onboardingTargetPages(targetPages),
+      ...(verbosity === undefined ? {} : { verbosity: ['concise', 'balanced', 'detailed'].includes(verbosity) ? verbosity : 'concise' }),
     }),
     onboardingCancelRevision: () => onboardingHandlers.cancelRevision?.(),
     onboardingUndoRevision: () => onboardingHandlers.undoRevision?.(),
@@ -1636,7 +1743,7 @@ export function initIOSShell(deps) {
     // The job step carries its half-typed draft back with it. Absent from every
     // other step, and harmless there — `back()` only reads it in job mode.
     onboardingBack: (input) => onboardingHandlers.back?.(
-      ['title', 'company', 'description', 'inputMode', 'prompt', 'targetPages', 'jobDescriptions'].every((key) => input[key] === undefined)
+      ['title', 'company', 'description', 'inputMode', 'prompt', 'targetPages', 'verbosity', 'jobDescriptions'].every((key) => input[key] === undefined)
         ? null
         : onboardingBriefInput(input),
     ),
@@ -1644,6 +1751,16 @@ export function initIOSShell(deps) {
     onboardingFinish: () => onboardingHandlers.finish?.(),
     onboardingOpenProfile: () => onboardingHandlers.openProfile?.(),
     onboardingDismiss: () => onboardingHandlers.dismiss?.(),
+    generationNotesOpen: () => { generationNotesOpen = true; publish(); },
+    generationNotesClose: () => { generationNotesOpen = false; publish(); },
+    generationNotesDiscuss: ({ revision }) => {
+      requireCurrentDocument(revision, 'generationNotesDiscuss');
+      const data = store.getData();
+      if (!data?.generationReview) return;
+      generationNotesOpen = false;
+      openChatWithContext(`Generation notes for ${data.name || 'this resume'}:\n${JSON.stringify(data.generationReview, null, 2)}`, '', 'generation-review');
+      publish();
+    },
 
     // Reviewing proposed changes. Every one calls DiffDialog's OWN handler, so
     // the apply route stays single — see buildDiffReview.
@@ -1796,6 +1913,93 @@ export function initIOSShell(deps) {
       if (!Number.isInteger(at) || at < 0) throw new Error(`removeItem index ${index}`);
       deps.removeListItem(path, at);
     },
+    contactCustomize: ({ revision, layout }) => editContactLayout(revision, layout, data => {
+      const rows = readRenderedContactRows();
+      if (!rows?.length) throw new Error('Contact rows are not ready. Close this sheet, let the resume finish loading, then try Customize again.');
+      return setContactLayoutRows(data, layout, rows);
+    }),
+    contactReset: ({ revision, layout }) => editContactLayout(revision, layout, data => resetContactLayout(data, layout)),
+    contactRows: ({ revision, layout, rows, expectedRows }) => editContactLayout(revision, layout, data => {
+      if (expectedRows !== undefined && expectedRows !== JSON.stringify(getContactLayout(data, layout).rows)) throw new Error('The contact rows changed. Try again from the refreshed list.');
+      if (getContactLayout(data, layout).mode !== 'custom') throw new Error('Choose Customize before arranging contact rows.');
+      const parsed = typeof rows === 'string' ? JSON.parse(rows) : rows;
+      if (!Array.isArray(parsed) || parsed.some(row => !Array.isArray(row))) throw new Error('Contact rows must be lists.');
+      return setContactLayoutRows(data, layout, parsed);
+    }),
+    sectionDrop: ({ revision, key, targetKey }) => editSection(revision, key, (next, currentKey) => {
+      const oldTarget = sectionForKey(store.getData(), targetKey);
+      const destinationKey = oldTarget ? sectionKey(next.sections[oldTarget.index], oldTarget.index, next.sections) : targetKey;
+      const source = sectionNode(next, currentKey);
+      const target = sectionNode(next, destinationKey);
+      if (currentKey === destinationKey) return;
+      if (source.node.children && target.parent) throw new Error('Groups cannot be nested');
+      const intoGroup = target.node.children && !source.node.children;
+      relocateSectionNode(next, currentKey, target.area, intoGroup ? destinationKey : target.parent?.key || '');
+      if (!intoGroup) {
+        const moved = sectionNode(next, currentKey);
+        const destination = sectionNode(next, destinationKey);
+        moved.nodes.splice(moved.index, 1);
+        destination.nodes.splice(destination.nodes.indexOf(destination.node), 0, moved.node);
+      }
+    }, 'Reordered section'),
+    sectionMove: ({ revision, key, direction }) => editSection(revision, key, (next, currentKey) => {
+      const found = sectionNode(next, currentKey);
+      const delta = Number(direction);
+      const to = found.index + delta;
+      if (![-1, 1].includes(delta) || to < 0 || to >= found.nodes.length) throw new Error('Invalid section move');
+      found.nodes.splice(found.index, 1);
+      found.nodes.splice(to, 0, found.node);
+    }, 'Reordered section'),
+    sectionRelocate: ({ revision, key, area, parentKey = '' }) => {
+      requireCurrentDocument(revision, 'Moved section');
+      const current = findSectionNode(getSectionLayout(store.getData()), key);
+      // Re-selecting a menu value must not append the section or create an undo step.
+      if (current?.area === area && (current.parent?.key || '') === parentKey) return;
+      return editSection(revision, key, (next, currentKey) => {
+        const found = sectionNode(next, currentKey);
+        if (!SECTION_AREAS.some(option => option.id === area)) throw new Error('Invalid section area');
+        if (parentKey) {
+          const parent = sectionNode(next, parentKey);
+          if (!Array.isArray(parent.node.children) || parent.area !== area || found.node.children) throw new Error('Invalid section group');
+        }
+        relocateSectionNode(next, currentKey, area, parentKey);
+      }, 'Moved section');
+    },
+    sectionRename: ({ revision, key, title }) => editSection(revision, key, (next, currentKey) => {
+      const found = sectionNode(next, currentKey);
+      const custom = sectionForKey(next, currentKey);
+      if (custom) { custom.section.title = String(title ?? ''); delete found.node.title; }
+      else found.node.title = String(title ?? '');
+    }, 'Renamed section'),
+    sectionStyle: ({ revision, key, field, value }) => editSection(revision, key, (next, currentKey) => {
+      const found = sectionNode(next, currentKey);
+      if (!/^(title|content)(Scale|Font|Bold|Italic|Underline)$/.test(String(field)) || (found.node.children && field.startsWith('content'))) throw new Error('Invalid section typography');
+      let parsed = value === 'default' ? undefined : field.endsWith('Scale') ? Number(value) : /(?:Bold|Italic|Underline)$/.test(field) ? value === 'true' : value;
+      if (field.endsWith('Scale') && parsed !== undefined && !Number.isFinite(parsed)) throw new Error('Invalid section size');
+      if (field.endsWith('Font') && parsed !== undefined && !['display', 'body'].includes(parsed)) throw new Error('Invalid section font');
+      updateSectionNodeStyle(found.node, field, parsed);
+    }, 'Styled section'),
+    sectionRemove: ({ revision, key, signature }) => {
+      if (signature !== undefined && signature !== sectionSignature(store.getData(), key)) throw new Error('The section changed while this was open. Try again from the refreshed list.');
+      return editSection(revision, key, (next, currentKey) => {
+      const found = sectionNode(next, currentKey);
+      if (found.node.children) found.nodes.splice(found.index, 1, ...found.node.children);
+      else {
+        const custom = sectionForKey(next, currentKey);
+        if (custom) next.sections.splice(custom.index, 1);
+        else next[currentKey] = ['experience', 'education'].includes(currentKey) ? [] : '';
+        found.nodes.splice(found.index, 1);
+      }
+      }, 'Removed section');
+    },
+    sectionRestore: ({ revision, key, area }) => editSection(revision, key, next => {
+      if (!Object.hasOwn(STANDARD_SECTIONS, key) || !SECTION_AREAS.some(option => option.id === area) || findSectionNode(next.sectionLayout, key)) throw new Error('Invalid section');
+      next.sectionLayout[area].push({ key });
+    }, 'Added section'),
+    sectionAddGroup: ({ revision, area, title }) => editSection(revision, '', next => {
+      if (!SECTION_AREAS.some(option => option.id === area) || !String(title ?? '').trim()) throw new Error('Name the section group');
+      next.sectionLayout[area].push({ key: `group:${deps.generateId('group')}`, title: String(title).trim(), children: [] });
+    }, 'Added section group'),
     // Chat. Every one of these routes to the engine in useChat.js through the
     // React panel — none of them reimplements any of it.
     chatSend: ({ text }) => ask('rd:chat-send', { text: String(text ?? '') }),
@@ -1939,6 +2143,7 @@ export function initIOSShell(deps) {
     setStructureOpen: ({ value }) => {
       streamDocument = value === 'true';
       publish();
+      if (streamDocument) publishAfterCanvas();
     },
     // The Design sheet. Gated for the same reason the outline is, only more so:
     // the catalogs are the largest payload the bridge carries and they never
@@ -2198,6 +2403,7 @@ export function initIOSShell(deps) {
           onboarding: onboardingView,
           // Already built — pushed by DiffDialog rather than polled.
           diff: diffView,
+          generationReview: store.get('generationReview') ? { ...buildGenerationReview(store.get('generationReview'), generationNotesOpen), revision: store.documentAdoptions() } : null,
           chat: streamChat
             ? project('chat', () => ({
               ...chatView,
@@ -2248,8 +2454,14 @@ export function initIOSShell(deps) {
   deps.subscribeApplications?.(() => { if (streamLibrary) publish(); });
   // Edits made in the canvas have to reach an open panel, or the two views of
   // one document silently disagree.
-  deps.subscribeDocument(() => { if (streamDocument) publish(); });
+  deps.subscribeDocument(() => {
+    publish();
+    if (streamDocument) publishAfterCanvas();
+  });
+  document.fonts?.ready?.then(() => publish());
+  window.addEventListener('resize', publish);
   window.addEventListener('rd:zoom', publish);
+  window.addEventListener('rd:open-generation-review', () => { generationNotesOpen = true; publish(); });
   // The profile's save state changing without a DOM change to notice — a disk
   // write the drain refused. Without this the sheet's failure banner waits for
   // whatever unrelated mutation happens to publish next.

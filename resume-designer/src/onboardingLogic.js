@@ -398,6 +398,7 @@ export function buildResumeData(resume) {
     sections,
     // Renderer expects a ' • '-joined string for tools.
     tools: Array.isArray(r.tools) ? r.tools.join(' • ') : (r.tools || ''),
+    ...(r.generationReview ? { generationReview: r.generationReview } : {}),
   };
 }
 

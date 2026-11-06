@@ -4,7 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
-  buildDesign, buildOnboarding, buildDocumentOutline,
+  buildDesign, buildOnboarding, buildDocumentOutline, buildGenerationReview,
   buildHistory, buildLibrary, buildChatView, buildSettings, buildDiffReview,
 } from '../src/iosShell.js';
 import { buildJobs } from '../src/jobsBridge.js';
@@ -85,6 +85,7 @@ const CONTRACTS = [
   ['Design', () => buildDesign({})],
   ['JobsView', () => buildJobs({})],
   ['OnboardingView', () => buildOnboarding({})],
+  ['GenerationReview', () => buildGenerationReview({})],
   ['DocumentOutline', () => buildDocumentOutline({})],
   ['History', () => buildHistory([])],
   ['LibraryView', () => buildLibrary([], {}, [])],
@@ -114,6 +115,7 @@ describe.skipIf(process.platform !== 'darwin')('native onboarding decodes its ne
     fs.writeFileSync(swiftFile, `import Foundation
 struct ShellSnapshot {
 ${swiftDeclaration('DocumentOutline')}
+${swiftDeclaration('GenerationReview')}
 }
 ${swiftDeclaration('OnboardingView')}
 do {
@@ -121,6 +123,13 @@ do {
   let value = try JSONDecoder().decode(OnboardingView.self, from: data)
   guard value.resume != nil else { fatalError("Missing résumé preview") }
   print("decoded step=\\(value.step)")
+  if let review = value.generationReview {
+    let assessment: [String: Any] = ["notes": review.notes, "reasoning": review.reasoning,
+      "gaps": review.gaps, "corrections": review.corrections,
+      "targetPages": review.targetPages, "verbosity": review.verbosity, "score": review.score as Any? ?? NSNull()]
+    let result = try JSONSerialization.data(withJSONObject: assessment)
+    print(String(decoding: result, as: UTF8.self))
+  }
 } catch {
   print(error)
   exit(1)
@@ -151,6 +160,21 @@ do {
     expect(result.status, result.stdout || result.stderr).toBe(0);
     expect(result.stdout).toContain(`decoded step=${step}`);
   });
+  it('decodes the actual generated ready assessment, corrections and independent writing detail', () => {
+    const projected = buildOnboarding({ open: true, step: 2, mode: 'job', isNewResumeMode: true,
+      resume: { name: 'Taylor', contact: { email: 'taylor@example.com' }, sections: [] },
+      generationReview: { notes: 'Used research experience.', reasoning: 'Matched the target role.',
+        gaps: [{ requirement: 'Team leadership', note: 'Confirm the team size.' }], corrections: ['I led a team of four.'],
+        targetPages: 1, verbosity: 'detailed', score: 84 },
+    });
+    const result = spawnSync(executable, [], { input: JSON.stringify(projected), encoding: 'utf8', timeout: 10_000 });
+    expect(result.status, result.stdout || result.stderr).toBe(0);
+    const decoded = JSON.parse(result.stdout.trim().split('\n').at(-1));
+    expect(decoded).toEqual({ notes: 'Used research experience.', reasoning: 'Matched the target role.',
+      gaps: ['Team leadership: Confirm the team size.'], corrections: ['I led a team of four.'],
+      targetPages: 1, verbosity: 'detailed', score: 84 });
+  });
+
 });
 
 describe.skipIf(process.platform !== 'darwin')('native Settings consent action', () => {

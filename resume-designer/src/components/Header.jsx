@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Plus, Copy, Pencil, Trash2, MoreHorizontal, Upload, Download,
-  ChevronDown, Settings, FileDown, User, Briefcase, History, Menu, Check, Loader2, LibraryBig,
+  ChevronDown, Settings, FileDown, User, Briefcase, History, Menu, Check, Loader2, LibraryBig, MessageSquareText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { filePickBlockedReason } from '@/filePickGuard';
@@ -28,6 +28,7 @@ import {
 import { handleVariantThreadsForDelete } from './chat/deleteVariantThreadsFlow.js';
 import { openSettings } from '../settingsModal.js';
 import { AccountAvatar } from './profile/AccountAvatar.jsx';
+import { store } from '../store.js';
 
 // Format a variant's updatedAt for the selector menu (relative, then absolute).
 function formatDate(isoString) {
@@ -94,6 +95,9 @@ export default function Header() {
   const [renameValue, setRenameValue] = useState('');
   const importInputRef = useRef(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [hasGenerationReview, setHasGenerationReview] = useState(() => !!store.get('generationReview'));
+
+  useEffect(() => store.subscribe(() => setHasGenerationReview(!!store.get('generationReview'))), []);
 
   // Mirror pdf.js's generation state onto the visible PDF button (rd:pdf-busy).
   useEffect(() => {
@@ -255,6 +259,7 @@ export default function Header() {
     { key: 'profile', label: 'Profile', short: 'Profile', Icon: User, run: () => window.openUserProfilePanel?.() },
     { key: 'jobs', label: 'Jobs', short: 'Jobs', Icon: Briefcase, run: () => window.openJobDescriptionPanel?.() },
     { key: 'library', label: 'Resumes', short: 'Library', Icon: LibraryBig, run: () => window.dispatchEvent(new CustomEvent('rd:open-library')) },
+    ...(hasGenerationReview ? [{ key: 'generation-review', label: 'Generation notes', short: 'Notes', Icon: MessageSquareText, run: () => window.dispatchEvent(new CustomEvent('rd:open-generation-review')) }] : []),
     { key: 'history', label: 'Version history', short: 'History', Icon: History, run: () => window.openHistoryPanel?.() },
   ];
 
