@@ -13,7 +13,7 @@ As of **2026-11-06**, the protected-branch release lane is operational and
 delivered source `dd1ca63c1a3992ec50a8846c509b1551fa450415` as internal TestFlight
 build **6**. That evidence is for the existing main/next lane, not the new PR
 preview workflow below. The PR preview implementation has passed local tests and independent review.
-Its bootstrap is being reviewed in [PR #158](https://github.com/ashproto/Resume-Designer/pull/158). Preview mode remains off until the bootstrap lands and the controlled pilot below is verified.
+The preview bootstrap reached default main through reviewed regular merge commits in [PR #158](https://github.com/ashproto/Resume-Designer/pull/158), [PR #160](https://github.com/ashproto/Resume-Designer/pull/160) and [PR #159](https://github.com/ashproto/Resume-Designer/pull/159). The controlled pilot uses [UI PR #161](https://github.com/ashproto/Resume-Designer/pull/161); general activation awaits verified delivery and physical Duo confirmation. Check the live repository variables and the original request run for current mode/outcome.
 
 The PR Cloud workflow is saved with clean builds, restricted editing, manual
 `ios-testflight/pr/` tags, an internal-only archive and **On Paper Dev** as its
@@ -246,13 +246,20 @@ The release workflow can run for up to five and a half hours. A Cloud or Apple p
 timeout fails the GitHub job and retains the last known run/build details. It
 does not imply Apple stopped the build.
 
-Apple's repository index can take longer than ten minutes to expose a new tag.
-The dispatcher makes 120 checks, 30 seconds apart (roughly an hour plus API time),
-while retaining the original creator's one-time start authorization. It reports the discovery
-phase and matching-reference counts without logging API payloads. While waiting,
-a new release rechecks its protected branch and exits if superseded, so it does
-not delay newer candidates for the full discovery window. The exact tag, commit,
-workflow, and undeleted-reference checks still apply before any Cloud start.
+Tag discovery has both a 120-check ceiling and a 15-minute monotonic elapsed-time
+budget, including source reauthorization and Apple reference reads. Sleeps are
+clipped to the remaining budget. An in-flight read may finish after the deadline;
+a reference read completed at or after the deadline is refused. The controller
+awaits that read rather than leaving background dispatch work running.
+
+The original creator waits for a reference only within this window. Once the
+reference is found, all remaining ordering and final source checks still apply. The controller
+reports discovery counts without logging API payloads,
+rechecks source eligibility while waiting, and exits if superseded. The exact tag,
+commit, workflow and undeleted-reference checks still apply before any Cloud
+start. A discovery timeout retains the immutable tag and records a no-start
+receipt only when that controller owns the unused reservation and has neither
+possibly sent a start request nor observed an existing Cloud run.
 
 ## Recovery
 
@@ -377,8 +384,20 @@ even while preview mode is off, because an older preview could still be running.
 Each owner comment has a permanent lightweight binding
 `ios-testflight/request/pr-<number>/comment-<id>`. Its original SHA survives full
 workflow reruns. Cloud uses a separate dispatch reservation
-`ios-testflight/pr/<number>/<comment-id>/<full-sha>`. A pushed commit makes an
-unstarted request stale; another comment is required. A new comment may
+`ios-testflight/pr/<number>/<comment-id>-<full-sha>`. This four-component
+name retains the full request identity and commit SHA under the same protected
+prefix. Older five-component dispatch tags
+`ios-testflight/pr/<number>/<comment-id>/<full-sha>` remain valid for recovery;
+their refs are never renamed, deleted or recreated. Recovery reads both exact
+forms, requires exactly one existing matching commit ref, and cannot create a
+tag or start a build. Two matching forms are ambiguous and fail closed.
+
+The four-component format is a controlled compatibility change following a
+pilot where Apple exposed the request-binding tag but omitted the dispatch tag.
+It does not establish a documented Apple path-depth limit; live signed delivery
+must still verify discovery and the complete source identity.
+
+A pushed commit makes an unstarted request stale; another comment is required. A new comment may
 deliberately rebuild the same SHA; rerunning the original comment cannot.
 If the original workflow failed before creating a binding, rerunning it cannot
 approve a later head; create a fresh command instead.
@@ -407,6 +426,15 @@ journal for that reservation, after all live Cloud/upload checks; missing or
 changed evidence remains blocked. It grants no start/retry authority, changes
 no status or tag, and cannot close any other reservation.
 
+GitHub GETs use bounded, per-process conditional requests. Every read still
+contacts GitHub with the current token; only an authenticated matching `304`
+reuses isolated JSON for the exact URL. Token changes and mutation attempts
+invalidate those validators. Errors never fall back to cached authorization,
+and Apple requests remain uncached. CI lookup is scoped to the source branch
+while retaining exact repository/PR/head checks and synthetic-merge support.
+This follows [GitHub conditional-request guidance](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests)
+so unchanged polling reads do not consume the primary request budget.
+
 For recovery, run **iOS PR TestFlight** from **main**, supplying its original
 `request_tag` and an optional known `resume_run_id`. Omitting the run ID scans for
 the exact reservation; it still cannot start a build or create another tag. The
@@ -420,6 +448,28 @@ authoritative Apple reconciliation. A definitively recorded pre-POST failure or
 Apple rejection can close an unused reservation for ordering; absence from an
 API list alone cannot. Do not delete tags, restart ambiguous reservations or
 request another build to work around the block.
+
+Feedback failures emit a `preview_diagnostic` record with a fixed initialization
+or feedback phase, fixed API operation name, and HTTP status or `transport`.
+Numeric rate-limit remaining/reset/retry-after fields are included when supplied
+by GitHub so quota failures can be distinguished from access failures.
+Raw API bodies, exception messages, paths and credentials are excluded. A failed
+status comment does not establish the delivery outcome: inspect the original
+Actions/Cloud run and its reservation before any recovery or new command.
+
+For feedback diagnostics or repair without Cloud monitoring, manually run
+**iOS PR TestFlight Feedback Repair** from **main** with only the original `request_tag`.
+The dedicated five-minute job revalidates the owner/admin, unchanged owner
+command and immutable binding, then runs the trusted feedback CLI with a fixed
+unconfirmed outcome. It has no Apple credentials, release environment, build
+queue, candidate execution, ref/status writes or delivery dependency. Callers
+cannot supply a success state or build identity. Repair creates a missing notice
+only; it never updates an existing authentic request notice, so a concurrent
+availability update cannot be replaced by diagnostics. A simultaneous creation
+can still produce duplicate notices; duplicates fail closed and require operator
+reconciliation. This is not an atomic or exactly-once comment operation.
+This path exercises the actual Actions feedback token and safe diagnostics;
+it does not start or recover a Cloud build, or prove TestFlight availability.
 
 An isolated feedback job updates one bot comment per owner request with the
 source SHA, Actions URL, Cloud run/build identity and verified state. Feedback

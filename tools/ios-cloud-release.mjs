@@ -12,6 +12,7 @@ import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { attachReservationEvidence, coordinatedReleaseOptions } from './ios-cloud-evidence.mjs';
+import { previewDispatchTag, parsePreviewDispatchTag } from './ios-pr-tags.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const BUNDLE_ID = 'com.onpaper.app';
@@ -37,7 +38,14 @@ export function validateInput(input) {
   if (input.resumeRunId) requireId(input.resumeRunId, 'resume run id');
   const audience = kind === 'preview' ? 'INTERNAL_ONLY' : 'APP_STORE_ELIGIBLE';
   if (input.audience !== undefined && input.audience !== audience) throw new Error('Archive audience cannot override the delivery policy');
-  const tag = kind === 'preview' ? `ios-testflight/pr/${input.prNumber}/${input.commentId}/${input.sha}` : `ios-testflight/${input.branch}/${input.sha}`;
+  let tag = `ios-testflight/${input.branch}/${input.sha}`;
+  if (kind === 'preview') {
+    const parsed = input.tag === undefined ? undefined : parsePreviewDispatchTag(input.tag);
+    if (input.tag !== undefined && (!parsed || parsed.prNumber !== input.prNumber || parsed.commentId !== input.commentId || parsed.sha !== input.sha)) {
+      throw new Error('Preview dispatch tag does not match the exact request identity');
+    }
+    tag = input.tag ?? previewDispatchTag(input);
+  }
   return { ...input, kind, audience, tag };
 }
 
@@ -60,22 +68,67 @@ export function safeApiUrl(origin, path) {
 }
 
 export function createApi({ origin, token, fetchImpl = fetch, sleep = pause }) {
+  // Every authorization read still reaches GitHub. Only its authenticated 304
+  // may reuse JSON, isolated by exact URL/token and bounded for this process.
+  const conditional = origin === 'https://api.github.com';
+  const cache = new Map();
+  let cacheToken, cacheBytes = 0, epoch = 0;
+  const clearCache = () => { cache.clear(); cacheBytes = 0; epoch++; };
+  const discard = url => {
+    cacheBytes -= cache.get(url)?.size || 0;
+    cache.delete(url);
+  };
+  const validEtag = value => typeof value === 'string' && value.length <= 1024 && /^(?:W\/)?"[\x21\x23-\x7e]*"$/.test(value);
+  // If-None-Match compares valid opaque tags regardless of the W/ marker.
+  const sameEtag = (left, right) => validEtag(left) && validEtag(right)
+    && left.replace(/^W\//, '') === right.replace(/^W\//, '');
   async function request(path, { method = 'GET', body } = {}) {
     const url = safeApiUrl(origin, path);
     const attempts = method === 'GET' ? 3 : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
+        const credential = token();
+        if (conditional && credential !== cacheToken) { clearCache(); cacheToken = credential; }
+        if (conditional && method !== 'GET') clearCache();
+        const version = epoch;
+        const cached = conditional && method === 'GET' && typeof credential === 'string' && credential
+          ? cache.get(url) : undefined;
         const response = await fetchImpl(url, {
           method, redirect: 'error', signal: AbortSignal.timeout(30_000),
-          headers: { Authorization: `Bearer ${token()}`, Accept: 'application/json', 'Content-Type': 'application/json', ...(origin === 'https://api.github.com' ? { 'X-GitHub-Api-Version': '2022-11-28' } : {}) },
+          headers: { Authorization: `Bearer ${credential}`, Accept: 'application/json', 'Content-Type': 'application/json', ...(conditional ? { 'X-GitHub-Api-Version': '2022-11-28' } : {}),
+            ...(cached ? { 'If-None-Match': cached.etag } : {}) },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
+        const etag = response.headers?.get('etag');
+        if (response.status === 304 && cached && version === epoch && credential === cacheToken
+          && cache.get(url) === cached && (etag == null || sameEtag(etag, cached.etag))) {
+          return JSON.parse(cached.text);
+        }
         if (!response.ok) {
           // Do not print response bodies: upstream error text can echo inputs.
-          throw Object.assign(new Error(`${method} ${new URL(url).pathname} failed (${response.status})`), { status: response.status });
+          const limit = name => {
+            const value = response.headers?.get(name);
+            return typeof value === 'string' && /^\d{1,15}$/.test(value) ? Number(value) : undefined;
+          };
+          throw Object.assign(new Error(`${method} ${new URL(url).pathname} failed (${response.status})`), {
+            status: response.status,
+            ...(conditional ? { rateLimitRemaining: limit('x-ratelimit-remaining'),
+              rateLimitReset: limit('x-ratelimit-reset'), retryAfter: limit('retry-after') } : {}),
+          });
         }
         const text = await response.text();
-        return text ? JSON.parse(text) : {};
+        const value = text ? JSON.parse(text) : {};
+        if (conditional && method === 'GET' && version === epoch && credential === cacheToken) {
+          discard(url);
+          const size = Buffer.byteLength(text);
+          if (credential && response.status === 200 && validEtag(etag) && url.length <= 8192 && size <= 1024 * 1024) {
+            // Store serialized JSON so callers can never mutate cached facts.
+            while (cache.size >= 128 || cacheBytes + size > 4 * 1024 * 1024) discard(cache.keys().next().value);
+            cache.set(url, { etag, text: text || '{}', size });
+            cacheBytes += size;
+          }
+        }
+        return value;
       } catch (error) {
         const transient = error.status === undefined || error.status === 429 || error.status >= 500;
         if (!transient || attempt + 1 === attempts) throw error;
@@ -204,7 +257,7 @@ export function betaState(build, detail) {
 }
 
 export async function release(supplied, { gh, asc, output = () => {}, log = console.log, sleep = pause, pollAttempts = 180, discoveryAttempts = 120, pollMs = 30_000,
-  authorizeSource, beforeStart, recordState = async () => {},
+  authorizeSource, beforeStart, recordState = async () => {}, now = () => performance.now(),
 }) {
   const input = validateInput(supplied);
   const { workflowId, tag, sha, appId, groupId, audience } = input;
@@ -261,18 +314,30 @@ export async function release(supplied, { gh, asc, output = () => {}, log = cons
     // Apple can take longer than ten minutes to index a newly pushed tag. Keep
     // this creator's sole start authorization alive while it becomes visible.
     output({ release_state: 'discovering_tag' });
+    // Bound elapsed time, including authorization and API latency. In-flight
+    // requests keep their own timeouts; no detached dispatch work is raced.
+    const discoveryDeadline = now() + 15 * 60_000;
+    const assertDiscoveryTime = () => {
+      if (now() >= discoveryDeadline) throw new Error('Cloud has not discovered the release tag before the discovery deadline. Reservation retained; reconcile before starting a build manually.');
+    };
     let reference;
     for (let index = 0; index < discoveryAttempts; index++) {
+      assertDiscoveryTime();
       // Do not hold a newer release in the queue while an obsolete tag indexes.
       // Existing runs can still be monitored after their branch advances.
-      if (reservation.created && index > 0 && !await sourceCurrent('discover')) return superseded(true);
+      if (reservation.created && index > 0) {
+        const eligible = await sourceCurrent('discover');
+        assertDiscoveryTime();
+        if (!eligible) return superseded(true);
+      }
       const references = await asc.collection(`/v1/scmRepositories/${repoId}/gitReferences?limit=200`);
+      assertDiscoveryTime();
       reference = selectTag(references, tag);
       if (reference) break;
       const canonical = references.filter(item => item.attributes?.canonicalName === `refs/tags/${tag}`);
       // Counts only: do not dump upstream payloads or unrelated reference names.
       log(`Cloud tag discovery ${index + 1}/${discoveryAttempts}: scanned=${references.length}, name=${references.filter(item => item.attributes?.name === tag).length}, canonical=${canonical.length}, TAG=${canonical.filter(item => item.attributes?.kind === 'TAG').length}, undeleted=${canonical.filter(item => item.attributes?.isDeleted === false).length}.`);
-      if (index + 1 < discoveryAttempts) await sleep(pollMs);
+      if (index + 1 < discoveryAttempts) await sleep(Math.min(pollMs, Math.max(0, discoveryDeadline - now())));
     }
     if (!reference) throw new Error('Cloud has not discovered the release tag. Reservation retained; reconcile before starting a build manually.');
     requireId(reference.id, 'Apple tag id');

@@ -1,6 +1,7 @@
 // App-wide ordering for trusted iOS Cloud controllers. Adapters perform I/O;
 // this module never starts Cloud work or clears immutable reservation refs.
 import { createHash } from 'node:crypto';
+import { parsePreviewDispatchTag } from './ios-pr-tags.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const REPOSITORY_ID = 1163653093;
@@ -21,8 +22,10 @@ function requireId(id, label) {
   return id;
 }
 function reservationSha(tag) {
-  const match = typeof tag === 'string' && tag.match(/^ios-testflight\/(?:(?:main|next)\/|pr\/[1-9]\d*\/[1-9]\d*\/)([a-f0-9]{40})$/);
-  if (!match) throw new Error('Invalid managed reservation tag');
+  const preview = parsePreviewDispatchTag(tag);
+  if (preview) return preview.sha;
+  const match = typeof tag === 'string' && tag.match(/^ios-testflight\/(?:main|next)\/([a-f0-9]{40})$/);
+  if (!match || match[0] !== tag) throw new Error('Invalid managed reservation tag');
   return match[1];
 }
 function assertReservation(ref, tag, sha) {

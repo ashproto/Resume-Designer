@@ -72,7 +72,29 @@ test('a new owner command freezes the exact PR source and associated CI', async 
   const { context, state } = fixture();
   const result = await authorizePreview(context);
   assert.deepEqual(result, { skip: false, prNumber: 123, commentId: 456, sha: SHA, ciRunId: 900,
-    requestTag: REQUEST, tag: `ios-testflight/pr/123/456/${SHA}` });
+    requestTag: REQUEST, tag: `ios-testflight/pr/123/456-${SHA}` });
+  assert.equal(state.requests.some(r => r.method === 'POST'), false);
+});
+
+test('binding and rechecks retain either exact supplied dispatch tag format', async () => {
+  for (const tag of [`ios-testflight/pr/123/456-${SHA}`, `ios-testflight/pr/123/456/${SHA}`]) {
+    const { context, gh } = fixture();
+    const request = { ...await authorizePreview(context), tag };
+    assert.equal((await bindPreviewRequest(request, { gh })).tag, tag);
+    assert.equal((await recheckPreview(request, { ...context, purpose: 'monitor' })).tag, tag);
+    assert.equal((await recheckPreview(request, { ...context, purpose: 'start' })).tag, tag);
+  }
+});
+
+test('supplied dispatch tags cannot change namespace, request identities or source', async () => {
+  const { context, gh, state } = fixture();
+  const request = await authorizePreview(context);
+  for (const tag of [`ios-testflight/pr/124/456-${SHA}`, `ios-testflight/pr/123/457/${SHA}`,
+    `ios-testflight/pr/123/456-${NEXT}`, `ios-testflight/pr/123/0456/${SHA}`,
+    `ios-testflight/request/123/456-${SHA}`, `ios-testflight/pr/123/456-${SHA}\n`]) {
+    await assert.rejects(bindPreviewRequest({ ...request, tag }, { gh }));
+    await assert.rejects(recheckPreview({ ...request, tag }, { ...context, purpose: 'monitor' }));
+  }
   assert.equal(state.requests.some(r => r.method === 'POST'), false);
 });
 
@@ -484,4 +506,18 @@ test('later workflow attempts can recover and monitor the original bound request
     event: { repository: repo(), sender: owner(), inputs: { request_tag: REQUEST } } });
   const result = await authorizePreview(context);
   assert.equal(result.monitorOnly, true); assert.equal(result.sha, SHA);
+});
+
+
+test('CI lookup scopes to the encoded source branch and retains synthetic-merge provenance', async () => {
+  const { context, state } = fixture();
+  state.pr.head.ref = 'codex/feature#1+name&more';
+  state.run.head_sha = MERGE;
+  assert.equal((await authorizePreview(context)).ciRunId, 900);
+  const queries = state.requests.filter(value => value.path.includes('/ci.yml/runs?'));
+  assert.equal(queries.length, 1);
+  const query = new URL(queries[0].path, 'https://api.github.com').searchParams;
+  assert.equal(query.get('branch'), state.pr.head.ref);
+  assert.equal(query.get('event'), 'pull_request');
+  assert.equal(query.get('head_sha'), null);
 });

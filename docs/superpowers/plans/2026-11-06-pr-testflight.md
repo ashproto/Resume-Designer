@@ -99,7 +99,7 @@ Local implementation and review are complete. On 2026-11-06 the owner authorized
 - New workflow separates cheap authorization, no-secret binding, protected queued release/recovery and no-Apple feedback. Checkout event main SHA, disable persisted credentials, fixed pinned Actions and no installs/caches/artifact restore.
 - Mode `IOS_PR_TESTFLIGHT_MODE` is `off` by default, `pilot` restricted by configured PR/SHA, then `enabled`. New trusted IDs: `XCODE_CLOUD_PR_WORKFLOW_ID`, `APP_STORE_CONNECT_DEV_GROUP_ID`; existing release IDs remain production configuration.
 - Both release jobs share literal concurrency group `ios-testflight-com-onpaper-app`, `queue:max`, no cancellation. Apple environment stays main-only.
-- Cloud hook accepts strict `ios-testflight/pr/<PR>/<comment>/<sha>` only when SHA equals `CI_COMMIT`, no native PR run; existing main/next forms remain valid.
+- Cloud hook accepts strict `ios-testflight/pr/<PR>/<comment>-<sha>` and original `<comment>/<sha>` forms only when the full SHA equals `CI_COMMIT`, with no native PR run; existing main/next forms remain valid. New dispatches use four components; recovery selects the sole existing exact current/legacy ref and never creates one.
 
 - [x] Write/observe red tests for valid/invalid preview tags, request-binding tag rejection, mismatched SHA and PR environment, and workflow privilege/command boundaries.
 - [x] Implement hook/workflows and document exact setup, historical live release evidence, mode/pilot, tag protections, recipients, CloudKit scope and no-ID recovery limits.

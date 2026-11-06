@@ -1,5 +1,7 @@
 // Trusted PR preview policy. GitHub data is inspected as data; this module has
 // no CLI, subprocess, candidate execution, Apple access, or dependency install.
+import { previewDispatchTag, parsePreviewDispatchTag } from './ios-pr-tags.mjs';
+
 const REPOSITORY = 'ashproto/Resume-Designer';
 const REPOSITORY_ID = 1163653093;
 const OWNER = 'ashproto';
@@ -30,7 +32,7 @@ const ownerIdentity = user => user?.id === OWNER_ID && user.login === OWNER && u
 const repoIdentity = repo => repo?.id === REPOSITORY_ID && repo.full_name === REPOSITORY;
 const command = body => typeof body === 'string' && body.trim() === '/testflight-dev';
 const requestTag = (prNumber, commentId) => `ios-testflight/request/pr-${prNumber}/comment-${commentId}`;
-const dispatchTag = (prNumber, commentId, source) => `ios-testflight/pr/${prNumber}/${commentId}/${source}`;
+const dispatchTag = (prNumber, commentId, source) => previewDispatchTag({ prNumber, commentId, sha: source });
 
 function requestIdentity(input) {
   const prNumber = number(input.prNumber, 'PR number');
@@ -38,8 +40,10 @@ function requestIdentity(input) {
   const source = sha(input.sha);
   const tag = requestTag(prNumber, commentId);
   requireCondition(input.requestTag === undefined || input.requestTag === tag, 'Request tag does not match the original identity.');
-  const dispatch = dispatchTag(prNumber, commentId, source);
-  requireCondition(input.tag === undefined || input.tag === dispatch, 'Dispatch tag does not match the original identity.');
+  const parsed = input.tag === undefined ? undefined : parsePreviewDispatchTag(input.tag);
+  requireCondition(input.tag === undefined || (parsed && parsed.prNumber === prNumber && parsed.commentId === commentId
+    && parsed.sha === source), 'Dispatch tag does not match the original identity.');
+  const dispatch = input.tag ?? dispatchTag(prNumber, commentId, source);
   return { ...input, prNumber, commentId, sha: source, requestTag: tag, tag: dispatch };
 }
 
@@ -125,9 +129,10 @@ async function successfulCi(gh, pr, source) {
   const workflow = await read(gh, `${ROOT}/actions/workflows/ci.yml`);
   requireCondition(workflow?.path === WORKFLOW_PATH, 'Unexpected CI workflow path.');
   number(workflow.id, 'CI workflow ID');
-  // Do not filter head_sha: GitHub may record the synthetic PR merge here.
-  // Association metadata must still name the exact requested source head.
-  const runs = await collection(gh, `${ROOT}/actions/workflows/ci.yml/runs?event=pull_request`, 'workflow_runs');
+  // Limit polling to this source branch, while retaining associated synthetic
+  // merge runs. Exact repository/PR/head checks below remain authoritative.
+  const branch = typeof pr.head?.ref === 'string' && pr.head.ref ? `&branch=${encodeURIComponent(pr.head.ref)}` : '';
+  const runs = await collection(gh, `${ROOT}/actions/workflows/ci.yml/runs?event=pull_request${branch}`, 'workflow_runs');
   const candidates = runs.filter(run => associatedRun(run, pr.number, source, pr.base.ref));
   requireCondition(candidates.length > 0, 'Successful associated PR CI is required; create a fresh command after it passes.');
   for (const run of candidates) number(run.id, 'CI run ID');
@@ -254,5 +259,5 @@ export async function recheckPreview(input, options) {
   const result = await authorizePreview({ ...options, recovery: false, expectedSha: request.sha, requireBinding: true });
   requireCondition(result.skip === false && result.prNumber === request.prNumber && result.commentId === request.commentId,
     'Original preview request is no longer authorized for a start.');
-  return result;
+  return { ...result, tag: request.tag };
 }
