@@ -12,6 +12,7 @@ import { createPrivateKey, sign } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { attachReservationEvidence, coordinatedReleaseOptions } from './ios-cloud-evidence.mjs';
+import { previewDispatchTag, parsePreviewDispatchTag } from './ios-pr-tags.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const BUNDLE_ID = 'com.onpaper.app';
@@ -37,7 +38,14 @@ export function validateInput(input) {
   if (input.resumeRunId) requireId(input.resumeRunId, 'resume run id');
   const audience = kind === 'preview' ? 'INTERNAL_ONLY' : 'APP_STORE_ELIGIBLE';
   if (input.audience !== undefined && input.audience !== audience) throw new Error('Archive audience cannot override the delivery policy');
-  const tag = kind === 'preview' ? `ios-testflight/pr/${input.prNumber}/${input.commentId}/${input.sha}` : `ios-testflight/${input.branch}/${input.sha}`;
+  let tag = `ios-testflight/${input.branch}/${input.sha}`;
+  if (kind === 'preview') {
+    const parsed = input.tag === undefined ? undefined : parsePreviewDispatchTag(input.tag);
+    if (input.tag !== undefined && (!parsed || parsed.prNumber !== input.prNumber || parsed.commentId !== input.commentId || parsed.sha !== input.sha)) {
+      throw new Error('Preview dispatch tag does not match the exact request identity');
+    }
+    tag = input.tag ?? previewDispatchTag(input);
+  }
   return { ...input, kind, audience, tag };
 }
 
@@ -249,7 +257,7 @@ export function betaState(build, detail) {
 }
 
 export async function release(supplied, { gh, asc, output = () => {}, log = console.log, sleep = pause, pollAttempts = 180, discoveryAttempts = 120, pollMs = 30_000,
-  authorizeSource, beforeStart, recordState = async () => {},
+  authorizeSource, beforeStart, recordState = async () => {}, now = () => performance.now(),
 }) {
   const input = validateInput(supplied);
   const { workflowId, tag, sha, appId, groupId, audience } = input;
@@ -306,18 +314,30 @@ export async function release(supplied, { gh, asc, output = () => {}, log = cons
     // Apple can take longer than ten minutes to index a newly pushed tag. Keep
     // this creator's sole start authorization alive while it becomes visible.
     output({ release_state: 'discovering_tag' });
+    // Bound elapsed time, including authorization and API latency. In-flight
+    // requests keep their own timeouts; no detached dispatch work is raced.
+    const discoveryDeadline = now() + 15 * 60_000;
+    const assertDiscoveryTime = () => {
+      if (now() >= discoveryDeadline) throw new Error('Cloud has not discovered the release tag before the discovery deadline. Reservation retained; reconcile before starting a build manually.');
+    };
     let reference;
     for (let index = 0; index < discoveryAttempts; index++) {
+      assertDiscoveryTime();
       // Do not hold a newer release in the queue while an obsolete tag indexes.
       // Existing runs can still be monitored after their branch advances.
-      if (reservation.created && index > 0 && !await sourceCurrent('discover')) return superseded(true);
+      if (reservation.created && index > 0) {
+        const eligible = await sourceCurrent('discover');
+        assertDiscoveryTime();
+        if (!eligible) return superseded(true);
+      }
       const references = await asc.collection(`/v1/scmRepositories/${repoId}/gitReferences?limit=200`);
+      assertDiscoveryTime();
       reference = selectTag(references, tag);
       if (reference) break;
       const canonical = references.filter(item => item.attributes?.canonicalName === `refs/tags/${tag}`);
       // Counts only: do not dump upstream payloads or unrelated reference names.
       log(`Cloud tag discovery ${index + 1}/${discoveryAttempts}: scanned=${references.length}, name=${references.filter(item => item.attributes?.name === tag).length}, canonical=${canonical.length}, TAG=${canonical.filter(item => item.attributes?.kind === 'TAG').length}, undeleted=${canonical.filter(item => item.attributes?.isDeleted === false).length}.`);
-      if (index + 1 < discoveryAttempts) await sleep(pollMs);
+      if (index + 1 < discoveryAttempts) await sleep(Math.min(pollMs, Math.max(0, discoveryDeadline - now())));
     }
     if (!reference) throw new Error('Cloud has not discovered the release tag. Reservation retained; reconcile before starting a build manually.');
     requireId(reference.id, 'Apple tag id');

@@ -39,10 +39,11 @@ globalThis.fetch = async (raw, init) => {
   else if (method === 'GET' && path === '/users/ashproto') { operation = 'owner'; value = owner; }
   else if (method === 'GET' && path === root + '/collaborators/ashproto/permission') { operation = 'permission'; value = { permission: options.policyDenied ? 'write' : 'admin', user: owner }; }
   else if (method === 'GET' && path === root + '/git/ref/tags/ios-testflight/request/pr-161/comment-456') { operation = 'binding'; value = { ref: 'refs/tags/ios-testflight/request/pr-161/comment-456', object: { type: 'commit', sha } }; }
-  else if (method === 'GET' && path === root + '/issues/comments/456') { operation = 'command'; value = comment; }
+  else if (method === 'GET' && path === root + '/issues/comments/456') { operation = 'command'; value = options.editedCommand ? { ...comment, updated_at: '2026-11-06T00:01:00Z' } : comment; }
   else if (method === 'GET' && path === root + '/pulls/161') { operation = 'pr'; value = { number: 161, state: 'open' }; }
   else if (method === 'GET' && path === root + '/issues/161/comments') {
-    operation = 'list'; value = options.malformedList ? {} : options.existing ? [{ id: 789, user: { id: 41898282, login: 'github-actions[bot]', type: 'Bot' }, body: '<!-- on-paper-testflight-request:456 -->' }] : [];
+    operation = 'list'; value = options.malformedList ? {} : options.existing ? [{ id: 789, user: { id: 41898282, login: 'github-actions[bot]', type: 'Bot' }, body: options.existingBody ?? '<!-- on-paper-testflight-request:456 -->' }] : [];
+    if (options.duplicate) value.push({ ...value[0], id: 790 });
   }
   else if (method === 'POST' && path === root + '/issues/161/comments') { operation = 'post'; value = { id: 789 }; }
   else if (method === 'PATCH' && path === root + '/issues/comments/789') { operation = 'patch'; value = { id: 789 }; }
@@ -59,7 +60,7 @@ globalThis.fetch = async (raw, init) => {
     GITHUB_TOKEN: options.noToken ? '' : sentinel, APP_STORE_CONNECT_PRIVATE_KEY: sentinel,
     GITHUB_EVENT_NAME: 'issue_comment', GITHUB_REF: 'refs/heads/main', GITHUB_TRIGGERING_ACTOR: 'ashproto',
     GITHUB_REPOSITORY: repository.full_name, GITHUB_SHA: 'b'.repeat(40),
-    GITHUB_RUN_ID: options.badRunUrl ? sentinel : '42270827703', GITHUB_RUN_ATTEMPT: '1', PREVIEW_STATE: 'queued' };
+    GITHUB_RUN_ID: options.badRunUrl ? sentinel : '42270827703', GITHUB_RUN_ATTEMPT: '1', PREVIEW_STATE: 'queued', ...options.env };
   const result = spawnSync(process.execPath, ['--import', preload, cli, ...(options.args || ['feedback'])], {
     env, encoding: 'utf8', timeout: 15_000,
   });
@@ -154,4 +155,57 @@ test('real CLI ignores nonnumeric rate-limit header values', t => {
   } });
   assert.equal(result.status, 1);
   assert.doesNotMatch(result.text, /remaining=|reset=|retry_after=/);
+});
+
+const repairEvent = { repository, sender: owner, inputs: { request_tag: 'ios-testflight/request/pr-161/comment-456' } };
+const repairEnv = { GITHUB_EVENT_NAME: 'workflow_dispatch', PREVIEW_FEEDBACK_REPAIR: 'true',
+  GITHUB_WORKFLOW_REF: 'ashproto/Resume-Designer/.github/workflows/ios-pr-testflight-feedback.yml@refs/heads/main' };
+
+test('metadata repair creates only a fixed unconfirmed notice after original request revalidation', t => {
+  const result = invoke(t, { eventText: JSON.stringify(repairEvent), env: { ...repairEnv,
+    PREVIEW_STATE: 'testflight_available', PREVIEW_BUILD_NUMBER: '999', PREVIEW_CLOUD_RUN_ID: 'caller-run', PREVIEW_ERROR: 'caller-outcome' } });
+  assert.equal(result.status, 0, result.text);
+  assert.doesNotMatch(result.text, /preview_diagnostic/);
+  const writes = result.requests.filter(call => call.method !== 'GET');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].method, 'POST');
+  assert.ok(writes[0].body.body.includes(sha));
+  assert.match(writes[0].body.body, /availability is \*\*unconfirmed\*\*/);
+  assert.match(writes[0].body.body, /no Cloud build was started by this run/);
+  assert.doesNotMatch(writes[0].body.body, /999|caller-run|caller-outcome|available to/);
+  assert.deepEqual(result.requests.filter(call => call.method === 'GET').map(call => call.path), [
+    '/repos/ashproto/Resume-Designer', '/users/ashproto', '/repos/ashproto/Resume-Designer/collaborators/ashproto/permission',
+    '/repos/ashproto/Resume-Designer/git/ref/tags/ios-testflight/request/pr-161/comment-456',
+    '/repos/ashproto/Resume-Designer/issues/comments/456', '/repos/ashproto/Resume-Designer/pulls/161',
+    '/repos/ashproto/Resume-Designer/issues/161/comments',
+  ]);
+});
+
+for (const available of [false, true]) test(`metadata repair preserves an existing ${available ? 'available' : 'pending'} authentic notice`, t => {
+  const existingBody = '<!-- on-paper-testflight-request:456 -->\n\n### On Paper PR TestFlight\n\nBuild **9** is available to **On Paper Dev** in TestFlight.\n\nSource: `' + sha + '`.';
+  const result = invoke(t, { existing: true, existingBody: available ? existingBody : '<!-- on-paper-testflight-request:456 -->\nQueued',
+    eventText: JSON.stringify(repairEvent), env: repairEnv });
+  assert.equal(result.status, 0, result.text);
+  assert.ok(result.requests.every(call => call.method === 'GET'));
+});
+
+for (const [name, options] of [
+  ['missing immutable binding', { noBinding: true }],
+  ['edited original owner command', { editedCommand: true }],
+  ['non-owner current actor', { env: { GITHUB_TRIGGERING_ACTOR: 'other' } }],
+  ['non-main ref', { env: { GITHUB_REF: 'refs/heads/feature' } }],
+  ['different trusted workflow', { env: { GITHUB_WORKFLOW_REF: 'ashproto/Resume-Designer/.github/workflows/ios-testflight-pr.yml@refs/heads/main' } }],
+  ['issue-comment event', { env: { GITHUB_EVENT_NAME: 'issue_comment' }, eventText: JSON.stringify(event) }],
+]) test(`metadata repair refuses ${name} before comment mutation`, t => {
+  const result = invoke(t, { ...options, eventText: options.eventText ?? JSON.stringify(repairEvent), env: { ...repairEnv, ...options.env } });
+  assert.equal(result.status, 1);
+  assert.ok(result.requests.every(call => call.method === 'GET'));
+});
+
+
+test('metadata repair fails closed with a bounded diagnostic for duplicate authentic notices', t => {
+  const result = invoke(t, { existing: true, duplicate: true, eventText: JSON.stringify(repairEvent), env: repairEnv });
+  assert.equal(result.status, 1);
+  assert.equal(result.text, 'preview_diagnostic phase=feedback_list\n');
+  assert.ok(result.requests.every(call => call.method === 'GET'));
 });

@@ -103,7 +103,11 @@ Actions to full SHAs. Repository/owner checks must precede privileged work.
    delete them. A failed/ambiguous creation is read back and validated.
 3. The secret-bearing release job reads the binding and creates a separate
    Cloud dispatch reservation tag:
-   `ios-testflight/pr/<number>/<comment-id>/<full-sha>`.
+   `ios-testflight/pr/<number>/<comment-id>-<full-sha>`.
+   This four-component form retains the full IDs and SHA. The original
+   five-component `<comment-id>/<full-sha>` form remains recoverable at its
+   existing immutable ref. Recovery must find exactly one of the two exact
+   forms at the bound SHA; zero or two refs fail closed without creation.
    Keeping request binding separate from dispatch reservation preserves the
    current controller's one-creator-only start authorization.
 4. Revalidate owner permission, rerun actor, unchanged command, open PR, base,
