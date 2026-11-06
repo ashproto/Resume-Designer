@@ -189,7 +189,7 @@ for (const state of ['not-started', 'rejected']) {
     const marker = value => `2026-11-06T00:04:00Z OP_IOS_RESERVATION_STATE=${JSON.stringify({ version: 1, repository, tag, sha, state: value })}`;
     attachReservationEvidence(f.gh, { token: 'test-token', exec: (command, args) => {
       assert.equal(command, 'gh');
-      assert.deepEqual(args, ['api', `repos/${repository}/actions/jobs/901/logs`]);
+      assert.deepEqual(args, ['api', '--allow-escape-sequences', `repos/${repository}/actions/jobs/901/logs`]);
       return [marker(state), ...(laterMarker ? [marker('post-attempted')] : [])].join('\n');
     } });
     if (laterMarker) await assert.rejects(f.check(), /authenticated controller log evidence/);
@@ -390,4 +390,39 @@ test('forStart refuses an already-visible current tag run while recovery may mon
   });
   await f.check({ currentTag: ownTag });
   assert.deepEqual(f.data.post, []);
+});
+
+
+test('authenticated legacy receipt can close only a reservation with no structured journal', async () => {
+  const f = fixture(); f.data.refs = [ref()];
+  let calls = 0;
+  f.gh.verifyLegacyReservationEvidence = async expected => {
+    calls++;
+    assert.deepEqual(expected, { repository, tag, sha });
+    assert.ok(f.data.requests.some(([kind, path]) => kind === 'collection' && path.includes('/v1/builds?')));
+    return true;
+  };
+  await f.check();
+  assert.equal(calls, 1);
+  assert.deepEqual(f.data.post, []);
+});
+
+test('legacy receipt never overrides any existing structured journal or active Cloud work', async () => {
+  for (const state of ['reserved', 'post-attempted', 'delivered', 'unknown']) {
+    const f = fixture(); f.data.refs = [ref()]; f.data.statuses = [status(state)];
+    f.gh.verifyLegacyReservationEvidence = async () => { assert.fail('must not fall back past a structured journal'); };
+    await assert.rejects(f.check(), /unresolved.*reservation|reservation.*unresolved/i);
+  }
+  const f = fixture(); f.data.refs = [ref()];
+  f.data.runs.preview = [run({ executionProgress: 'RUNNING' }, 'preview')];
+  f.gh.verifyLegacyReservationEvidence = async () => { assert.fail('Cloud work must be checked first'); };
+  await assert.rejects(f.check(), /unfinished/i);
+});
+
+test('missing or unauthenticated legacy evidence fails closed', async () => {
+  for (const outcome of [false, undefined, 'true']) {
+    const f = fixture(); f.data.refs = [ref()];
+    f.gh.verifyLegacyReservationEvidence = async () => outcome;
+    await assert.rejects(f.check(), /unresolved.*reservation|reservation.*unresolved/i);
+  }
 });

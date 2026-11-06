@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertCloudOrdering, recordReservationState, parseControllerRunUrl } from './ios-cloud-order.mjs';
+import { attachLegacyReservationEvidence } from './ios-cloud-legacy.mjs';
 
 const REPOSITORY = 'ashproto/Resume-Designer';
 const MARKER = 'OP_IOS_RESERVATION_STATE=';
@@ -47,6 +48,7 @@ export function verifyReservationLog(text, expected) {
 }
 
 export function attachReservationEvidence(gh, { token, exec = execFileSync } = {}) {
+  attachLegacyReservationEvidence(gh, { token, exec });
   gh.verifyReservationEvidence = async expected => {
     let config;
     try {
@@ -65,7 +67,7 @@ export function attachReservationEvidence(gh, { token, exec = execFileSync } = {
         && job.run_url === `https://api.github.com/repos/${REPOSITORY}/actions/runs/${expected.runId}`);
       if (!eligible.length) return false;
       config = mkdtempSync(join(tmpdir(), 'on-paper-gh-evidence-'));
-      const logs = eligible.sort((a, b) => a.id - b.id).map(job => exec('gh', ['api', `repos/${REPOSITORY}/actions/jobs/${job.id}/logs`], {
+      const logs = eligible.sort((a, b) => a.id - b.id).map(job => exec('gh', ['api', '--allow-escape-sequences', `repos/${REPOSITORY}/actions/jobs/${job.id}/logs`], {
         encoding: 'utf8', timeout: 60_000, maxBuffer: 10 * 1024 * 1024,
         // Never pass Apple credentials or the caller's gh aliases/config.
         env: { PATH: process.env.PATH, GH_TOKEN: token, GH_HOST: 'github.com', GH_CONFIG_DIR: config, GH_PROMPT_DISABLED: '1' },

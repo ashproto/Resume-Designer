@@ -30,13 +30,15 @@ test('evidence comes from completed trusted release job logs, with isolated CLI 
   attachReservationEvidence(gh, { token: 'github-token', exec: (command, args, options) => {
     called++;
     assert.equal(command, 'gh');
-    assert.deepEqual(args, ['api', `repos/${repository}/actions/jobs/9/logs`]);
+    assert.deepEqual(args, ['api', '--allow-escape-sequences', `repos/${repository}/actions/jobs/9/logs`]);
     assert.equal(options.env.GH_TOKEN, 'github-token');
     assert.equal(options.env.APP_STORE_CONNECT_PRIVATE_KEY, undefined);
     assert.equal(options.env.GITHUB_TOKEN, undefined);
     assert.deepEqual(readdirSync(options.env.GH_CONFIG_DIR), []);
     return marker('not-started');
   } });
+  assert.equal(typeof gh.verifyLegacyReservationEvidence, 'function');
+  assert.equal(await gh.verifyLegacyReservationEvidence({ repository, tag, sha }), false);
   assert.equal(await gh.verifyReservationEvidence(expected), true);
   assert.equal(called, 1);
 });

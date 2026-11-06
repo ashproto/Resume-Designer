@@ -13,8 +13,16 @@ As of **2026-11-06**, the protected-branch release lane is operational and
 delivered source `dd1ca63c1a3992ec50a8846c509b1551fa450415` as internal TestFlight
 build **6**. That evidence is for the existing main/next lane, not the new PR
 preview workflow below. The PR preview implementation has passed local tests and independent review.
-Its bootstrap is being published for hosted CI/review; preview mode remains off
-until the account configuration and controlled pilot below are verified.
+Its bootstrap is being reviewed in [PR #158](https://github.com/ashproto/Resume-Designer/pull/158). Preview mode remains off until the bootstrap lands and the controlled pilot below is verified.
+
+The PR Cloud workflow is saved with clean builds, restricted editing, manual
+`ios-testflight/pr/` tags, an internal-only archive and **On Paper Dev** as its
+sole TestFlight post-action group. That internal group has automatic all-build
+distribution disabled and one owner-authorized existing tester. The existing
+production workflow and recipients are unchanged. Both workflow IDs are saved
+in the main-only GitHub environment. The shared product counter was verified
+as **7**; it was not reset. These are account configuration checks, not proof
+of signed preview delivery or physical-device installation.
 
 ### Historical account setup checkpoint
 
@@ -389,6 +397,16 @@ token to read those job logs; Apple credentials are excluded from that child
 environment. Missing logs/provenance, uncertain POST acceptance or unknown upload
 states keep ordering blocked. No timeout or general force-clear grants a retry.
 
+One pre-journal reservation is reconciled by `tools/ios-cloud-legacy.mjs`:
+`ios-testflight/next/52e1b799c03be084736a10c3ff7aa81d41b22a2c`. Its
+[original trusted-main run](https://github.com/ashproto/Resume-Designer/actions/runs/42157371938)
+completed tag discovery as `superseded` before the pinned controller could
+reach its only Cloud POST. The receipt pins the exact run, attempt, job, source
+files and authenticated raw-log digest. It applies only with no structured
+journal for that reservation, after all live Cloud/upload checks; missing or
+changed evidence remains blocked. It grants no start/retry authority, changes
+no status or tag, and cannot close any other reservation.
+
 For recovery, run **iOS PR TestFlight** from **main**, supplying its original
 `request_tag` and an optional known `resume_run_id`. Omitting the run ID scans for
 the exact reservation; it still cannot start a build or create another tag. The
@@ -421,9 +439,10 @@ Local mocked policy/dispatch/recovery tests, tree-object tests and workflow lint
 are separate from hosted GitHub/Apple delivery evidence. The actual PR-tag Cloud
 hook has been exercised in an isolated copy, and unsigned simulator compilation
 and device Release archive pass with Node 24.13.0, Rust 1.92.0 and Xcode 27.2.
-No new hosted workflow, account configuration, signed upload or physical-device
-pilot has been performed for this preview lane. See the implementation handoff
-for final local test counts and retained logs.
+Hosted bootstrap CI and the account configuration above are tracked separately
+from these local results. Signed preview upload, actual TestFlight note ingestion
+and physical-device installation remain pending the controlled pilot. See the
+implementation handoff for final local test counts and retained logs.
 
 ## References
 

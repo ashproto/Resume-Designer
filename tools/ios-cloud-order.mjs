@@ -95,8 +95,12 @@ async function unusedReservationEvidence(gh, repository, tag, sha) {
   // GitHub returns newest first. Never fall back to an older closed outcome
   // after a newer pending/unknown record for the same reservation context.
   const status = statuses.find(value => value?.context === reservationStatusContext(tag));
-  const state = status?.description?.match(/^ios-cloud:(not-started|rejected)$/)?.[1];
-  if (!status || !['not-started', 'rejected'].includes(state)) return false;
+  // The one reviewed pre-journal receipt is checked only when this reservation
+  // has no structured journal at all. Never override a newer or invalid record.
+  if (!status) return typeof gh.verifyLegacyReservationEvidence === 'function'
+    && await gh.verifyLegacyReservationEvidence({ repository, tag, sha }) === true;
+  const state = status.description?.match(/^ios-cloud:(not-started|rejected)$/)?.[1];
+  if (!['not-started', 'rejected'].includes(state)) return false;
   if (status.creator?.id !== 41898282 || status.creator.login !== 'github-actions[bot]'
     || status.creator.type !== 'Bot' || status.state !== 'success') throw new Error('Untrusted reservation journal creator or state');
   const { runId, run } = await trustedControllerRun(gh, repository, status.target_url, { completed: true });
