@@ -297,6 +297,11 @@ function diffArray(oldArray, newArray, basePath) {
   for (let i = 0; i < matchCount; i++) {
     const oldEntry = unmatchedOld[i];
     const newEntry = unmatchedNew[i];
+    if (JSON.stringify(oldEntry.item) === JSON.stringify(newEntry.item)) {
+      oldEntry.matched = true;
+      newEntry.matched = true;
+      continue;
+    }
     
     // If both are strings, create a single MODIFY with wordDiff
     if (typeof oldEntry.item === 'string' && typeof newEntry.item === 'string') {

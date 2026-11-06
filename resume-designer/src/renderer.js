@@ -4,7 +4,8 @@
  */
 
 import { groupExperience } from './experienceGroups.js';
-import { getContactOrder } from './contactFields.js';
+import { getSectionLayout, sectionForKey, sectionNodeTitle, clampSectionScale } from './sectionLayout.js';
+import { getContactOrder, getContactRows, getContactPresentation } from './contactFields.js';
 
 // Separator between inline skill/tool tokens. The trailing <wbr> is a zero-width
 // soft-wrap opportunity: the tag spans are joined with no surrounding whitespace,
@@ -273,7 +274,7 @@ export function renderResume(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact">
-        ${renderContact(data.contact, data.contactOrder)}
+        ${renderContact(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -321,7 +322,7 @@ export function renderResumeStacked(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact stacked-contact">
-        ${renderContactStacked(data.contact, data.contactOrder)}
+        ${renderContactStacked(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -365,7 +366,7 @@ export function renderResumeStackedVertical(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact stacked-contact">
-        ${renderContactStacked(data.contact, data.contactOrder)}
+        ${renderContactStacked(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -474,22 +475,39 @@ function contactHref(field, value) {
   }
 }
 
-function renderOrderedContact(contact, order, separator = '') {
-  return getContactOrder(order).filter(field => contact?.[field]).map(field => {
+function renderDefaultContactItem(contact, field, displayUrl = false) {
+  const value = String(contact[field]);
+  const attributes = `class="contact-item" data-editable="contact.${field}"`;
+  const content = escapeHtml(displayUrl ? formatUrl(value) : value);
+  const href = contactHref(field, value);
+  return href
+    ? `<a href="${escapeHtmlRaw(href)}" ${attributes}${displayUrl ? ' target="_blank"' : ''}>${content}</a>`
+    : `<span ${attributes}>${content}</span>`;
+}
+
+function renderOrderedContact(contact, order, separator = '', breakBefore) {
+  const renderItem = (field) => {
     const value = String(contact[field]);
     const attributes = `class="contact-item ${field}" data-editable="contact.${field}"`;
     const href = contactHref(field, value);
     if (href) return `<a ${attributes} href="${escapeHtmlRaw(href)}">${escapeHtml(value)}</a>`;
     return `<span ${attributes}>${escapeHtml(value)}</span>`;
-  }).join(separator);
+  };
+  if (Array.isArray(breakBefore) && breakBefore.length) {
+    return getContactRows(contact, order, breakBefore).map((row, index) =>
+      `<span class="contact-line" data-contact-line="${index}">${row.map(renderItem).join(separator)}</span>`
+    ).join('');
+  }
+  return getContactOrder(order).filter(field => contact?.[field]).map(renderItem).join(separator);
 }
 
 function extraContactItems(contact, fields) {
   return fields.filter(field => contact?.[field]).map(field => renderOrderedContact({ [field]: contact[field] }, [field]));
 }
 
-function renderContact(contact, order) {
+function renderContact(contact, order, breakBefore) {
   if (!contact) return '';
+  if (Array.isArray(breakBefore) && breakBefore.length) return renderOrderedContact(contact, getContactOrder(order, 'sidebar'), '<span class="contact-sep">•</span>', breakBefore);
   if (Array.isArray(order)) return renderOrderedContact(contact, order);
   
   const items = [];
@@ -514,8 +532,9 @@ function renderContact(contact, order) {
   return items.join('');
 }
 
-function renderContactStacked(contact, order) {
+function renderContactStacked(contact, order, breakBefore) {
   if (!contact) return '';
+  if (Array.isArray(breakBefore) && breakBefore.length) return renderOrderedContact(contact, getContactOrder(order, 'stacked'), '<span class="contact-sep">•</span>', breakBefore);
   if (Array.isArray(order)) return `<div class="contact-row contact-row-ordered">${renderOrderedContact(contact, order, '<span class="contact-sep">•</span>')}</div>`;
   
   const items = [];
@@ -774,7 +793,7 @@ export function renderResumeRightSidebar(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact">
-        ${renderContact(data.contact, data.contactOrder)}
+        ${renderContact(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -822,7 +841,7 @@ export function renderResumeCompact(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact compact-contact">
-        ${renderContactCompact(data.contact, data.contactOrder)}
+        ${renderContactCompact(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -864,16 +883,17 @@ export function renderResumeCompact(data) {
 }
 
 // Compact contact renderer (inline)
-function renderContactCompact(contact, order) {
+function renderContactCompact(contact, order, breakBefore) {
   if (!contact) return '';
+  if (Array.isArray(breakBefore) && breakBefore.length) return renderOrderedContact(contact, getContactOrder(order, 'compact'), ' <span class="contact-sep">•</span> ', breakBefore);
   if (Array.isArray(order)) return `<div class="compact-contact-row">${renderOrderedContact(contact, order, ' <span class="contact-sep">•</span> ')}</div>`;
   contact = contact || {};
   const items = [];
   
-  if (contact.location) items.push(contact.location);
-  if (contact.email) items.push(`<a href="mailto:${contact.email}" class="contact-item">${contact.email}</a>`);
-  if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
-  if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
+  if (contact.location) items.push(renderDefaultContactItem(contact, 'location'));
+  if (contact.email) items.push(renderDefaultContactItem(contact, 'email'));
+  if (contact.phone) items.push(renderDefaultContactItem(contact, 'phone'));
+  if (contact.portfolio) items.push(renderDefaultContactItem(contact, 'portfolio', true));
   items.push(...extraContactItems(contact, ['instagram', 'linkedin', 'github', 'twitter']));
   
   return `<div class="compact-contact-row">${items.join(' <span class="contact-sep">•</span> ')}</div>`;
@@ -888,7 +908,7 @@ export function renderResumeExecutive(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact executive-contact">
-        ${renderContactStacked(data.contact, data.contactOrder)}
+        ${renderContactStacked(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -936,7 +956,7 @@ export function renderResumeClassic(data) {
         <h1 class="resume-name" data-editable="name">${escapeHtml(data.name)}</h1>
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
         <div class="classic-contact">
-          ${renderContactClassic(data.contact, data.contactOrder)}
+          ${renderContactClassic(data.contact, data.contactOrder, data.contactBreakBefore)}
         </div>
       </div>
     </header>
@@ -999,7 +1019,7 @@ export function renderResumeClassicFeatured(data) {
         <h1 class="resume-name" data-editable="name">${escapeHtml(data.name)}</h1>
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
         <div class="classic-contact">
-          ${renderContactClassic(data.contact, data.contactOrder)}
+          ${renderContactClassic(data.contact, data.contactOrder, data.contactBreakBefore)}
         </div>
       </div>
     </header>
@@ -1066,17 +1086,18 @@ export function renderResumeClassicFeatured(data) {
 }
 
 // Classic contact renderer
-function renderContactClassic(contact, order) {
+function renderContactClassic(contact, order, breakBefore) {
   if (!contact) return '';
+  if (Array.isArray(breakBefore) && breakBefore.length) return renderOrderedContact(contact, getContactOrder(order, 'classic'), ' <span class="contact-sep">|</span> ', breakBefore);
   if (Array.isArray(order)) return renderOrderedContact(contact, order, ' <span class="contact-sep">|</span> ');
   contact = contact || {};
   const items = [];
   
-  if (contact.location) items.push(`<span class="contact-item">${contact.location}</span>`);
-  if (contact.email) items.push(`<a href="mailto:${contact.email}" class="contact-item">${contact.email}</a>`);
-  if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
-  if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
-  if (contact.linkedin) items.push(`<a href="${contact.linkedin}" class="contact-item" target="_blank">${formatUrl(contact.linkedin)}</a>`);
+  if (contact.location) items.push(renderDefaultContactItem(contact, 'location'));
+  if (contact.email) items.push(renderDefaultContactItem(contact, 'email'));
+  if (contact.phone) items.push(renderDefaultContactItem(contact, 'phone'));
+  if (contact.portfolio) items.push(renderDefaultContactItem(contact, 'portfolio', true));
+  if (contact.linkedin) items.push(renderDefaultContactItem(contact, 'linkedin', true));
   items.push(...extraContactItems(contact, ['instagram', 'github', 'twitter']));
   
   return items.join(' <span class="contact-sep">|</span> ');
@@ -1097,7 +1118,7 @@ export function renderResumeModern(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact modern-contact">
-        ${renderContactModern(data.contact, data.contactOrder)}
+        ${renderContactModern(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -1137,15 +1158,16 @@ export function renderResumeModern(data) {
 }
 
 // Modern contact renderer
-function renderContactModern(contact, order) {
+function renderContactModern(contact, order, breakBefore) {
   if (!contact) return '';
+  if (Array.isArray(breakBefore) && breakBefore.length) return renderOrderedContact(contact, getContactOrder(order, 'modern'), ' <span class="contact-sep">•</span> ', breakBefore);
   if (Array.isArray(order)) return renderOrderedContact(contact, order, ' <span class="contact-sep">•</span> ');
   contact = contact || {};
   const items = [];
   
-  if (contact.email) items.push(`<a href="mailto:${contact.email}" class="contact-item">${contact.email}</a>`);
-  if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
-  if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
+  if (contact.email) items.push(renderDefaultContactItem(contact, 'email'));
+  if (contact.phone) items.push(renderDefaultContactItem(contact, 'phone'));
+  if (contact.portfolio) items.push(renderDefaultContactItem(contact, 'portfolio', true));
   items.push(...extraContactItems(contact, ['location', 'instagram', 'linkedin', 'github', 'twitter']));
   
   return items.join(' <span class="contact-sep">•</span> ');
@@ -1160,7 +1182,7 @@ export function renderResumeTimeline(data) {
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
       </div>
       <div class="header-contact">
-        ${renderContact(data.contact, data.contactOrder)}
+        ${renderContact(data.contact, data.contactOrder, data.contactBreakBefore)}
       </div>
     </header>
     
@@ -1245,7 +1267,7 @@ export function renderResumeCreative(data) {
         <h1 class="resume-name" data-editable="name">${escapeHtml(data.name)}</h1>
         <p class="resume-tagline" data-editable="tagline">${escapeHtml(data.tagline)}</p>
         <div class="creative-contact">
-          ${renderContactCreative(data.contact, data.contactOrder)}
+          ${renderContactCreative(data.contact, data.contactOrder, data.contactBreakBefore)}
         </div>
       </div>
     </header>
@@ -1298,16 +1320,17 @@ export function renderResumeCreative(data) {
 }
 
 // Creative contact renderer
-function renderContactCreative(contact, order) {
+function renderContactCreative(contact, order, breakBefore) {
   if (!contact) return '';
+  if (Array.isArray(breakBefore) && breakBefore.length) return renderOrderedContact(contact, getContactOrder(order, 'creative'), ' <span class="contact-sep">•</span> ', breakBefore);
   if (Array.isArray(order)) return renderOrderedContact(contact, order, ' <span class="contact-sep">•</span> ');
   contact = contact || {};
   const items = [];
   
-  if (contact.email) items.push(`<a href="mailto:${contact.email}" class="contact-item">${contact.email}</a>`);
-  if (contact.phone) items.push(`<a href="tel:${contact.phone}" class="contact-item">${contact.phone}</a>`);
-  if (contact.location) items.push(`<span class="contact-item">${contact.location}</span>`);
-  if (contact.portfolio) items.push(`<a href="${contact.portfolio}" class="contact-item" target="_blank">${formatUrl(contact.portfolio)}</a>`);
+  if (contact.email) items.push(renderDefaultContactItem(contact, 'email'));
+  if (contact.phone) items.push(renderDefaultContactItem(contact, 'phone'));
+  if (contact.location) items.push(renderDefaultContactItem(contact, 'location'));
+  if (contact.portfolio) items.push(renderDefaultContactItem(contact, 'portfolio', true));
   items.push(...extraContactItems(contact, ['instagram', 'linkedin', 'github', 'twitter']));
   
   return items.join(' <span class="contact-sep">•</span> ');
@@ -1329,11 +1352,112 @@ const LAYOUT_RENDERERS = {
   creative: renderResumeCreative,
 };
 
+function sectionTypography(node) {
+  const properties = [];
+  for (const part of ['title', 'content']) {
+    // Reset every node so a parent heading's choices never style its children.
+    properties.push(`--section-${part}-scale:${clampSectionScale(node[`${part}Scale`])}`);
+    const font = node[`${part}Font`];
+    properties.push(`--section-${part}-font:${['display', 'body'].includes(font) ? `var(--font-${font})` : 'initial'}`);
+    const bold = node[`${part}Bold`];
+    properties.push(`--section-${part}-weight:${typeof bold === 'boolean' ? bold ? 700 : 400 : part === 'title' && node.children ? 800 : 'initial'}`);
+    const italic = node[`${part}Italic`];
+    properties.push(`--section-${part}-style:${typeof italic === 'boolean' ? italic ? 'italic' : 'normal' : part === 'content' ? 'initial' : 'normal'}`);
+    properties.push(`--section-${part}-decoration:${node[`${part}Underline`] ? 'underline' : 'none'}`);
+  }
+  return properties.length ? ` style="${properties.join(';')}"` : '';
+}
+
+function renderStructuredNode(data, node, area, layout) {
+  const keyAttr = `data-structure-key="${escapeHtmlRaw(node.key)}"`;
+  const typography = sectionTypography(node);
+  const title = escapeHtml(sectionNodeTitle(data, node));
+  const sidebar = area === 'sidebar' && !SINGLE_COLUMN_LAYOUTS.has(layout);
+  if (node.children) {
+    const children = node.children.map(child => renderStructuredNode(data, child, area, layout)).join('');
+    if (!children.trim()) return '';
+    return `<section class="resume-section-group structure-node${sidebar ? ' sidebar-section-group' : ''}" ${keyAttr}${typography}>
+      <h2 class="section-group-title">${title}</h2>
+      <div class="section-group-content">${children}</div>
+    </section>`;
+  }
+  const match = sectionForKey(data, node.key);
+  let content = '';
+  let kind = '';
+  if (match) {
+    content = layout === 'classic' || layout === 'classic-featured'
+      ? renderClassicSectionContent(match.section, match.index)
+      : layout === 'creative' ? renderCreativeSectionContent(match.section, match.index)
+        : renderSectionContent(match.section, match.index, sidebar ? 'sidebar' : 'stacked');
+    kind = sidebar ? '' : 'main-custom-section';
+  } else if (node.key === 'summary') {
+    if (!data.summary) return '';
+    content = `<p class="summary-text" data-editable="summary" data-multiline="true">${formatInlineMarkdown(data.summary)}</p>`;
+    kind = 'summary-section';
+  } else if (node.key === 'experience') {
+    if (!data.experience?.length) return '';
+    content = layout === 'timeline' && !sidebar
+      ? `<div class="timeline-container">${renderExperienceEntries(data, 'timeline')}</div>`
+      : renderExperienceEntries(data);
+    kind = 'experience-section';
+  } else if (node.key === 'education') {
+    if (!data.education?.length) return '';
+    content = `<div class="education-content">${data.education.map((line, index) => `<p data-editable="education[${index}]">${escapeHtml(line)}</p>`).join('')}</div>`;
+    kind = 'education-section';
+  } else if (node.key === 'tools') {
+    if (!normalizeTools(data.tools).length) return '';
+    content = toolsAreBulleted(data) ? renderToolsBulleted(data.tools, 'tools') : SINGLE_COLUMN_LAYOUTS.has(layout) ? renderToolsInlineStacked(data.tools, 'tools') : renderToolsInline(data.tools, 'tools');
+  } else return '';
+  const titleClass = sidebar ? 'sidebar-title' : layout === 'creative' && (match || node.key === 'tools') ? 'creative-card-title' : 'section-title';
+  const titlePath = match ? ` data-editable="sections[${match.index}].title"` : '';
+  const contentClass = sidebar ? `sidebar-content${match && sectionDisplayMode(match.section) === 'skills' ? ' sidebar-skills' : ''}`
+    : layout === 'classic-featured' && match && sectionDisplayMode(match.section) !== 'skills' ? 'classic-featured-highlight-content'
+      : layout.startsWith('classic') && (match || node.key === 'tools') ? 'classic-skill-content'
+        : layout === 'creative' && (match || node.key === 'tools') ? 'creative-card-content'
+          : layout === 'stacked' && (match || node.key === 'tools') ? 'stacked-skill-content' : 'structured-section-content';
+  const decoration = layout === 'creative' && (match || node.key === 'tools') ? ' creative-card'
+    : layout === 'classic-featured' && match && sectionDisplayMode(match.section) !== 'skills' ? ' classic-featured-highlights'
+      : layout === 'executive' && node.key === 'summary' ? ' executive-summary'
+        : layout === 'creative' && node.key === 'summary' ? ' creative-summary'
+          : layout === 'timeline' && node.key === 'experience' ? ' timeline-experience' : '';
+  const sectionId = match ? ` data-section-id="${escapeHtmlRaw(String(match.section.id || match.index))}"` : '';
+  return `<section class="${sidebar ? 'sidebar-section' : 'section resume-section'} structure-node ${kind}${decoration}" ${keyAttr}${sectionId}${typography}>
+    <h2 class="${titleClass}"${titlePath}>${title}</h2>
+    <div class="${contentClass} section-node-content${node.key === 'tools' ? ' tools-list' : ''}">${content}</div>
+  </section>`;
+}
+
+function renderStructuredResume(data, layout, renderer) {
+  const structure = getSectionLayout(data);
+  const renderArea = area => structure[area].map(node => renderStructuredNode(data, node, area, layout)).join('');
+  // Reuse the selected template's header (including its contact flow) verbatim.
+  // The old body path stays untouched for documents with no ordering metadata.
+  const skeleton = renderer({ ...data, summary: '', experience: [], education: [], sections: [], tools: '', sectionLayout: undefined });
+  const header = skeleton.slice(0, skeleton.indexOf('<div class="resume-body'));
+  const bodyClass = {
+    stacked: 'stacked-body', 'stacked-vertical': 'stacked-vertical-body',
+    'right-sidebar': 'right-sidebar-body', compact: 'compact-body', executive: 'executive-body',
+    classic: 'classic-body', 'classic-featured': 'classic-featured-body', modern: 'modern-body',
+    timeline: 'timeline-body', creative: 'creative-body',
+  }[layout] || '';
+  if (SINGLE_COLUMN_LAYOUTS.has(layout)) {
+    return `${header}<div class="resume-body ${bodyClass} structured-single">${renderArea('main')}${renderArea('sidebar')}</div>`;
+  }
+  const mainClass = { compact: 'compact-main', executive: 'executive-main', modern: 'resume-main modern-main', timeline: 'resume-main timeline-main' }[layout] || 'resume-main';
+  const sideClass = { compact: 'compact-sidebar', executive: 'executive-side', modern: 'resume-sidebar modern-sidebar', timeline: 'resume-sidebar timeline-sidebar' }[layout] || 'resume-sidebar';
+  const columns = `<main class="${mainClass}">${renderArea('main')}</main><aside class="${sideClass}">${renderArea('sidebar')}</aside>`;
+  const inner = layout === 'compact' || layout === 'executive'
+    ? `<div class="${layout}-columns">${columns}</div>` : columns;
+  return `${header}<div class="resume-body ${bodyClass} structured-columns">${inner}</div>`;
+}
+
 /** Render resume data with the renderer for `layout` (unknown → sidebar). */
 export function renderResumeForLayout(data, layout, opts = {}) {
   // Decorate a COPY. `viewData` in main.js is the store's own object whenever no
   // AI change session is in flight, so writing the flag onto it would persist a
   // display preference into the résumé's saved data.
-  const view = opts.groupPositions === false ? { ...data, groupPositions: false } : data;
-  return (LAYOUT_RENDERERS[layout] || renderResume)(view);
+  const contactView = getContactPresentation(data, layout);
+  const view = opts.groupPositions === false ? { ...contactView, groupPositions: false } : contactView;
+  const renderer = LAYOUT_RENDERERS[layout] || renderResume;
+  return view.sectionLayout ? renderStructuredResume(view, LAYOUT_RENDERERS[layout] ? layout : 'sidebar', renderer) : renderer(view);
 }

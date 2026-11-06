@@ -44,13 +44,23 @@ it('offers new sections directly in Main, and keeps existing section paths when 
 });
 
 it('reorders contacts with accessible buttons, preserves field edits and supports undo', () => {
+  const preview = { name: 'Alex', contact: { location: 'Paris', email: 'alex@example.com', phone: '123' }, sections: [] };
+  document.querySelector('.resume').id = 'resume';
+  document.querySelector('.resume').innerHTML = renderResumeForLayout(preview, 'sidebar');
+  document.querySelectorAll('.resume-header [data-editable^="contact."]').forEach((el, i) => {
+    el.getBoundingClientRect = () => ({ top: i * 20, bottom: i * 20 + 15, height: 15, width: 100 });
+  });
   openPanel({ contact: { location: 'Paris', email: 'alex@example.com', phone: '123' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Move Email up' }));
-  expect(store.get('contactOrder').slice(0, 3)).toEqual(['email', 'location', 'phone']);
+  fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Arrange Email' }), { key: 'ArrowDown' });
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Move Email to line 1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move Email left' }));
+  expect(store.get('contactLayouts.sidebar.rows').flat().slice(0, 3)).toEqual(['email', 'location', 'phone']);
   fireEvent.change(document.querySelector('[data-field="contact.email"]'), { target: { value: 'new@example.com' } });
   expect(store.get('contact.email')).toBe('new@example.com');
-  act(() => { store.undo(); store.undo(); });
+  act(() => { store.undo(); store.undo(); store.undo(); store.undo(); });
   expect(store.get('contactOrder')).toBeUndefined();
+  expect(store.get('contactLayouts')).toBeUndefined();
 });
 
 const layouts = ['sidebar', 'stacked', 'stacked-vertical', 'right-sidebar', 'compact', 'executive', 'classic', 'classic-featured', 'modern', 'timeline', 'creative'];

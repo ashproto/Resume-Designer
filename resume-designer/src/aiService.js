@@ -137,6 +137,27 @@ ${EMPHASIS_GUIDANCE}
 
 ${GROUNDING_RULES_TEXT}`;
 
+const RESUME_ASSISTANT_PROMPT = `You are On Paper's resume assistant, working with the resume currently open in the editor. Have a useful conversation and propose real edits when the user asks for them.
+
+Respond with ONLY a valid JSON object in this format:
+{
+  "reply": "A concise answer, clarification, or explanation of the proposed edits",
+  "changes": { "path.to.field": "new value" }
+}
+
+- Interpret the user's intent using the conversation, including brief follow-ups such as "shorter", "yes, do that", and corrections to an earlier proposal. Do not require particular edit keywords.
+- For questions, advice, or missing information, answer or ask a focused question in reply and return changes: {}. Do not change the resume merely because a question mentions improving it.
+- When edits are requested, put the actual field values in changes so the app can preview them on the open resume. Do not paste a rewritten resume into reply. Changes are proposals for the user to review; do not claim they have been saved or applied.
+- Use paths from the CURRENT resume JSON, such as summary, tagline, experience[0].bullets[1], sections[0].content[0], tools, or contact.email. Include only values that differ. Preserve fields outside the requested scope.
+- Current saved data is authoritative. Historical proposed edits are not proof they were accepted. Any currently pending proposal is listed separately. When revising a pending proposal, include the pending edits the user wants to keep, because a new proposal replaces the previous review. To restore the original wording of a pending field, include its current saved value even though that value is unchanged.
+- Selected resume context includes its field path. Use it to resolve references in follow-ups, and respect a selected field unless the user asks for a broader change.
+- generationReview contains the generation notes, gaps, job context, and earlier corrections. Use it to continue the discussion and resolve gaps. Its scores and notes are context, not verified new facts about the user.
+- Never edit generationReview, internal id or underscore-prefixed fields, or startDate/endDate. Change the displayed dates field when requested.
+
+${EMPHASIS_GUIDANCE}
+
+${GROUNDING_RULES_TEXT}`;
+
 // System prompt for job description analysis
 const JOB_ANALYSIS_PROMPT = `You are an expert resume consultant and ATS (Applicant Tracking System) specialist. Analyze resumes against job descriptions to help candidates improve their match rate.
 
@@ -466,6 +487,7 @@ export function checkProfileHasData() {
  */
 export function buildGenerateResumePrompt(profileContext, jobDescription, options = {}) {
   const targetPages = Math.min(3, Math.max(1, Math.round(Number(options.targetPages) || 1)));
+  const verbosity = ['concise', 'balanced', 'detailed'].includes(options.verbosity) ? options.verbosity : 'concise';
   const jobs = (Array.isArray(options.jobDescriptions) ? options.jobDescriptions : [jobDescription])
     .filter((job) => job && typeof job.description === 'string' && job.description.trim());
   const jobContext = jobs.length ? jobs.map((job, i) => `### Target job ${i + 1}
@@ -475,9 +497,9 @@ export function buildGenerateResumePrompt(profileContext, jobDescription, option
 ${job.description}`).join('\n\n') : 'No target job supplied. Follow the user\'s brief and career goals in their profile.';
   const wordBudget = ['300–450', '550–800', '850–1100'][targetPages - 1];
   const revision = options.previousResume && options.revisionInstruction
-    ? `\n## Revise the current draft\n${JSON.stringify(options.previousResume)}\n\nRequested changes: ${options.revisionInstruction}\nReturn the COMPLETE revised resume, not a patch. Preserve factual details and useful content unless the request calls for changing them. The profile remains the authority for facts; do not carry forward unsupported claims from the draft.\n`
+    ? `\n## Revise the current draft\n${JSON.stringify(options.previousResume)}\n\nRequested changes: ${options.revisionInstruction}\nReturn the COMPLETE revised resume, not a patch. Preserve factual details and useful content unless the request calls for changing them. Treat factual clarifications supplied by the user as evidence alongside the profile. Do not invent details to resolve a gap, or carry forward unsupported claims from the draft.\n`
     : '';
-  return `You are an expert resume consultant. Create a concise resume the user's profile truthfully supports, following the brief and target jobs below.
+  return `You are an expert resume consultant. Create a resume the user's source material truthfully supports, following the brief and target jobs below.
 
 ${GROUNDING_RULES_TEXT}
 
@@ -489,10 +511,12 @@ ${jobs.length > 1 ? '\nCreate ONE resume for these jobs together. Prioritize sha
 
 ## User brief
 ${options.prompt?.trim() || 'Use clear, direct language and prioritize the most relevant experience.'}
+${options.corrections?.length ? `\n## User corrections and clarifications\n${options.corrections.map((correction) => `- ${correction}`).join('\n')}\n` : ''}
 
 ## Length and editing rules
 Target length: ${targetPages} page${targetPages === 1 ? '' : 's'} (approximately ${wordBudget} words of resume content).
 This is a content budget, not a guarantee of pagination; final pages depend on layout and typography. Stay below the budget when the evidence is thin.
+Writing detail: ${verbosity}. ${verbosity === 'detailed' ? 'Explain relevant scope, methods, and outcomes more fully. Select fewer examples when necessary to keep the same page budget.' : verbosity === 'balanced' ? 'Balance compact wording with enough context to understand each achievement.' : 'Use the fewest words that preserve the meaning; favor short, direct phrasing.'} The selected page budget still takes priority.
 - Keep the summary to 1–2 short sentences, at most 45 words.
 - Write short, specific bullets (usually 12–22 words), with one clear idea per bullet.
 - Use ${targetPages === 1 ? '2–3 bullets for the most relevant roles and 0–1 for older or less relevant roles' : '3–4 bullets for the most relevant roles and 1–2 for older or less relevant roles'}.
@@ -553,6 +577,7 @@ Return ONLY a valid JSON object (no code fences, no prose outside the JSON) in t
   "sections": [
     { "id": "projects", "title": "Projects", "type": "list", "area": "main", "content": ["Relevant project supported by the profile, only if useful for the brief"] }
   ],
+  "reviewNotes": "2-3 short sentences on the strongest evidence, important assumptions, and useful next improvements. Write this assessment even when reasoning is disabled.",
   "gaps": [
     {
       "requirement": "What the job asks for that the profile does not support",
@@ -615,9 +640,12 @@ export function parseGeneratedResume(responseText) {
     throw new Error('AI response was not valid JSON. Please try again.');
   }
 
-  const { gaps, ...resume } = parsed;
+  const { gaps, reviewNotes, score, matchScore, ...resume } = parsed;
+  const assessmentScore = [score, matchScore].find((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100);
   return {
     resume,
+    reviewNotes: typeof reviewNotes === 'string' ? reviewNotes : '',
+    ...(assessmentScore !== undefined ? { score: assessmentScore } : {}),
     gaps: Array.isArray(gaps)
       ? gaps
           .filter((g) => g && typeof g.requirement === 'string')
@@ -783,9 +811,7 @@ export async function generateResumeFromProfileForJob(modelId, jobDescription, o
     signal: options.signal,
   });
   
-  const { resume, gaps } = parseGeneratedResume(response);
-  console.log('[AI Service] Generated resume from profile:', resume, 'gaps:', gaps);
-  return { resume, gaps };
+  return parseGeneratedResume(response);
 }
 
 // Get user profile context for AI
@@ -1266,6 +1292,55 @@ export async function chat(modelId, messages, includeContext = true, options = {
     };
   }
   return res.text;
+}
+
+// The sidebar always uses one conversational contract. The model can answer,
+// clarify, or propose edits without a separate keyword router losing history.
+export async function resumeAssistantChat(modelId, messages, options = {}) {
+  const resumeData = options.resumeData ?? store.getData();
+  if (!resumeData) throw new Error('No resume data available');
+  const history = messages.flatMap((message) => {
+    if (message.role === 'context') {
+      return [{ role: 'user', content: `The active resume changed to "${message.variantName || message.variantId || 'another resume'}". Use the current resume data for edits.` }];
+    }
+    if (message.role !== 'user' && message.role !== 'assistant') return [];
+    let content = message.content || '';
+    if (message.context?.length) {
+      content += `\n\nSelected resume context:\n${JSON.stringify(message.context)}`;
+    }
+    if (message.resumeChanges && Object.keys(message.resumeChanges).length) {
+      content += `\n\nHistorical proposed edits (not necessarily accepted):\n${JSON.stringify(message.resumeChanges)}`;
+    } else if (message.pendingChanges?.proposedChanges) {
+      // Threads created before this contract kept their proposal only here.
+      content += `\n\nHistorical proposed edits (not necessarily accepted):\n${JSON.stringify(message.pendingChanges.proposedChanges)}`;
+    }
+    return [{ role: message.role, content, reasoningDetails: message.reasoningDetails }];
+  });
+  const latestUser = history.map((message) => message.role).lastIndexOf('user');
+  if (latestUser < 0) throw new Error('No user request available');
+  const context = `${getUserProfileContext()}${getJobDescriptionsContext()}\nCurrent saved resume data as JSON:\n${JSON.stringify(resumeData, null, 2)}\n\nCurrently pending proposal (not yet accepted):\n${JSON.stringify(options.pendingChanges || [])}`;
+  history[latestUser] = { ...history[latestUser], content: `${context}\n\n---\n\n${history[latestUser].content}` };
+  const result = await callOpenRouter(validateModelId(modelId), history, {
+    systemPrompt: RESUME_ASSISTANT_PROMPT,
+    feature: 'chat', structured: true,
+    reasoningEffort: options.reasoningEffort, webSearch: options.webSearch,
+    signal: options.signal, hooks: options.hooks,
+  });
+  if (result.stopped || options.signal?.aborted) return { ...result, reply: '_(stopped)_', changes: {} };
+  try {
+    const fenced = result.text.trim().match(/^```(?:json)?\s*([\s\S]*?)```$/);
+    const parsed = JSON.parse(fenced ? fenced[1] : result.text);
+    if (!parsed || typeof parsed.reply !== 'string' || !parsed.changes
+        || typeof parsed.changes !== 'object' || Array.isArray(parsed.changes)) {
+      throw new Error('Invalid assistant response');
+    }
+    const changes = Object.fromEntries(Object.entries(stripUnaddressableDatePaths(parsed.changes))
+      .filter(([path]) => !path.replace(/\[(\d+)\]/g, '.$1').split('.')
+        .some((part) => part === 'generationReview' || part === 'id' || part.startsWith('_'))));
+    return { ...result, reply: parsed.reply.trim(), changes };
+  } catch {
+    throw new Error('The assistant returned an invalid response. Please try again.');
+  }
 }
 
 // Helper functions for common operations

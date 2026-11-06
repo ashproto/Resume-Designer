@@ -37,33 +37,52 @@ describe('iOS generation parity', () => {
     await send('onboardingChoose', { mode: 'job' });
     const brief = { inputMode: 'prompt', prompt: 'Design leadership', targetPages: '1', model: 'test-model' };
     await send('onboardingGenerate', brief);
-    await send('onboardingNext');
     await send('onboardingRevise', { revisionInstruction: 'Be concise', targetPages: '1' });
     await send('onboardingCreate');
     const savedIds = Object.keys(getVariants());
     expect(savedIds).toHaveLength(1);
-    expect(snapshot()).toMatchObject({ step: 4, busy: '', canRevise: false, canUndoRevision: false });
-    expect(snapshot().notice.text).toContain('Retry Create resume');
+    expect(snapshot()).toMatchObject({ step: 2, busy: '', canRevise: false, canUndoRevision: false });
+    expect(snapshot().notice.text).toContain('Retry Open in editor');
     await send('onboardingRevise', { revisionInstruction: 'Change the draft', targetPages: '3' });
     await send('onboardingUndoRevision');
     await send('onboardingBack');
     await send('onboardingEditBrief');
     await send('onboardingChoose', { mode: 'job' });
     await send('onboardingGenerate', brief);
-    expect(snapshot().step).toBe(4);
+    expect(snapshot().step).toBe(2);
     expect(snapshot().resume.groups.flatMap((g) => g.fields.map((f) => f.value))).toContain('Reviewed draft');
     expect(generateResumeFromProfileForJob).toHaveBeenCalledTimes(2);
     await send('onboardingCreate');
-    expect(snapshot().step).toBe(5);
+    expect(snapshot().step).toBe(2);
     expect(Object.keys(getVariants())).toEqual(savedIds);
     expect(Object.values(getVariants())[0].data.summary).toBe('Reviewed draft');
   });
 
+  it('opens the real editor directly from native ready with durable notes and independent detail', async () => {
+    vi.spyOn(appStorage, 'flush').mockResolvedValue(true);
+    generateResumeFromProfileForJob.mockResolvedValueOnce({ resume, gaps: [], score: 80, reviewNotes: 'Focused on research.' })
+      .mockResolvedValueOnce({ resume: { ...resume, summary: 'Updated draft' }, gaps: [], reviewNotes: 'Included leadership.' });
+    const ready = vi.fn();
+    window.addEventListener('resume-ready', ready, { once: true });
+    render(<OnboardingWizard />);
+    act(() => window.dispatchEvent(new CustomEvent('rd:open-onboarding', { detail: { skipApiKeyStep: true } })));
+    await send('onboardingChoose', { mode: 'job' });
+    await send('onboardingGenerate', { inputMode: 'prompt', prompt: 'Design leadership', targetPages: '1', verbosity: 'detailed', model: 'test-model' });
+    expect(snapshot()).toMatchObject({ step: 2, generationBrief: { targetPages: 1, verbosity: 'detailed' }, generationReview: { notes: 'Focused on research.', score: 80 } });
+    await send('onboardingRevise', { revisionInstruction: 'I led this team.', targetPages: '1', verbosity: 'balanced' });
+    expect(snapshot().generationReview.corrections).toEqual(['I led this team.']);
+    await send('onboardingNext');
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(Object.values(getVariants())[0].data).toMatchObject({ summary: 'Updated draft', generationReview: { notes: 'Included leadership.', corrections: ['I led this team.'], targetPages: 1, verbosity: 'balanced' } });
+    expect(postMessage.mock.calls.map(([message]) => message.onboarding?.step)).not.toContain(4);
+    await waitFor(() => expect(snapshot()).toBeNull());
+  });
+
   it('projects the brief, actual gap text, and revision controls with concise defaults', () => {
-    const state = buildOnboarding({ hasProfileData: true, targetJob: { inputMode: 'prompt', prompt: 'Emphasize research', targetPages: 2, jobDescriptions: [] },
+    const state = buildOnboarding({ hasProfileData: true, targetJob: { inputMode: 'prompt', prompt: 'Emphasize research', targetPages: 2, verbosity: 'detailed', jobDescriptions: [] },
       canRevise: true, canUndoRevision: true, draftRevision: 3, revisionCompletions: 2, revision: { phase: 'revising', reasoning: 'Editing', done: false },
       jobGaps: [{ requirement: 'Research leadership', note: 'Add supporting experience.' }] });
-    expect(state.generationBrief).toEqual({ inputMode: 'prompt', prompt: 'Emphasize research', targetPages: 2, jobDescriptions: [] });
+    expect(state.generationBrief).toEqual({ inputMode: 'prompt', prompt: 'Emphasize research', targetPages: 2, verbosity: 'detailed', jobDescriptions: [] });
     expect(state).toMatchObject({ hasProfileData: true, canRevise: true, canUndoRevision: true, draftRevision: 3, revisionCompletions: 2, revision: { reasoning: 'Editing' } });
     expect(state.jobGaps[0]).toContain('Research leadership');
     expect(buildOnboarding().generationBrief.targetPages).toBe(1);
@@ -75,10 +94,9 @@ describe('iOS generation parity', () => {
     render(<OnboardingWizard />);
     act(() => window.dispatchEvent(new CustomEvent('rd:open-onboarding', { detail: { skipApiKeyStep: true } })));
     await send('onboardingChoose', { mode: 'job' });
-    await send('onboardingGenerate', { inputMode: 'prompt', prompt: 'Emphasize research', targetPages: '2', jobDescriptions: '[]', model: 'test-model', reasoning: 'low' });
-    expect(generateResumeFromProfileForJob.mock.calls[0][2]).toMatchObject({ prompt: 'Emphasize research', targetPages: 2, jobDescriptions: [] });
+    await send('onboardingGenerate', { inputMode: 'prompt', prompt: 'Emphasize research', targetPages: '2', verbosity: 'detailed', jobDescriptions: '[]', model: 'test-model', reasoning: 'low' });
+    expect(generateResumeFromProfileForJob.mock.calls[0][2]).toMatchObject({ prompt: 'Emphasize research', targetPages: 2, verbosity: 'detailed', jobDescriptions: [] });
     expect(snapshot().generating.done).toBe(true);
-    await send('onboardingNext');
     expect(snapshot().canRevise).toBe(true);
     const text = snapshot().resume.groups.flatMap((g) => g.fields.map((f) => f.value));
     expect(text).toContain('alex@example.com');
@@ -108,7 +126,6 @@ describe('iOS generation parity', () => {
     expect(snapshot().generationBrief.jobDescriptions).toEqual(jobs);
     await send('onboardingGenerate', { ...brief, model: 'test-model' });
     expect(generateResumeFromProfileForJob.mock.calls[0][2].jobDescriptions).toEqual(jobs);
-    await send('onboardingNext');
     act(() => { window.__opShell.command({ type: 'onboardingRevise', revisionInstruction: 'More detail', targetPages: '2' }); });
     await waitFor(() => expect(snapshot().revision?.reasoning).toBe('Editing'));
     await send('onboardingCancelRevision');
@@ -125,11 +142,10 @@ describe('iOS generation parity', () => {
     act(() => window.dispatchEvent(new CustomEvent('rd:open-onboarding', { detail: { skipApiKeyStep: true } })));
     await send('onboardingChoose', { mode: 'job' });
     await send('onboardingGenerate', { inputMode: 'prompt', prompt: 'Design leadership', targetPages: '2', model: 'test-model' });
-    await send('onboardingNext');
     await send('onboardingRevise', { revisionInstruction: 'Shorten it', targetPages: '1' });
     const revision = snapshot().draftRevision;
     await send('onboardingRevise', { revisionInstruction: 'Expand it', targetPages: '3' });
-    expect(snapshot()).toMatchObject({ step: 4, revision: null, revisionCompletions: 1, draftRevision: revision,
+    expect(snapshot()).toMatchObject({ step: 2, revision: null, revisionCompletions: 1, draftRevision: revision,
       canUndoRevision: true, generationBrief: { targetPages: 1 }, notice: { kind: 'error' } });
     expect(snapshot().resume.groups.flatMap((g) => g.fields.map((f) => f.value))).toContain('First revision');
     await send('onboardingUndoRevision');
@@ -146,12 +162,11 @@ describe('iOS generation parity', () => {
     act(() => window.dispatchEvent(new CustomEvent('rd:open-onboarding', { detail: { skipApiKeyStep: true } })));
     await send('onboardingChoose', { mode: 'job' });
     await send('onboardingGenerate', { inputMode: 'prompt', prompt: 'Design leadership', model: 'test-model' });
-    await send('onboardingNext');
     act(() => { window.__opShell.command({ type: 'onboardingRevise', revisionInstruction: 'Change everything', targetPages: '2' }); });
     await waitFor(() => expect(snapshot().revision).not.toBeNull());
     await send('onboardingCreate');
     await send('onboardingBack');
-    expect(snapshot().step).toBe(4);
+    expect(snapshot().step).toBe(2);
     act(() => window.dispatchEvent(new CustomEvent('rd:open-onboarding', { detail: { skipApiKeyStep: true } })));
     await act(async () => resolveRevision({ resume: { ...resume, summary: 'Stale revision' }, gaps: [] }));
     expect(snapshot()).toMatchObject({ step: 1, resume: null, revision: null, revisionCompletions: 0, draftRevision: 0, generating: null });

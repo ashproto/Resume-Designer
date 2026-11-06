@@ -69,7 +69,8 @@ const SortableItemContext = createContext({ attributes: {}, listeners: undefined
 export function SortableItem({ id, className, children }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = {
-    transform: CSS.Transform.toString(transform),
+    // The dragged card keeps its own dimensions over differently sized cards.
+    transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : undefined,
   };

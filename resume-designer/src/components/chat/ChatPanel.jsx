@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { getSettings, saveSettings } from '../../persistence.js';
 import { openSettings } from '../../settingsModal.js';
 import { getThreadDisplayName } from '../../chatThreads.js';
+import * as changeSession from '../../changeSession.js';
 import { useVariants } from '../../hooks/useVariants.js';
 import { useChat, getAIModels } from './useChat.js';
 import { MessageList } from './MessageList.jsx';
@@ -25,6 +26,8 @@ const MAX_WIDTH = 500;
 const chatSnapshot = (c) => ({
   threads: c.threads.map((t) => ({ id: t.id, title: getThreadDisplayName(t) })),
   currentThreadId: c.currentThreadId,
+  currentVariantId: c.currentVariantId,
+  activeChangeSet: changeSession.hasPending() ? changeSession.getChangeSet() : null,
   messages: c.messages,
   loading: c.loading,
   streamingMessage: c.streamingMessage,
@@ -67,6 +70,8 @@ export default function ChatPanel() {
   const publishChatState = () => {
     window.__opShell?.publishChat?.(chatSnapshot(chatRef.current));
   };
+
+  useEffect(() => changeSession.subscribe(() => publishChatState()), []);
 
   // Reads chatRef rather than `chat`: the ref is assigned during render, so it
   // holds this render's engine by the time any effect runs, and the dependency

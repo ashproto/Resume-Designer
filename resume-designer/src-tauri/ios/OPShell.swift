@@ -123,6 +123,19 @@ struct ShellSnapshot: Decodable, Equatable {
   /// (chat's Review changes, jobs tailoring, history compare, the inline
   /// banner) opens the same one.
   var diff: DiffReview?
+  var generationReview: GenerationReview?
+
+  struct GenerationReview: Decodable, Equatable {
+    let open: Bool
+    let notes: String
+    let reasoning: String
+    let gaps: [String]
+    let corrections: [String]
+    let targetPages: Int
+    let verbosity: String
+    let score: Double?
+    let revision: Int?
+  }
 
   /// Mirrors `buildDiffReview()` in src/iosShell.js.
   ///
@@ -251,6 +264,7 @@ struct ShellSnapshot: Decodable, Equatable {
       let role: String
       let text: String
       let hasChanges: Bool
+      let reviewable: Bool?
       /// Raw reasoning summary, unparsed. `ReasoningTimeline` splits and strips
       /// it — the same job `LiveReasoning.jsx` does on the web.
       let reasoning: String
@@ -362,6 +376,46 @@ struct ShellSnapshot: Decodable, Equatable {
       let name: String
     }
     var groups: [Group]
+    var cards: [Card]?
+    var restorable: [Choice]?
+    var contactLayout: ContactLayout?
+
+    struct ContactLayout: Decodable, Equatable {
+      let layout: String
+      let mode: String
+      let source: String
+      let canCustomize: Bool
+      let rows: [[Choice]]
+      let renderedRows: [[Choice]]
+    }
+
+    struct Card: Decodable, Equatable, Identifiable {
+      let key: String
+      let title: String
+      let area: String
+      let parentKey: String
+      let isGroup: Bool
+      let groupIds: [String]
+      let signature: String
+      let fields: [Field]
+      let style: Style
+      let canMoveUp: Bool
+      let canMoveDown: Bool
+      var id: String { key }
+
+      struct Style: Decodable, Equatable {
+        let titleScale: Double?
+        let contentScale: Double?
+        let titleFont: String?
+        let contentFont: String?
+        let titleBold: Bool?
+        let titleItalic: Bool?
+        let titleUnderline: Bool?
+        let contentBold: Bool?
+        let contentItalic: Bool?
+        let contentUnderline: Bool?
+      }
+    }
     /// Adding the FIRST of something. A group only exists once its array is
     /// non-empty, so a résumé with no education has no education group — and
     /// without these could never gain one.
@@ -605,7 +659,7 @@ extension ShellSnapshot {
   private enum CodingKeys: String, CodingKey {
     case variantId, variantName, variants, profiles, accountStats
     case zoom, zoomPercent, pdfBusy, modalOpen
-    case settings, chat, library, history, jobs, profile, onboarding, diff, document, design
+    case settings, chat, library, history, jobs, profile, onboarding, diff, document, design, generationReview
   }
 
   init(from decoder: Decoder) throws {
@@ -629,6 +683,7 @@ extension ShellSnapshot {
     profile = try values.decodeIfPresent(ProfileView.self, forKey: .profile)
     onboarding = try values.decodeIfPresent(OnboardingView.self, forKey: .onboarding)
     diff = try values.decodeIfPresent(DiffReview.self, forKey: .diff)
+    generationReview = try values.decodeIfPresent(GenerationReview.self, forKey: .generationReview)
     document = try values.decodeIfPresent(DocumentOutline.self, forKey: .document)
     design = try values.decodeIfPresent(Design.self, forKey: .design)
   }
@@ -3668,6 +3723,7 @@ private struct ShellView: View {
   /// including the neutral title over a message that names the operation.
   @State private var profileFailure: String?
   @State private var newProfileName = ""
+  @State private var continueGenerationDiscussion = false
   /// The zoom a pinch started from; nil when no pinch is in flight.
   @State private var pinchBase: Double?
   /// The bar is showing the zoom controls rather than the tools — see
@@ -3922,6 +3978,20 @@ private struct ShellView: View {
             DiffReviewSheet(model: model, review: review)
           }
         }
+        .sheet(isPresented: Binding(
+          get: { snapshot.generationReview?.open == true && snapshot.onboarding?.open != true },
+          set: { if !$0 { model.send("generationNotesClose") } }
+        ), onDismiss: {
+          if continueGenerationDiscussion {
+            continueGenerationDiscussion = false
+            model.send("setChatOpen", ["value": "true"])
+            sheet = .chat
+          }
+        }) {
+          if let review = snapshot.generationReview {
+            GenerationNotesSheet(model: model, review: review) { continueGenerationDiscussion = true }
+          }
+        }
         // The one sheet the PAGE opens: export generates for a second or two
         // first, and the result arrives as a message rather than a tap.
         .onChange(of: model.pdfPreview) { _, request in
@@ -4094,6 +4164,13 @@ private struct ShellView: View {
       // without it "Rename…" reads as applying to whichever row you last
       // looked at rather than to the one on screen.
       Section("This resume") {
+        if snapshot.generationReview != nil {
+          Button { [renderedIn = snapshot.whereAmI] in
+            guard renderedIn == model.snapshot.whereAmI else { return }
+            model.send("generationNotesOpen")
+          } label: { Label("Generation notes", systemImage: "text.bubble") }
+        }
+
         // Both values in the capture list, like every other row in this menu.
         // Read in the body they resolve live at the press — after the menu-open
         // wait — so `renameFrom` recorded the replacement and `submitRename`
@@ -5322,6 +5399,392 @@ private struct DocumentSaveWarning: View {
   }
 }
 
+struct GenerationNotesContent: View {
+  let review: ShellSnapshot.GenerationReview
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack {
+        Text("\(review.targetPages) page\(review.targetPages == 1 ? "" : "s") target")
+        Text("·")
+        Text(review.verbosity.capitalized)
+      }.font(.caption).foregroundStyle(.secondary)
+      if let score = review.score { Text("Fit assessment \(Int(score))/100").font(.subheadline.weight(.medium)) }
+      if !review.notes.isEmpty { Text(review.notes).font(.callout).textSelection(.enabled) }
+      if !review.gaps.isEmpty {
+        Text("Worth filling in").font(.subheadline.weight(.semibold))
+        ForEach(Array(review.gaps.enumerated()), id: \.offset) { _, gap in
+          Text("• \(gap)").font(.footnote).foregroundStyle(.secondary)
+        }
+      }
+      if !review.corrections.isEmpty {
+        Text("Your corrections and requests").font(.subheadline.weight(.semibold))
+        ForEach(Array(review.corrections.enumerated()), id: \.offset) { _, correction in
+          Text("• \(correction)").font(.footnote).foregroundStyle(.secondary)
+        }
+      }
+      if !review.reasoning.isEmpty && review.reasoning != review.notes {
+        DisclosureGroup("AI reasoning") {
+          Text(review.reasoning).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+        }.font(.footnote)
+      }
+    }.frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+private struct GenerationNotesSheet: View {
+  @ObservedObject var model: ShellModel
+  let review: ShellSnapshot.GenerationReview
+  let onContinue: () -> Void
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+          Text("Saved when this resume was generated or revised. Later editor changes may not be reflected here. Continue the discussion to correct assumptions or refine the draft.")
+            .font(.footnote).foregroundStyle(.secondary)
+          GenerationNotesContent(review: review)
+          let renderedIn = model.snapshot.whereAmI
+          let revision = review.revision
+          Button("Continue discussion", systemImage: "text.bubble") {
+            guard renderedIn == model.snapshot.whereAmI else { return }
+            model.send("generationNotesDiscuss", ["revision": String(revision ?? -1)]) { ok in
+              if ok { onContinue(); dismiss() }
+            }
+          }.buttonStyle(.borderedProminent)
+        }.padding(20)
+      }
+      .navigationTitle("Generation notes").navigationBarTitleDisplayMode(.inline)
+      .toolbar { ToolbarItem(placement: .confirmationAction) {
+        Button("Close") { model.send("generationNotesClose"); dismiss() }
+      } }
+    }
+  }
+}
+
+private struct NativeContactLayoutEditor: View {
+  @ObservedObject var model: ShellModel
+  let layout: ShellSnapshot.DocumentOutline.ContactLayout
+  let onFailure: () -> Void
+
+  private var ids: [[String]] { layout.rows.map { $0.map(\.id) } }
+
+  var body: some View {
+    let renderedIn = model.snapshot.whereAmI
+    let revision = model.snapshot.document?.revision ?? -1
+    return VStack(alignment: .leading, spacing: 14) {
+      Text("Arrange contact rows for this template. Other templates keep their own layout.")
+        .font(.footnote).foregroundStyle(.secondary)
+      HStack {
+        Button("Automatic", systemImage: layout.mode == "auto" ? "checkmark.circle.fill" : "circle") {
+          send("contactReset", [:], renderedIn, revision)
+        }.disabled(layout.mode == "auto")
+        if layout.mode == "auto" {
+          Button("Customize", systemImage: "slider.horizontal.3") { send("contactCustomize", [:], renderedIn, revision) }
+            .disabled(!layout.canCustomize)
+        } else { Label("Custom rows", systemImage: "checkmark.circle.fill").font(.subheadline) }
+      }.buttonStyle(.borderless)
+      if layout.mode == "auto" {
+        Text("Automatic keeps the template’s natural flow and wrapping.").font(.footnote).foregroundStyle(.secondary)
+        if !layout.canCustomize {
+          Text("Add contact information, close this sheet and let the resume finish loading, then return to Customize.")
+            .font(.footnote).foregroundStyle(.secondary)
+        }
+      }
+      if layout.mode == "custom" && !layout.renderedRows.isEmpty {
+        Text(layout.renderedRows.count > layout.rows.count
+          ? "The current template wraps these rows to \(layout.renderedRows.count) visible lines."
+          : "Currently renders \(layout.renderedRows.count) visible line\(layout.renderedRows.count == 1 ? "" : "s"). Long rows may wrap to fit the template.")
+          .font(.footnote).foregroundStyle(.secondary)
+      }
+      ForEach(Array(layout.rows.enumerated()), id: \.offset) { rowIndex, row in
+        VStack(alignment: .leading, spacing: 8) {
+          rowHeader(rowIndex, renderedIn: renderedIn, revision: revision)
+          ForEach(Array(row.enumerated()), id: \.element.id) { fieldIndex, field in
+            HStack {
+              Text(field.name).font(.subheadline)
+              Spacer()
+              if layout.mode == "custom" {
+                fieldActions(field, row: rowIndex, index: fieldIndex, renderedIn: renderedIn, revision: revision)
+              }
+            }
+          }
+        }
+        .padding(12)
+        .background(Color(.tertiarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+      }
+      Text("Edit contact values below. Empty fields stay hidden on your resume.").font(.footnote).foregroundStyle(.secondary)
+    }
+  }
+
+  private func rowHeader(_ row: Int, renderedIn: ShellSnapshot.Where, revision: Int) -> some View {
+    HStack {
+      Text("Row \(row + 1)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+      Spacer()
+      if layout.mode == "custom" {
+        if row > 0 {
+          Button("Join previous") {
+            var next = ids
+            let joined = next.remove(at: row)
+            next[row - 1] += joined
+            save(next, renderedIn, revision)
+          }.font(.caption)
+        }
+        Menu {
+          if row > 0 { Button("Move row up") { moveRow(row, to: row - 1, renderedIn, revision) } }
+          if row < ids.count - 1 { Button("Move row down") { moveRow(row, to: row + 1, renderedIn, revision) } }
+        } label: { Image(systemName: "arrow.up.arrow.down").padding(6) }
+          .accessibilityLabel("Move row \(row + 1)")
+      }
+    }.buttonStyle(.borderless)
+  }
+
+  private func fieldActions(_ field: ShellSnapshot.DocumentOutline.Choice, row: Int, index: Int, renderedIn: ShellSnapshot.Where, revision: Int) -> some View {
+    Menu {
+      if index > 0 {
+        Button("Move left") { moveWithin(row: row, from: index, to: index - 1, renderedIn, revision) }
+        Button("Start a new line here") {
+          var next = ids
+          let tail = Array(next[row].dropFirst(index))
+          next[row] = Array(next[row].prefix(index))
+          next.insert(tail, at: row + 1)
+          save(next, renderedIn, revision)
+        }
+      }
+      if index < ids[row].count - 1 { Button("Move right") { moveWithin(row: row, from: index, to: index + 1, renderedIn, revision) } }
+      Menu("Move to row") {
+        ForEach(Array(ids.indices), id: \.self) { destination in
+          if destination != row { Button("Row \(destination + 1)") { moveField(row: row, index: index, to: destination, renderedIn, revision) } }
+        }
+        Button("New row") { moveField(row: row, index: index, to: ids.count, renderedIn, revision) }
+      }
+    } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 36) }
+      .accessibilityLabel("Arrange \(field.name)").buttonStyle(.borderless)
+  }
+
+  private func moveWithin(row: Int, from: Int, to: Int, _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
+    var next = ids
+    let field = next[row].remove(at: from)
+    next[row].insert(field, at: to)
+    save(next, renderedIn, revision)
+  }
+
+  private func moveRow(_ from: Int, to: Int, _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
+    var next = ids
+    let row = next.remove(at: from)
+    next.insert(row, at: to)
+    save(next, renderedIn, revision)
+  }
+
+  private func moveField(row: Int, index: Int, to: Int, _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
+    var next = ids
+    let field = next[row].remove(at: index)
+    if to == next.count { next.append([field]) } else { next[to].append(field) }
+    save(next.filter { !$0.isEmpty }, renderedIn, revision)
+  }
+
+  private func save(_ rows: [[String]], _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
+    guard let data = try? JSONEncoder().encode(rows) else { return }
+    guard let expected = try? JSONEncoder().encode(ids) else { return }
+    send("contactRows", ["rows": String(decoding: data, as: UTF8.self), "expectedRows": String(decoding: expected, as: UTF8.self)], renderedIn, revision)
+  }
+
+  private func send(_ type: String, _ payload: [String: String], _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
+    guard renderedIn == model.snapshot.whereAmI else { onFailure(); return }
+    model.send(type, payload.merging(["layout": layout.layout, "revision": String(revision)]) { current, _ in current }) { ok in if !ok { onFailure() } }
+  }
+}
+
+private struct NativeSectionCard<Content: View>: View {
+  @ObservedObject var model: ShellModel
+  let card: ShellSnapshot.DocumentOutline.Card
+  let allCards: [ShellSnapshot.DocumentOutline.Card]
+  @Binding var expanded: Bool
+  let onFailure: () -> Void
+  let onDelete: () -> Void
+  let startDrag: () -> NSItemProvider
+  let drop: () -> Bool
+  @ViewBuilder let content: () -> Content
+  @State private var heading = ""
+  @FocusState private var headingFocused: Bool
+  @State private var headingFrom: ShellSnapshot.Where?
+  @State private var headingRevision = -1
+
+  var body: some View {
+    DisclosureGroup(isExpanded: $expanded) {
+      VStack(alignment: .leading, spacing: 14) {
+        TextField("Heading", text: $heading).focused($headingFocused)
+          .onSubmit { commitHeading(); headingFocused = false }
+          .accessibilityLabel("\(card.title) heading")
+        placementControls
+        DisclosureGroup("Typography") {
+          NativeSectionTypography(model: model, card: card, part: "title", onFailure: onFailure)
+          if !card.isGroup { NativeSectionTypography(model: model, card: card, part: "content", onFailure: onFailure) }
+        }.font(.subheadline)
+        content()
+        Button(card.isGroup ? "Remove group" : "Delete section", role: .destructive, action: onDelete)
+      }.padding(.vertical, 8)
+    } label: {
+      HStack {
+        Label(card.title, systemImage: card.isGroup ? "folder" : "doc.text")
+          .font(.subheadline.weight(.semibold))
+        Spacer()
+        Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
+          .padding(8).contentShape(.rect).onDrag(startDrag)
+          .accessibilityLabel("Drag \(card.title) to reorder")
+      }
+    }
+    // All controls share one Form row. Automatic picker/button styles can
+    // promote a nested picker to the whole row, stealing Typography's taps.
+    .pickerStyle(.menu)
+    .buttonStyle(.borderless)
+    .onDrop(of: ["public.text"], isTargeted: nil) { _ in drop() }
+    .onAppear { heading = card.title }
+    .onChange(of: card.title) { _, value in if !headingFocused { heading = value } }
+    .onChange(of: headingFocused) { _, focused in
+      if focused {
+        headingFrom = model.snapshot.whereAmI
+        headingRevision = model.snapshot.document?.revision ?? -1
+      } else { commitHeading() }
+      model.send("setNativeEditing", ["scope": "document", "holder": "section-heading", "value": focused ? "true" : "false"])
+    }
+    .onDisappear {
+      commitHeading()
+      model.send("setNativeEditing", ["scope": "document", "holder": "section-heading", "value": "false"])
+    }
+  }
+
+  private var placementControls: some View {
+    let renderedIn = model.snapshot.whereAmI
+    let revision = model.snapshot.document?.revision ?? -1
+    return VStack(alignment: .leading, spacing: 10) {
+      HStack {
+        Button("Move up", systemImage: "arrow.up") { send("sectionMove", ["direction": "-1"], renderedIn, revision) }.disabled(!card.canMoveUp)
+        Button("Move down", systemImage: "arrow.down") { send("sectionMove", ["direction": "1"], renderedIn, revision) }.disabled(!card.canMoveDown)
+      }.buttonStyle(.borderless)
+      Picker("Area", selection: Binding(get: { card.area }, set: { area in
+        guard area != card.area else { return }
+        send("sectionRelocate", ["area": area, "parentKey": ""], renderedIn, revision)
+      })) {
+        Text("Main content").tag("main")
+        Text("Sidebar").tag("sidebar")
+      }
+      if !card.isGroup {
+        Picker("Parent group", selection: Binding(get: { card.parentKey }, set: { key in
+          guard key != card.parentKey else { return }
+          send("sectionRelocate", ["area": card.area, "parentKey": key], renderedIn, revision)
+        })) {
+          Text("None").tag("")
+          ForEach(allCards.filter { $0.isGroup && $0.area == card.area }) { group in Text(group.title).tag(group.key) }
+        }
+      }
+    }
+  }
+
+  private func send(_ type: String, _ payload: [String: String], _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
+    guard renderedIn == model.snapshot.whereAmI else { onFailure(); return }
+    model.send(type, payload.merging(["key": card.key, "revision": String(revision)]) { current, _ in current }) { ok in if !ok { onFailure() } }
+  }
+
+  private func commitHeading() {
+    guard let from = headingFrom else { return }
+    headingFrom = nil
+    if heading != card.title { send("sectionRename", ["title": heading], from, headingRevision) }
+  }
+}
+
+private struct NativeSectionTypography: View {
+  @ObservedObject var model: ShellModel
+  let card: ShellSnapshot.DocumentOutline.Card
+  let part: String
+  let onFailure: () -> Void
+
+  private var title: Bool { part == "title" }
+  private var scale: Double { (title ? card.style.titleScale : card.style.contentScale) ?? 1 }
+  private var font: String { (title ? card.style.titleFont : card.style.contentFont) ?? "default" }
+
+  var body: some View {
+    let renderedIn = model.snapshot.whereAmI
+    let revision = model.snapshot.document?.revision ?? -1
+    return VStack(alignment: .leading, spacing: 8) {
+      Text(title ? "Heading" : "Content").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+      NativeSectionScaleInput(model: model, key: card.key, part: part, scale: scale, onFailure: onFailure)
+      Picker("Font", selection: Binding(get: { font }, set: { send("Font", $0, renderedIn, revision) })) {
+        Text("Template default").tag("default")
+        Text("Heading font").tag("display")
+        Text("Body font").tag("body")
+      }
+      HStack {
+        stylePicker("Bold", value: title ? card.style.titleBold : card.style.contentBold, renderedIn: renderedIn, revision: revision)
+        stylePicker("Italic", value: title ? card.style.titleItalic : card.style.contentItalic, renderedIn: renderedIn, revision: revision)
+        stylePicker("Underline", value: title ? card.style.titleUnderline : card.style.contentUnderline, renderedIn: renderedIn, revision: revision)
+      }
+    }.padding(.vertical, 6)
+  }
+
+  private func stylePicker(_ name: String, value: Bool?, renderedIn: ShellSnapshot.Where, revision: Int) -> some View {
+    Picker(name, selection: Binding(get: { value.map { $0 ? "true" : "false" } ?? "default" }, set: { send(name, $0, renderedIn, revision) })) {
+      Text("Default").tag("default")
+      Text("On").tag("true")
+      Text("Off").tag("false")
+    }.pickerStyle(.menu)
+  }
+
+  private func send(_ suffix: String, _ value: String, _ renderedIn: ShellSnapshot.Where, _ revision: Int) {
+    guard renderedIn == model.snapshot.whereAmI else { onFailure(); return }
+    model.send("sectionStyle", ["key": card.key, "field": part + suffix, "value": value, "revision": String(revision)]) { ok in if !ok { onFailure() } }
+  }
+}
+
+private struct NativeSectionScaleInput: View {
+  @ObservedObject var model: ShellModel
+  let key: String
+  let part: String
+  let scale: Double
+  let onFailure: () -> Void
+  @State private var draft = "100"
+  @State private var startedIn: ShellSnapshot.Where?
+  @State private var startedRevision = -1
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    HStack {
+      Text("Size")
+      TextField("100", text: $draft).multilineTextAlignment(.trailing).frame(width: 64)
+        .keyboardType(.numbersAndPunctuation).focused($focused).onSubmit { commit(); focused = false }
+        .accessibilityLabel("\(part == "title" ? "Heading" : "Content") size percent")
+      Text("%")
+      Stepper("Size", onIncrement: { step(5) }, onDecrement: { step(-5) }).labelsHidden()
+    }
+    .onAppear { draft = String(Int((scale * 100).rounded())) }
+    .onChange(of: scale) { _, value in if !focused { draft = String(Int((value * 100).rounded())) } }
+    .onChange(of: focused) { _, value in
+      if value { startedIn = model.snapshot.whereAmI; startedRevision = model.snapshot.document?.revision ?? -1 }
+      else { commit() }
+      model.send("setNativeEditing", ["scope": "document", "holder": "section-size", "value": value ? "true" : "false"])
+    }
+    .onDisappear { commit(); model.send("setNativeEditing", ["scope": "document", "holder": "section-size", "value": "false"]) }
+  }
+
+  private func step(_ amount: Double) {
+    focused = false
+    if startedIn == nil { startedIn = model.snapshot.whereAmI; startedRevision = model.snapshot.document?.revision ?? -1 }
+    draft = String(Int((Double(draft) ?? scale * 100) + amount))
+    commit()
+  }
+
+  private func commit() {
+    guard let from = startedIn else { return }
+    startedIn = nil
+    guard from == model.snapshot.whereAmI else { onFailure(); return }
+    let percent = min(200, max(50, Double(draft) ?? scale * 100))
+    draft = String(Int(percent.rounded()))
+    guard percent / 100 != scale else { return }
+    model.send("sectionStyle", ["key": key, "field": part + "Scale", "value": String(percent / 100), "revision": String(startedRevision)]) { ok in if !ok { onFailure() } }
+  }
+}
+
 private struct StructureSheet: View {
   @ObservedObject var model: ShellModel
   @Environment(\.dismiss) private var dismiss
@@ -5334,6 +5797,23 @@ private struct StructureSheet: View {
   /// dialog inside the webview, behind this sheet, where nobody would see it
   /// and its promise would never settle.
   @State private var pendingRemoval: Removal?
+  @State private var collapsedCards: Set<String> = []
+  @State private var pendingCardRemoval: CardRemoval?
+  @State private var draggingCard: CardRemoval?
+  @State private var addingGroup = false
+  @State private var groupTitle = ""
+  @State private var groupArea = "sidebar"
+  @State private var groupFrom: ShellSnapshot.Where?
+  @State private var groupRevision = -1
+
+  private struct CardRemoval {
+    let signature: String
+    let key: String
+    let title: String
+    let renderedIn: ShellSnapshot.Where
+    let revision: Int
+  }
+
   /// The workspace the focused field is being typed into. See the focus handler.
   @State private var focusedIn: ShellSnapshot.Where?
 
@@ -5424,112 +5904,68 @@ private struct StructureSheet: View {
             if model.snapshot.document?.saveFailed == true {
               Section { DocumentSaveWarning() }
             }
-            ForEach(groups) { group in
-              // Captured where the rows are DRAWN. A drag is a wait and a swipe
-              // tray is retained, and the revision echo below cannot stand in
-              // for this: it is read live at the drop, and a variant swap is not
-              // an adoption, so the counter never moves for one. The paths are
-              // no help either — "workExperience" means the same thing in every
-              // résumé.
-              let renderedIn = model.snapshot.whereAmI
-              let renderedRevision = model.snapshot.document?.revision ?? -1
-              Section {
-                if let area = group.area {
-                  Picker("Area", selection: sectionAreaBinding(area, renderedIn: renderedIn, revision: renderedRevision)) {
-                    ForEach(area.options) { Text($0.name).tag($0.id) }
+            if let cards = model.snapshot.document?.cards {
+              if let header = groups.first(where: { $0.id == "header" }) {
+                Section("Contact layout") {
+                  if let contactLayout = model.snapshot.document?.contactLayout {
+                    NativeContactLayoutEditor(model: model, layout: contactLayout, onFailure: { staleAction = movedMessage })
                   }
-                  .deleteDisabled(true)
-                  .moveDisabled(true)
                 }
-                // Split, not one ForEach with `.onMove`: attaching the move to
-                // the whole group put a drag handle on Role, Company and Dates
-                // too, and a handle that refuses to do anything is worse than
-                // no handle. Only the rows backed by an array get one.
-                ForEach(fixedFields(of: group)) { fieldRow($0) }
-                if let listPath = group.listPath {
-                  let rows = listFields(of: group)
-                  ForEach(Array(rows.enumerated()), id: \.element.id) { index, field in
-                    if listPath == "contactOrder" {
-                      contactFieldRow(field, index: index, count: rows.count, renderedIn: renderedIn, revision: renderedRevision)
-                        .deleteDisabled(true)
-                        .moveDisabled(true)
-                    } else {
-                      fieldRow(field).deleteDisabled(group.deletableRows == false)
-                    }
-                  }
-                    .onMove { indices, destination in
-                      // Indices are already list-relative here, so there is no
-                      // offset arithmetic to get wrong. Swift moves within a
-                      // list it was TOLD about and never builds an element path.
-                      guard let from = indices.first else { return }
-                      guard renderedIn == model.snapshot.whereAmI else {
-                        staleAction = movedMessage
-                        return
-                      }
-                      model.send("moveItem", [
-                        "path": listPath,
-                        "from": String(from),
-                        "to": String(destination),
-                        "revision": String(renderedRevision),
-                      ]) { ok in if !ok { staleAction = movedMessage } }
-                    }
-                    .onDelete { offsets in
-                      guard group.deletableRows != false else { return }
-                      // Same property as the move: list-relative, so the offset
-                      // arithmetic that maps a ROW to an array element never
-                      // happens here.
-                      guard let at = offsets.first else { return }
-                      guard renderedIn == model.snapshot.whereAmI else {
-                        staleAction = movedMessage
-                        return
-                      }
-                      model.send("removeItem", [
-                        "path": listPath, "index": String(at),
-                        "revision": String(renderedRevision),
-                      ]) { ok in if !ok { staleAction = movedMessage } }
-                    }
-                }
-                if !group.addLabel.isEmpty, let listPath = group.listPath {
-                  Button {
-                    guard renderedIn == model.snapshot.whereAmI else {
-                      staleAction = movedMessage
-                      return
-                    }
-                    model.send("addItem", [
-                      "path": listPath,
-                      "revision": String(model.snapshot.document?.revision ?? -1),
-                    ]) { ok in if !ok { staleAction = movedMessage } }
-                  } label: {
-                    Label(group.addLabel, systemImage: "plus.circle.fill")
-                  }
-                  // Otherwise edit mode offers to reorder and delete the Add
-                  // button along with the rows it adds.
-                  .deleteDisabled(true)
-                  .moveDisabled(true)
-                }
-                if let removePath = group.removePath {
-                  Button(role: .destructive) {
-                    pendingRemoval = Removal(
-                      path: removePath, index: group.removeIndex, title: group.removeTitle,
-                      identity: group.removeId, renderedIn: model.snapshot.whereAmI
-                    )
-                  } label: {
-                    // `.destructive` reddens the TITLE and leaves the symbol on
-                    // the accent colour, so a red label sits beside a blue
-                    // trash can. Tint the whole label instead.
-                    Label("Delete \(group.removeTitle)", systemImage: "trash")
-                      .foregroundStyle(.red)
-                  }
-                  .deleteDisabled(true)
-                  .moveDisabled(true)
-                }
-              } header: {
-                Text(group.title)
-              } footer: {
-                if group.listPath == "contactOrder" {
-                  Text("Use the arrows to change the order of contact information. Empty fields stay hidden on your resume.")
-                } else if let help = group.help, !help.isEmpty { Text(help) }
+                Section("Header and contact values") { groupFields(header) }
               }
+              ForEach(["main", "sidebar"], id: \.self) { area in
+                Section(area == "main" ? "Main content" : "Sidebar") {
+                  ForEach(cards.filter { $0.area == area && ($0.parentKey.isEmpty || !collapsedCards.contains($0.parentKey)) }) { card in
+                    let renderedIn = model.snapshot.whereAmI
+                    let renderedRevision = model.snapshot.document?.revision ?? -1
+                    NativeSectionCard(
+                      model: model, card: card, allCards: cards,
+                      expanded: Binding(get: { !collapsedCards.contains(card.key) }, set: { if $0 { collapsedCards.remove(card.key) } else { collapsedCards.insert(card.key) } }),
+                      onFailure: { staleAction = movedMessage },
+                      onDelete: { pendingCardRemoval = CardRemoval(signature: card.signature, key: card.key, title: card.title, renderedIn: renderedIn, revision: renderedRevision) },
+                      startDrag: {
+                        draggingCard = CardRemoval(signature: card.signature, key: card.key, title: card.title, renderedIn: renderedIn, revision: renderedRevision)
+                        return NSItemProvider(object: card.key as NSString)
+                      },
+                      drop: { dropSection(on: card) }
+                    ) {
+                      ForEach(card.fields) { fieldRow($0) }
+                      ForEach(groups.filter { card.groupIds.contains($0.id) }) { group in
+                        if card.key == "experience" { Text(group.title).font(.subheadline.weight(.semibold)) }
+                        groupFields(group)
+                      }
+                    }
+                    .padding(.leading, card.parentKey.isEmpty ? 0 : 12)
+                  }
+                }
+              }
+              Section("Arrange sections") {
+                ForEach(["main", "sidebar"], id: \.self) { area in
+                  let renderedIn = model.snapshot.whereAmI
+                  let renderedRevision = model.snapshot.document?.revision ?? -1
+                  Button("Add \(area == "main" ? "main" : "sidebar") group", systemImage: "folder.badge.plus") {
+                    groupArea = area
+                    groupTitle = ""
+                    groupFrom = renderedIn
+                    groupRevision = renderedRevision
+                    addingGroup = true
+                  }
+                  if let options = model.snapshot.document?.restorable, !options.isEmpty {
+                    Menu("Restore section in \(area == "main" ? "main content" : "sidebar")") {
+                      ForEach(options) { option in
+                        let renderedIn = model.snapshot.whereAmI
+                        let revision = model.snapshot.document?.revision ?? -1
+                        Button(option.name) {
+                          guard renderedIn == model.snapshot.whereAmI else { staleAction = movedMessage; return }
+                          model.send("sectionRestore", ["key": option.id, "area": area, "revision": String(revision)]) { ok in if !ok { staleAction = movedMessage } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              ForEach(groups) { group in Section(group.title) { groupFields(group) } }
             }
 
             if let additions = model.snapshot.document?.additions, !additions.isEmpty {
@@ -5637,6 +6073,26 @@ private struct StructureSheet: View {
     } message: {
       Text("This cannot be undone from here.")
     }
+    .alert("New section group", isPresented: $addingGroup) {
+      TextField("Group heading", text: $groupTitle)
+      Button("Cancel", role: .cancel) {}
+      Button("Add") {
+        guard groupFrom == model.snapshot.whereAmI else { staleAction = movedMessage; return }
+        model.send("sectionAddGroup", ["area": groupArea, "title": groupTitle, "revision": String(groupRevision)]) { ok in if !ok { staleAction = movedMessage } }
+      }.disabled(groupTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+    .alert("Remove \(pendingCardRemoval?.title ?? "section")?", isPresented: Binding(
+      get: { pendingCardRemoval != nil }, set: { if !$0 { pendingCardRemoval = nil } }
+    )) {
+      Button("Remove", role: .destructive) {
+        if let removal = pendingCardRemoval {
+          if removal.renderedIn != model.snapshot.whereAmI { staleAction = movedMessage }
+          else { model.send("sectionRemove", ["key": removal.key, "signature": removal.signature, "revision": String(removal.revision)]) { ok in if !ok { staleAction = movedMessage } } }
+        }
+        pendingCardRemoval = nil
+      }
+      Button("Cancel", role: .cancel) { pendingCardRemoval = nil }
+    } message: { Text("Removing a group keeps its sections. Removing a section deletes its content. You can undo this in the editor.") }
     .alert(
       "That moved",
       isPresented: Binding(
@@ -5649,6 +6105,103 @@ private struct StructureSheet: View {
     } message: { message in
       Text(message)
     }
+  }
+
+  private func dropSection(on card: ShellSnapshot.DocumentOutline.Card) -> Bool {
+    guard let source = draggingCard else { return false }
+    draggingCard = nil
+    guard source.renderedIn == model.snapshot.whereAmI else { staleAction = movedMessage; return false }
+    model.send("sectionDrop", ["key": source.key, "targetKey": card.key, "revision": String(source.revision)]) { ok in if !ok { staleAction = movedMessage } }
+    return true
+  }
+
+  @ViewBuilder
+  private func groupFields(_ group: ShellSnapshot.DocumentOutline.Group) -> some View {
+    let renderedIn = model.snapshot.whereAmI
+    let renderedRevision = model.snapshot.document?.revision ?? -1
+                // Split, not one ForEach with `.onMove`: attaching the move to
+                // the whole group put a drag handle on Role, Company and Dates
+                // too, and a handle that refuses to do anything is worse than
+                // no handle. Only the rows backed by an array get one.
+                ForEach(fixedFields(of: group).filter { !(model.snapshot.document?.cards != nil && group.id.hasPrefix("section-") && $0.label == "Heading") }) { fieldRow($0) }
+                if let listPath = group.listPath {
+                  let rows = listFields(of: group)
+                  ForEach(Array(rows.enumerated()), id: \.element.id) { index, field in
+                    if listPath == "contactOrder" && model.snapshot.document?.contactLayout == nil {
+                      contactFieldRow(field, index: index, count: rows.count, renderedIn: renderedIn, revision: renderedRevision)
+                        .deleteDisabled(true)
+                        .moveDisabled(true)
+                    } else {
+                      fieldRow(field).deleteDisabled(group.deletableRows == false).moveDisabled(listPath == "contactOrder")
+                    }
+                  }
+                    .onMove { indices, destination in
+                      // Indices are already list-relative here, so there is no
+                      // offset arithmetic to get wrong. Swift moves within a
+                      // list it was TOLD about and never builds an element path.
+                      guard listPath != "contactOrder" || model.snapshot.document?.contactLayout == nil else { return }
+                      guard let from = indices.first else { return }
+                      guard renderedIn == model.snapshot.whereAmI else {
+                        staleAction = movedMessage
+                        return
+                      }
+                      model.send("moveItem", [
+                        "path": listPath,
+                        "from": String(from),
+                        "to": String(destination),
+                        "revision": String(renderedRevision),
+                      ]) { ok in if !ok { staleAction = movedMessage } }
+                    }
+                    .onDelete { offsets in
+                      guard group.deletableRows != false else { return }
+                      // Same property as the move: list-relative, so the offset
+                      // arithmetic that maps a ROW to an array element never
+                      // happens here.
+                      guard let at = offsets.first else { return }
+                      guard renderedIn == model.snapshot.whereAmI else {
+                        staleAction = movedMessage
+                        return
+                      }
+                      model.send("removeItem", [
+                        "path": listPath, "index": String(at),
+                        "revision": String(renderedRevision),
+                      ]) { ok in if !ok { staleAction = movedMessage } }
+                    }
+                }
+                if !group.addLabel.isEmpty, let listPath = group.listPath {
+                  Button {
+                    guard renderedIn == model.snapshot.whereAmI else {
+                      staleAction = movedMessage
+                      return
+                    }
+                    model.send("addItem", [
+                      "path": listPath,
+                      "revision": String(renderedRevision),
+                    ]) { ok in if !ok { staleAction = movedMessage } }
+                  } label: {
+                    Label(group.addLabel, systemImage: "plus.circle.fill")
+                  }
+                  // Otherwise edit mode offers to reorder and delete the Add
+                  // button along with the rows it adds.
+                  .deleteDisabled(true)
+                  .moveDisabled(true)
+                }
+                if let removePath = group.removePath, removePath == "experience" || model.snapshot.document?.cards == nil {
+                  Button(role: .destructive) {
+                    pendingRemoval = Removal(
+                      path: removePath, index: group.removeIndex, title: group.removeTitle,
+                      identity: group.removeId, renderedIn: model.snapshot.whereAmI
+                    )
+                  } label: {
+                    // `.destructive` reddens the TITLE and leaves the symbol on
+                    // the accent colour, so a red label sits beside a blue
+                    // trash can. Tint the whole label instead.
+                    Label("Delete \(group.removeTitle)", systemImage: "trash")
+                      .foregroundStyle(.red)
+                  }
+                  .deleteDisabled(true)
+                  .moveDisabled(true)
+                }
   }
 
   @ViewBuilder
@@ -6997,7 +7550,7 @@ private struct ChatSheet: View {
       if !message.text.isEmpty {
         messageBody(message, isUser: isUser)
       }
-      if message.hasChanges, let pending = chat?.pendingChanges, !pending.isEmpty {
+      if message.hasChanges, message.reviewable != false, let pending = chat?.pendingChanges, !pending.isEmpty {
         Button {
           showReview = true
         } label: {
@@ -7013,7 +7566,7 @@ private struct ChatSheet: View {
         // The proposal was already decided — applied or rejected — so there is
         // nothing left to review. Saying so beats a button that opens an empty
         // sheet.
-        Label("Suggested edits reviewed", systemImage: "checkmark")
+        Label("Suggested edits no longer pending", systemImage: "checkmark")
           .font(.caption)
           .foregroundStyle(.secondary)
       }

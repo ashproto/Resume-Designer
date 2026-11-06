@@ -133,6 +133,16 @@ function rectOuterH(el, scale) {
 // Items may themselves be splittable (an entry splits into its bullets).
 function splittableConfig(el) {
   if (!el.classList) return null;
+  if (el.classList.contains('resume-section-group')) {
+    return { head: [':scope > .section-group-title'], itemWrap: ':scope > .section-group-content', itemSel: ':scope > *' };
+  }
+  if (el.classList.contains('structure-node') && el.classList.contains('experience-section')) {
+    const timeline = el.querySelector(':scope > .section-node-content > .timeline-container');
+    return { head: [':scope > .section-title', ':scope > .sidebar-title'], itemWrap: timeline ? ':scope > .section-node-content > .timeline-container' : ':scope > .section-node-content', itemSel: timeline ? ':scope > .timeline-item' : ':scope > .experience-item' };
+  }
+  if (el.classList.contains('structure-node') && el.classList.contains('education-section')) {
+    return { head: [':scope > .section-title', ':scope > .sidebar-title'], itemWrap: ':scope > .section-node-content > .education-content', itemSel: ':scope > p' };
+  }
   if (el.classList.contains('experience-section')) {
     const tl = el.querySelector(':scope > .timeline-container');
     return { head: [':scope > .section-title'], itemWrap: tl ? ':scope > .timeline-container' : null,

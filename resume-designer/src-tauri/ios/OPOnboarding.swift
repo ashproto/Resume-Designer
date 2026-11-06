@@ -77,6 +77,7 @@ struct OnboardingView: Decodable, Equatable {
   var generating: Generating?
   // Optional so a cached page from an earlier app version still decodes.
   var generationBrief: GenerationBrief?
+  var generationReview: ShellSnapshot.GenerationReview?
   var hasProfileData: Bool?
   var revision: Generating?
   var canRevise: Bool?
@@ -118,6 +119,7 @@ struct OnboardingView: Decodable, Equatable {
     let inputMode: String
     let prompt: String
     let targetPages: Int
+    let verbosity: String?
     let jobDescriptions: [Job]
   }
 

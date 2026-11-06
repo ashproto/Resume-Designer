@@ -74,6 +74,18 @@ describe('shared product model defaults', () => {
     expect(result.current.configured).toBe(false);
   });
 
+  it('falls back to Opus 5.5 for an invalid saved selection before an API key is configured', async () => {
+    localStorage.setItem('resume-designer-data', JSON.stringify({
+      settings: { defaultModel: '<invalid/model>' },
+    }));
+    vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({ data: [] }) }));
+    let hook;
+    await act(async () => { hook = renderHook(() => useChat()); });
+    expect(hook.result.current.currentModel).toBe('anthropic/claude-opus-5.5');
+    expect(hook.result.current.configured).toBe(false);
+    expect(getSettings().defaultModel).toBe('<invalid/model>');
+  });
+
   it('returns chat to Opus 5.5 when its selected custom model is removed without an API key', async () => {
     saveSettings({ defaultModel: 'vendor/custom', customModels: ['vendor/custom'] });
     vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({ data: [] }) }));

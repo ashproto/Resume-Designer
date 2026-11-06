@@ -51,6 +51,7 @@
    Header
    ========================================================================== */
 
+
 .resume-header {
   background: linear-gradient(135deg, var(--header-bg) 0%, var(--header-bg-end) 100%);
   color: white;
@@ -1460,3 +1461,74 @@
   width: auto;
   margin-bottom: 0;
 }
+
+/* Explicit contact rows still wrap on narrow pages. Each row owns its
+   separators, so a chosen line never starts or ends with a stray divider. */
+.contact-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  width: 100%;
+  gap: 0.15rem 0.25rem;
+}
+
+.header-contact .contact-line {
+  justify-content: flex-end;
+}
+
+.stacked-contact .contact-line,
+.executive-contact .contact-line {
+  justify-content: center;
+}
+
+.stacked-contact .contact-line .location {
+  width: auto;
+  margin-bottom: 0;
+}
+
+/* Explicit ordering keeps the template columns while the DOM follows Main,
+   then Sidebar. Each section keeps its own typography inside a parent group. */
+.structured-columns:not(.right-sidebar-body):not(.compact-body):not(.executive-body):not(.timeline-body) > .resume-main { grid-column: 2; grid-row: 1; }
+.structured-columns:not(.right-sidebar-body):not(.compact-body):not(.executive-body):not(.timeline-body) > .resume-sidebar { grid-column: 1; grid-row: 1; }
+.resume-body.structured-single { display: flex; flex-direction: column; gap: var(--section-spacing, 0.8rem); }
+.resume-section-group, .section-group-content { display: flex; flex-direction: column; gap: var(--section-spacing, 0.8rem); }
+.section-group-title { color: var(--resume-accent); font-weight: 700; border-bottom: 2px solid var(--resume-accent); padding-bottom: 0.25rem; margin: 0; }
+.structure-node > :is(.section-title, .sidebar-title, .section-group-title, .creative-card-title) {
+  font-family: var(--section-title-font, var(--font-display));
+  font-weight: var(--section-title-weight, 700);
+  font-style: var(--section-title-style, normal);
+  text-decoration: var(--section-title-decoration, none);
+}
+.structure-node > .section-title { font-size: calc(1.05rem * var(--font-scale, 1) * var(--section-title-scale, 1)); }
+.structure-node > .sidebar-title { font-size: calc(0.8rem * var(--font-scale, 1) * var(--section-title-scale, 1)); }
+.structure-node > .section-group-title { font-size: calc(1.15rem * var(--font-scale, 1) * var(--section-title-scale, 1)); }
+.sidebar-section-group > .section-group-title { font-size: calc(1rem * var(--font-scale, 1) * var(--section-title-scale, 1)); }
+.structure-node > .creative-card-title { font-size: calc(0.9rem * var(--font-scale, 1) * var(--section-title-scale, 1)); font-weight: var(--section-title-weight, 600); }
+.structure-node > .section-node-content {
+  font-family: var(--section-content-font, var(--font-body));
+  font-weight: var(--section-content-weight, normal);
+  font-style: var(--section-content-style, normal);
+  text-decoration: var(--section-content-decoration, none);
+  overflow-wrap: break-word;
+}
+.structure-node > .sidebar-content { font-size: calc(0.78rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.compact-sidebar .structure-node > .sidebar-content { font-size: calc(0.68rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .summary-text { font-size: calc(0.85rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .experience-title { font-size: calc(0.92rem * var(--font-scale, 1) * var(--section-content-scale, 1)); font-family: var(--section-content-font, var(--font-display)); font-weight: var(--section-content-weight, 700); }
+.structure-node .experience-company { font-size: calc(0.85rem * var(--font-scale, 1) * var(--section-content-scale, 1)); font-weight: var(--section-content-weight, 500); }
+.structure-node .experience-dates { font-size: calc(0.73rem * var(--font-scale, 1) * var(--section-content-scale, 1)); font-style: var(--section-content-style, italic); }
+.structure-node .experience-bullets { font-size: calc(0.78rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .experience-group-header { font-size: calc(9pt * var(--font-scale, 1) * var(--section-content-scale, 1)); font-weight: var(--section-content-weight, 600); }
+.structure-node :is(.highlight-bullet, .experience-bullets) strong { font-weight: var(--section-content-weight, 600); }
+.structure-node .structured-section-content > :is(p:not(.summary-text), .skill-tag-row, .tools-bulleted, .education-content) { font-size: calc(0.78rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .section-node-content :is(.skill-tag, .skill-tag-inline, .highlight-bullet) { font-size: inherit; }
+.classic-featured-body .structure-node > .section-title { font-size: calc(1rem * var(--font-scale, 1) * var(--section-title-scale, 1)); }
+.classic-featured-body .structure-node .experience-title { font-size: calc(0.9rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node.executive-summary .summary-text { font-size: calc(0.9rem * var(--font-scale, 1) * var(--section-content-scale, 1)); font-style: var(--section-content-style, italic); }
+.structure-node.creative-summary .summary-text { font-style: var(--section-content-style, italic); }
+.structure-node .classic-skill-content, .structure-node .classic-featured-highlight-content { font-size: calc(0.8rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .creative-card-content { font-size: calc(0.75rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .classic-skill-item { font-size: calc(0.75rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .creative-item { font-size: calc(0.75rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }
+.structure-node .stacked-skill-content { font-size: calc(0.8rem * var(--font-scale, 1) * var(--section-content-scale, 1)); }

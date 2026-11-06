@@ -1,16 +1,19 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, ChevronDown, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, Plus, Trash2, X } from 'lucide-react';
 
 import { store, generateId, experienceSortValue } from '../../store.js';
 import { sortRunAware, groupExperience, companyKey } from '../../experienceGroups.js';
-import { SINGLE_COLUMN_LAYOUTS, partitionSectionsByArea } from '../../renderer.js';
-import { CONTACT_FIELDS, getContactOrder } from '../../contactFields.js';
+import { SINGLE_COLUMN_LAYOUTS } from '../../renderer.js';
+import { STANDARD_SECTIONS, getSectionLayout, sectionKey, sectionForKey, sectionNodeTitle, editableSectionData, findSectionNode, relocateSectionNode, updateSectionNodeStyle } from '../../sectionLayout.js';
+import { CONTACT_FIELDS } from '../../contactFields.js';
 import { SECTION_TEMPLATES } from '../../sectionTemplates.js';
 import { getSettings, SETTINGS_UPDATED_EVENT } from '../../persistence.js';
 import { SortableList, SortableItem, DragHandle } from '../Sortable.jsx';
 import { PanelSection } from './PanelSection.jsx';
 import DesignTab from './DesignTab.jsx';
+import SectionCard from './SectionCard.jsx';
+import ContactLayoutEditor from './ContactLayoutEditor.jsx';
 import ExperienceDateField from '../experience/ExperienceDateField.jsx';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -198,50 +201,11 @@ function currentIndexOf(path, item, fallbackIndex) {
   return list[fallbackIndex] === item ? fallbackIndex : -1;
 }
 
-function SectionItem({ section, index, activeLayout }) {
+function SectionItem({ section, index }) {
   const isProse = typeof section.content === 'string';
   const type = isProse ? 'paragraph' : ['skills', 'paragraph'].includes(section?.type) ? section.type : 'list';
-  const removeSection = async () => {
-    const ok = await confirmDestructive({
-      title: 'Delete this section?',
-      description: 'The section and its items will be permanently removed from this resume.',
-      actionLabel: 'Delete',
-    });
-    if (!ok) return;
-    const at = currentIndexOf('sections', section, index);
-    if (at < 0) {
-      toast.error('That section is not there any more — nothing was deleted.');
-      return;
-    }
-    store.removeFromArray('sections', at);
-  };
   return (
-    <SortableItem id={section.id || `section-${index}`} className="space-y-2.5 rounded-[9px] border bg-background p-2.5">
-      <div className="flex items-center gap-1.5">
-        <DragHandle />
-        <Input
-          type="text" className="h-8 flex-1"
-          data-field={`sections[${index}].title`}
-          defaultValue={section.title}
-          onChange={(e) => writeField(`sections[${index}].title`, e.target.value)}
-        />
-        <RowDeleteButton title="Delete section" onClick={removeSection} />
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Area</span>
-          <Segmented size="xs">
-            {[['sidebar', 'Sidebar'], ['main', 'Main']].map(([a, label]) => (
-              <SegmentedItem
-                key={a} size="xs"
-                active={(section.area || 'sidebar') === a}
-                onClick={() => store.update(`sections[${index}].area`, a)}
-              >
-                {label}
-              </SegmentedItem>
-            ))}
-          </Segmented>
-        </div>
+    <div className="space-y-3">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Display</span>
           <Segmented size="xs">
@@ -265,12 +229,6 @@ function SectionItem({ section, index, activeLayout }) {
             ))}
           </Segmented>
         </div>
-      </div>
-      {SINGLE_COLUMN_LAYOUTS.has(activeLayout) && (
-        <p className="text-[11px] text-muted-foreground">
-          This template uses a single column, so Area has no visible effect here.
-        </p>
-      )}
       {isProse ? (
         <Textarea
           data-field={`sections[${index}].content`}
@@ -278,7 +236,7 @@ function SectionItem({ section, index, activeLayout }) {
           onChange={(e) => writeField(`sections[${index}].content`, e.target.value)}
         />
       ) : <SectionContentList sectionIndex={index} content={section.content || []} />}
-    </SortableItem>
+    </div>
   );
 }
 
@@ -531,6 +489,7 @@ export default function StructurePanel() {
   const [renameOpen, setRenameOpen] = useState(false); // "Custom Section…" title dialog
   const [customTitle, setCustomTitle] = useState('');
   const [customArea, setCustomArea] = useState('main');
+  const [groupDialog, setGroupDialog] = useState(false);
   // Experience "Sort by" mode: 'date' | 'relevance' | 'custom'. Date/relevance are
   // one-shot reorders; 'custom' keeps the user's manual drag order. Persisted
   // per-variant on the resume data (experienceSortMode) via updateSilent, so it
@@ -603,22 +562,77 @@ export default function StructurePanel() {
     onToggleCollapse: () => toggleCollapse(`${tab}-${id}`),
   });
 
+  const updateStructure = (change, description, isText = false) => {
+    // Typing must not change a legacy card's React key. Structural edits add
+    // IDs, then translate captured fallback references before applying actions.
+    const next = isText ? structuredClone(store.getData()) : editableSectionData(store.getData(), generateId);
+    if (isText) next.sectionLayout = getSectionLayout(next);
+    const collapseKeys = (data.sections || []).map((section, index) => [sectionKey(section, index, data.sections), next.sections?.[index] && sectionKey(next.sections[index], index, next.sections)]);
+    change(next);
+    if (collapseKeys.some(([before, after]) => before !== after)) setCollapsed(previous => {
+      const mapped = { ...previous };
+      for (const [before, after] of collapseKeys) if (after && previous[before] !== undefined) mapped[after] = previous[before];
+      return mapped;
+    });
+    localEdit = isText;
+    try {
+      for (const key of ['sections', 'summary', 'experience', 'education', 'tools']) {
+        if (next[key] !== undefined && JSON.stringify(next[key]) !== JSON.stringify(store.get(key))) store.updateSilent(key, next[key]);
+      }
+      store.setChangeMetadata(description);
+      store.update('sectionLayout', next.sectionLayout);
+    } finally { localEdit = false; }
+  };
+  const editedKey = (next, key) => {
+    const before = sectionForKey(data, key);
+    return before && next.sections?.[before.index] ? sectionKey(next.sections[before.index], before.index, next.sections) : key;
+  };
   const addSection = (templateKey, area) => {
     const template = SECTION_TEMPLATES[templateKey];
     if (!template) return;
-    store.addToArray('sections', {
-      id: generateId('section'), area,
-      ...JSON.parse(JSON.stringify(template)),
-    });
+    updateStructure(next => {
+      const section = { id: generateId('section'), area, ...structuredClone(template) };
+      (next.sections ||= []).push(section);
+      next.sectionLayout[area].push({ key: sectionKey(section, next.sections.length - 1) });
+    }, 'Added section');
   };
   const addCustomSection = () => {
     const title = customTitle.trim();
     if (!title) return;
-    store.addToArray('sections', {
-      id: generateId('section'), title, type: 'list', area: customArea, content: ['Item 1'],
-    });
+    updateStructure(next => {
+      if (groupDialog) next.sectionLayout[customArea].push({ key: `group:${generateId('group')}`, title, children: [] });
+      else {
+        const section = { id: generateId('section'), title, type: 'list', area: customArea, content: ['Item 1'] };
+        (next.sections ||= []).push(section);
+        next.sectionLayout[customArea].push({ key: sectionKey(section, next.sections.length - 1) });
+      }
+    }, groupDialog ? 'Added section group' : 'Added section');
     setRenameOpen(false);
     setCustomTitle('');
+  };
+  const removeNode = async node => {
+    if (node.children) {
+      updateStructure(next => {
+        const found = findSectionNode(next.sectionLayout, editedKey(next, node.key));
+        if (found) found.nodes.splice(found.index, 1, ...found.node.children);
+      }, 'Removed section group');
+      return;
+    }
+    const documentBefore = store.getDataRef();
+    const ok = await confirmDestructive({ title: 'Delete this section?', description: 'The section and its items will be permanently removed from this resume.', actionLabel: 'Delete' });
+    if (!ok) return;
+    if (store.getDataRef() !== documentBefore) {
+      toast.error('The resume changed while this dialog was open — nothing was deleted.');
+      return;
+    }
+    updateStructure(next => {
+      const found = findSectionNode(next.sectionLayout, editedKey(next, node.key));
+      if (!found) return;
+      const match = sectionForKey(next, editedKey(next, node.key));
+      if (match) next.sections.splice(match.index, 1);
+      else next[node.key] = ['experience', 'education'].includes(node.key) ? [] : '';
+      found.nodes.splice(found.index, 1);
+    }, 'Deleted section');
   };
   const applySort = (mode) => {
     setSortMode(mode);
@@ -672,167 +686,17 @@ export default function StructurePanel() {
     store.update('experience', next);
   };
 
-  const sections = data.sections || [];
   const experience = data.experience || [];
   const education = data.education || [];
   const tools = normalizeTools(data.tools);
   const toolsDisplay = data.toolsDisplay === 'skills' ? 'skills' : 'list';
-  const contactOrder = getContactOrder(data.contactOrder, activeLayout);
-  const reorderContact = (from, to) => {
-    const next = getContactOrder(store.get('contactOrder'), activeLayout);
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    store.setChangeMetadata('Reordered contact information');
-    store.update('contactOrder', next);
-  };
-  const customSections = (area) => {
-    const entries = partitionSectionsByArea(sections)[area];
-    return (
-      <PanelSection title={area === 'main' ? 'Additional sections' : 'Sections'} {...sectionProps(`${area}-sections`)} headerExtra={
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" type="button" className="h-7 gap-1 px-2" aria-label={`Add ${area} section`}>
-              <Plus className="size-3.5" /> Add section
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {Object.entries(SECTION_TEMPLATES).map(([key, t]) => (
-              <DropdownMenuItem key={key} onSelect={() => addSection(key, area)}>{t.title}</DropdownMenuItem>
-            ))}
-            <DropdownMenuItem onSelect={() => { setCustomArea(area); setCustomTitle(''); setRenameOpen(true); }}>Custom section…</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      }>
-        {entries.length === 0 && <p className="text-xs text-muted-foreground">Add projects, awards, publications, or a section of your own.</p>}
-        <SortableList className="space-y-2" ids={entries.map(({ section, sIdx }) => section.id || `section-${sIdx}`)}
-          onReorder={(from, to) => store.moveInArray('sections', entries[from].sIdx, entries[to].sIdx)}>
-          {entries.map(({ section, sIdx }) => <SectionItem key={section.id || `section-${sIdx}`} section={section} index={sIdx} activeLayout={activeLayout} />)}
-        </SortableList>
-      </PanelSection>
-    );
-  };
-
-  return createPortal(
-    <>
-      {/* Fixed top zone: 4-tab segmented switcher (content scrolls). Text
-          formatting (bold/italic/underline/…) for the panel's markdown fields is
-          handled by the shared bottom toolbar, which formats the focused field
-          the same way it formats the resume inline. */}
-      <div className="shrink-0 border-b px-4 pb-3 pt-3.5">
-        <Segmented className="flex w-full">
-          {Object.entries(TAB_OPTIONS).map(([key, { tabLabel, label }]) => (
-            <SegmentedItem
-              key={key}
-              className="flex-1"
-              active={tab === key}
-              onClick={() => { scrollPos.current = 0; setTab(key); }}
-              title={label}
-            >
-              {tabLabel}
-            </SegmentedItem>
-          ))}
-        </Segmented>
-      </div>
-
-      {/* Tab content — keyed so content tabs remount on data change; design tab
-          stays put. This wrapper is the scroller (flex-1 + overflow-y-auto inside
-          the host's flex column), exactly as .panel-tab-content was before. */}
-      <div
-        className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-3.5"
-        ref={tabContentRef}
-        onScroll={(e) => { scrollPos.current = e.currentTarget.scrollTop; }}
-        key={tab === 'design' ? 'design' : `${tab}-${dataVersion}`}
-      >
-        {tab === 'header' && (
-          <>
-            <PanelSection title="Name & title" {...sectionProps('name-title')}>
-              <Field label="Name" path="name" defaultValue={data.name || ''} />
-              <Field label="Professional title" path="tagline" defaultValue={data.tagline || ''} />
-            </PanelSection>
-            <PanelSection title="Contact information" {...sectionProps('contact-info')}>
-              <p className="text-xs text-muted-foreground">Drag or use the arrows to change the order. Empty fields stay hidden on your resume.</p>
-              <SortableList className="space-y-3" ids={contactOrder} onReorder={reorderContact}>
-                {contactOrder.map((field, index) => {
-                  const { label, type } = CONTACT_FIELDS[field];
-                  return (
-                    <SortableItem key={field} id={field} className="flex items-center gap-2">
-                      <DragHandle title={`Reorder ${label}`} />
-                      <div className="min-w-0 flex-1"><Field label={label} type={type} path={`contact.${field}`} defaultValue={data.contact?.[field] || ''} /></div>
-                      <div className="flex flex-col pt-4">
-                        <Button variant="ghost" size="icon" className="size-6" aria-label={`Move ${label} up`} disabled={index === 0} onClick={() => reorderContact(index, index - 1)}><ArrowUp className="size-3" /></Button>
-                        <Button variant="ghost" size="icon" className="size-6" aria-label={`Move ${label} down`} disabled={index === contactOrder.length - 1} onClick={() => reorderContact(index, index + 1)}><ArrowDown className="size-3" /></Button>
-                      </div>
-                    </SortableItem>
-                  );
-                })}
-              </SortableList>
-            </PanelSection>
-          </>
-        )}
-
-        {tab === 'sidebar' && (
-          <>
-            {customSections('sidebar')}
-
-            <PanelSection title="Tools" {...sectionProps('tools')}>
-              {tools.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Display</span>
-                  <Segmented size="xs">
-                    {[['list', 'Bulleted'], ['skills', 'Inline tags']].map(([t, label]) => (
-                      <SegmentedItem
-                        key={t} size="xs"
-                        active={toolsDisplay === t}
-                        onClick={() => store.update('toolsDisplay', t)}
-                      >
-                        {label}
-                      </SegmentedItem>
-                    ))}
-                  </Segmented>
-                </div>
-              )}
-              <SortableList className="space-y-1.5" ids={tools.map((_, i) => `tool-${i}`)}
-                onReorder={(from, to) => {
-                  const items = normalizeTools(store.get('tools'));
-                  const [moved] = items.splice(from, 1);
-                  items.splice(to, 0, moved);
-                  writeField('tools', serializeTools(items));
-                  bump();
-                }}>
-                {tools.map((tool, i) => (
-                  <SortableItem key={`tool-${i}`} id={`tool-${i}`} className="flex items-center gap-1.5">
-                    <DragHandle />
-                    <Input
-                      type="text" className="h-8 flex-1" placeholder="Tool name"
-                      defaultValue={tool} onChange={(e) => writeTool(i, e.target.value)}
-                    />
-                    <RowDeleteButton onClick={() => { const items = normalizeTools(store.get('tools')); items.splice(i, 1); writeField('tools', serializeTools(items)); bump(); }} />
-                  </SortableItem>
-                ))}
-                <AddRowButton label="Add tool" onClick={() => { const items = normalizeTools(store.get('tools')); items.push('New tool'); writeField('tools', serializeTools(items)); bump(); }} />
-              </SortableList>
-            </PanelSection>
-          </>
-        )}
-
-        {tab === 'main' && (
-          <>
-            <PanelSection title="Summary" {...sectionProps('summary')}>
-              <Textarea
+  const renderSectionBody = (key) => {
+    if (key === 'summary') return (<>              <Textarea
                 data-field="summary" rows={4} placeholder="A brief professional summary..."
                 defaultValue={data.summary || ''} onChange={(e) => writeField('summary', e.target.value)}
               />
-            </PanelSection>
-
-            <PanelSection title="Experience" {...sectionProps('experience')} headerExtra={
-              <Button
-                variant="ghost" size="icon" type="button" className="size-7" title="Add experience"
-                onClick={() => store.addToArray('experience', { id: generateId('exp'), title: 'New Position', company: 'Company Name', dates: 'Start – End', bullets: ['Describe your accomplishments'], _expanded: true })}
-              >
-                <Plus className="size-4" />
-              </Button>
-            }>
-              {experience.length > 1 && (
+</>);
+    if (key === 'experience') return (<>              {experience.length > 1 && (
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-medium text-muted-foreground">Sort by</span>
                   <Select value={sortMode} onValueChange={applySort}>
@@ -877,17 +741,8 @@ export default function StructurePanel() {
                   });
                 })()}
               </SortableList>
-            </PanelSection>
-
-            <PanelSection title="Education" {...sectionProps('education')} headerExtra={
-              <Button
-                variant="ghost" size="icon" type="button" className="size-7" title="Add education"
-                onClick={() => store.addToArray('education', 'Degree — Institution — Dates')}
-              >
-                <Plus className="size-4" />
-              </Button>
-            }>
-              <SortableList className="space-y-1.5" ids={education.map((_, i) => `edu-${i}`)}
+</>);
+    if (key === 'education') return (<>              <SortableList className="space-y-1.5" ids={education.map((_, i) => `edu-${i}`)}
                 onReorder={(from, to) => store.moveInArray('education', from, to)}>
                 {education.map((edu, i) => (
                   <SortableItem key={`edu-${i}`} id={`edu-${i}`} className="flex items-center gap-1.5">
@@ -900,11 +755,173 @@ export default function StructurePanel() {
                   </SortableItem>
                 ))}
               </SortableList>
+</>);
+    if (key === 'tools') return (<>              {tools.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Display</span>
+                  <Segmented size="xs">
+                    {[['list', 'Bulleted'], ['skills', 'Inline tags']].map(([t, label]) => (
+                      <SegmentedItem
+                        key={t} size="xs"
+                        active={toolsDisplay === t}
+                        onClick={() => store.update('toolsDisplay', t)}
+                      >
+                        {label}
+                      </SegmentedItem>
+                    ))}
+                  </Segmented>
+                </div>
+              )}
+              <SortableList className="space-y-1.5" ids={tools.map((_, i) => `tool-${i}`)}
+                onReorder={(from, to) => {
+                  const items = normalizeTools(store.get('tools'));
+                  const [moved] = items.splice(from, 1);
+                  items.splice(to, 0, moved);
+                  writeField('tools', serializeTools(items));
+                  bump();
+                }}>
+                {tools.map((tool, i) => (
+                  <SortableItem key={`tool-${i}`} id={`tool-${i}`} className="flex items-center gap-1.5">
+                    <DragHandle />
+                    <Input
+                      type="text" className="h-8 flex-1" placeholder="Tool name"
+                      defaultValue={tool} onChange={(e) => writeTool(i, e.target.value)}
+                    />
+                    <RowDeleteButton onClick={() => { const items = normalizeTools(store.get('tools')); items.splice(i, 1); writeField('tools', serializeTools(items)); bump(); }} />
+                  </SortableItem>
+                ))}
+                <AddRowButton label="Add tool" onClick={() => { const items = normalizeTools(store.get('tools')); items.push('New tool'); writeField('tools', serializeTools(items)); bump(); }} />
+              </SortableList>
+</>);
+    const match = sectionForKey(data, key);
+    return match ? <SectionItem section={match.section} index={match.index} /> : null;
+  };
+  const layout = getSectionLayout(data);
+  const titleFor = node => sectionNodeTitle(data, node);
+  const renderNodes = (nodes, area, parentKey = '') => (
+    <SortableList className="space-y-3.5" ids={nodes.map(node => node.key)} onReorder={(from, to) => updateStructure(next => {
+      const source = findSectionNode(next.sectionLayout, editedKey(next, nodes[from].key));
+      const target = findSectionNode(next.sectionLayout, editedKey(next, nodes[to].key));
+      if (!source || !target || source.nodes !== target.nodes) return;
+      const [moved] = source.nodes.splice(source.index, 1);
+      source.nodes.splice(target.index, 0, moved);
+    }, 'Reordered sections')}>
+      {nodes.map((node, index) => {
+        const title = titleFor(node);
+        const match = sectionForKey(data, node.key);
+        return <SectionCard
+          key={node.key} node={node} title={title}
+          titlePath={match ? `sections[${match.index}].title` : undefined}
+          collapsed={!!collapsed[node.key]} onToggle={() => toggleCollapse(node.key)}
+          onTitleChange={value => match ? writeField(`sections[${match.index}].title`, value) : updateStructure(next => {
+            const found = findSectionNode(next.sectionLayout, editedKey(next, node.key));
+            if (found) found.node.title = value;
+          }, 'Renamed section', true)}
+          onMove={direction => updateStructure(next => {
+            const found = findSectionNode(next.sectionLayout, editedKey(next, node.key));
+            if (!found) return;
+            const to = found.index + direction;
+            if (to < 0 || to >= found.nodes.length) return;
+            const [moved] = found.nodes.splice(found.index, 1);
+            found.nodes.splice(to, 0, moved);
+          }, 'Reordered sections')}
+          first={index === 0} last={index === nodes.length - 1}
+          onDelete={() => removeNode(node)} area={area}
+          onAreaChange={targetArea => { if (targetArea !== area) updateStructure(next => relocateSectionNode(next, editedKey(next, node.key), targetArea), 'Moved section'); }}
+          parentKey={parentKey} groups={layout[area].filter(entry => entry.children)}
+          onParentChange={groupKey => updateStructure(next => relocateSectionNode(next, editedKey(next, node.key), area, groupKey), 'Changed section group')}
+          onStyleChange={(field, value) => {
+            updateStructure(next => {
+              const found = findSectionNode(next.sectionLayout, editedKey(next, node.key));
+              if (!found) return;
+              updateSectionNodeStyle(found.node, field, value);
+            }, 'Changed section typography', true);
+            // Refresh controlled buttons and selects without remounting the
+            // form: the open typography controls and focused inputs stay put.
+            bumpGrouping();
+          }}
+          headerExtra={node.key === 'experience' || node.key === 'education' ? <Button variant="ghost" size="icon" className="size-6" title={node.key === 'experience' ? 'Add experience' : 'Add education'} onClick={() => node.key === 'experience'
+            ? store.addToArray('experience', { id: generateId('exp'), title: 'New Position', company: 'Company Name', dates: 'Start – End', bullets: ['Describe your accomplishments'], _expanded: true })
+            : store.addToArray('education', 'Degree — Institution — Dates')}><Plus className="size-3.5" /></Button> : null}
+        >
+          {SINGLE_COLUMN_LAYOUTS.has(activeLayout) && <p className="text-[11px] text-muted-foreground">This template uses a single column, so Area has no visible effect here.</p>}
+          {node.children ? renderNodes(node.children, area, node.key) : renderSectionBody(node.key)}
+        </SectionCard>;
+      })}
+    </SortableList>
+  );
+  const renderLayoutArea = area => (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button variant="outline" size="sm" aria-label={`Add ${area} section`}><Plus className="size-3.5" /> Add section</Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {Object.entries(STANDARD_SECTIONS).filter(([key]) => !findSectionNode(layout, key)).map(([key, title]) => <DropdownMenuItem key={key} onSelect={() => updateStructure(next => next.sectionLayout[area].push({ key }), 'Added section')}>{title}</DropdownMenuItem>)}
+            {Object.entries(SECTION_TEMPLATES).map(([key, template]) => <DropdownMenuItem key={key} onSelect={() => addSection(key, area)}>{template.title}</DropdownMenuItem>)}
+            <DropdownMenuItem onSelect={() => { setCustomArea(area); setCustomTitle(''); setGroupDialog(false); setRenameOpen(true); }}>Custom section…</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button variant="ghost" size="sm" aria-label={`Add ${area} group`} onClick={() => { setCustomArea(area); setCustomTitle(''); setGroupDialog(true); setRenameOpen(true); }}><Plus className="size-3.5" /> Add group</Button>
+      </div>
+      {renderNodes(layout[area], area)}
+    </>
+  );
+
+  return createPortal(
+    <>
+      {/* Fixed top zone: 4-tab segmented switcher (content scrolls). Text
+          formatting (bold/italic/underline/…) for the panel's markdown fields is
+          handled by the shared bottom toolbar, which formats the focused field
+          the same way it formats the resume inline. */}
+      <div className="shrink-0 border-b px-4 pb-3 pt-3.5">
+        <Segmented className="flex w-full">
+          {Object.entries(TAB_OPTIONS).map(([key, { tabLabel, label }]) => (
+            <SegmentedItem
+              key={key}
+              className="flex-1"
+              active={tab === key}
+              onClick={() => { scrollPos.current = 0; setTab(key); }}
+              title={label}
+            >
+              {tabLabel}
+            </SegmentedItem>
+          ))}
+        </Segmented>
+      </div>
+
+      {/* Tab content — keyed so content tabs remount on data change; design tab
+          stays put. This wrapper is the scroller (flex-1 + overflow-y-auto inside
+          the host's flex column), exactly as .panel-tab-content was before. */}
+      <div
+        className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-3.5"
+        ref={tabContentRef}
+        onScroll={(e) => { scrollPos.current = e.currentTarget.scrollTop; }}
+        key={tab === 'design' ? 'design' : `${tab}-${dataVersion}`}
+      >
+        {tab === 'header' && (
+          <>
+            <PanelSection title="Name & title" {...sectionProps('name-title')}>
+              <Field label="Name" path="name" defaultValue={data.name || ''} />
+              <Field label="Professional title" path="tagline" defaultValue={data.tagline || ''} />
+            </PanelSection>
+            <PanelSection title="Contact information" {...sectionProps('contact-info')}>
+              <ContactLayoutEditor data={data} layout={activeLayout} readData={() => store.getData()} onChange={next => {
+                store.setChangeMetadata('Changed contact arrangement');
+                store.update('contactLayouts', next.contactLayouts);
+              }} />
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground">Contact details</p>
+                {Object.entries(CONTACT_FIELDS).map(([field, { label, type }]) =>
+                  <Field key={field} label={label} type={type} path={`contact.${field}`} defaultValue={data.contact?.[field] || ''} />
+                )}
+                <p className="text-xs text-muted-foreground">Empty fields stay hidden on your resume.</p>
+              </div>
             </PanelSection>
           </>
         )}
 
-        {tab === 'main' && customSections('main')}
+        {(tab === 'sidebar' || tab === 'main') && renderLayoutArea(tab)}
+
         {tab === 'design' && <DesignTab sectionProps={sectionProps} />}
       </div>
 
@@ -912,17 +929,17 @@ export default function StructurePanel() {
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent className="max-w-sm glass-card">
           <DialogHeader>
-            <DialogTitle>New section</DialogTitle>
+            <DialogTitle>{groupDialog ? 'New section group' : 'New section'}</DialogTitle>
             <DialogDescription className="sr-only">Enter a title for the new custom section</DialogDescription>
           </DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); addCustomSection(); }} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="custom-section-title">Section title</Label>
+              <Label htmlFor="custom-section-title">{groupDialog ? 'Group title' : 'Section title'}</Label>
               <Input id="custom-section-title" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} autoFocus />
             </div>
             <DialogFooter>
               <Button type="button" variant="secondary" onClick={() => setRenameOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={!customTitle.trim()}>Add section</Button>
+              <Button type="submit" disabled={!customTitle.trim()}>{groupDialog ? 'Add group' : 'Add section'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
